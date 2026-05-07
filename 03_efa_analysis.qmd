@@ -1,0 +1,1679 @@
+---
+title: "Cowriters Survey EFA Analysis"
+format: html
+output-dir: "03_efa_analysis"
+editor: visual
+---
+
+# EFA Analysis
+
+This script runs a conservative, small-sample exploratory factor analysis workflow on the existing primary and sensitivity EFA exports. Instruments are analyzed separately, treated as ordinal, and estimated with polychoric correlations plus `minres` extraction and `oblimin` rotation.
+
+`locked_k` controls whether final locked solutions are fit. Leave `NA` on the first pass to generate diagnostics and recommendations only. After review, set one or more locked values to fit final primary and sensitivity solutions and to export the final item-to-factor map.
+
+In practice, this script has two stages:
+
+1.  **First pass:** generate diagnostics, candidate solutions, recommended `k`, scree plots, and visual preview heatmaps for the recommended primary solution when one exists.
+2.  **Locked pass:** after you manually choose `k`, fill in `locked_k`, rerun the file, and it will export the final loadings table, final item map, and sensitivity comparison for the locked solution.
+
+So if `locked_k` is still all `NA`, that does **not** mean the script failed. It means the report is stopping at the review stage on purpose.
+
+The scree plots live in `Section 5B` of this file.
+
+------------------------------------------------------------------------
+
+## Section 1: Setup
+
+```{r setup}
+
+#| message: false
+library(tidyverse)
+library(psych)
+source("scoring_helpers.R", local = knitr::knit_global())
+script_dir <- "03_efa_analysis"
+efa_dir <- file.path("02_efa_exports", "efa")
+efa_diagnostics_dir <- file.path(script_dir, "efa_diagnostics")
+audit_dir <- file.path(script_dir, "audit")
+dir.create(efa_diagnostics_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Set global seed for reproducibility — minres EFA uses gradient-based
+# optimisation (optim()) internally; oblimin rotation and factor.parallel()
+# are also affected by random starting values. A fixed seed ensures
+# bit-identical results across machines and R sessions.
+set.seed(42L)
+```
+
+------------------------------------------------------------------------
+
+## Section 2: Configuration
+
+```{r config}
+
+instrument_specs <- tribble(
+  ~instrument,         ~primary_file,                      ~sensitivity_file,                     ~item_col,   ~scale_max, ~rescale_to_5,
+  "IMI",               file.path(efa_dir, "IMI_EFA_Primary.csv"),             file.path(efa_dir, "IMI_EFA_Sensitivity.csv"),             "item_code",        7L, FALSE,
+  # WritingEfficacy is a 0-100 slider upstream, but the observed cleaned data
+  # use five anchored values (0/25/50/75/100). We standardize those anchors to
+  # 1-5 here before ordinal/polychoric EFA and hard-stop if any off-grid values
+  # appear.
+  "WritingEfficacy",   file.path(efa_dir, "WritingEfficacy_EFA_Primary.csv"), file.path(efa_dir, "WritingEfficacy_EFA_Sensitivity.csv"), "item_code",        5L, TRUE,
+  "AIReflection",      file.path(efa_dir, "AI_Reflection_EFA_Primary.csv"),   file.path(efa_dir, "AI_Reflection_EFA_Sensitivity.csv"),   "item_num",         5L, FALSE,
+  "BeliefsAboutAI",    file.path(efa_dir, "BeliefsAboutAI_EFA_Primary.csv"),  file.path(efa_dir, "BeliefsAboutAI_EFA_Sensitivity.csv"),  "item_num",         5L, FALSE
+)
+
+# First pass: leave as NA to generate recommendations only.
+# Second pass: replace NA with locked k values after manual review.
+locked_k <- c(
+  IMI = 3L,
+  WritingEfficacy = 3L, #picked 3 because 4 was more messy
+  AIReflection = 2L,
+  BeliefsAboutAI = NA_integer_
+)
+
+# Prior hypothesis only: WSE previously looked 3-factor in this project.
+prior_k_hypothesis <- c(
+  IMI = NA_integer_,
+  WritingEfficacy = 3L,
+  AIReflection = NA_integer_,
+  BeliefsAboutAI = NA_integer_
+)
+
+salient_loading_cutoff <- 0.40
+cross_loading_cutoff <- 0.30
+heatmap_strong_cutoff <- salient_loading_cutoff
+heatmap_weak_cutoff <- cross_loading_cutoff
+loading_gap_cutoff <- 0.15
+sparse_category_threshold <- 5L
+kmo_fail_cutoff <- 0.50
+kmo_marginal_cutoff <- 0.60
+congruence_cutoff <- 0.85
+core_item_retention_cutoff <- 0.50
+```
+
+------------------------------------------------------------------------
+
+## Section 3: Helper Functions
+
+```{r helpers}
+
+read_efa_input <- function(spec, sample_label) {
+  file <- if (sample_label == "primary") spec$primary_file else spec$sensitivity_file
+
+  raw_dat <- read_csv(file, show_col_types = FALSE)
+  assert_required_columns(
+    raw_dat,
+    c("participant_id", spec$item_col, "item_text", "score"),
+    glue::glue("{spec$instrument} {sample_label} input")
+  )
+  assert_nonempty_df(raw_dat, glue::glue("{spec$instrument} {sample_label} input"))
+
+  dat <- raw_dat |>
+    transmute(
+      instrument = spec$instrument,
+      participant_id = as.character(participant_id),
+      item_id = as.integer(.data[[spec$item_col]]),
+      item_text = as.character(item_text),
+      score = as.numeric(score),
+      efa_sample = sample_label
+    )
+
+  if (isTRUE(spec$rescale_to_5)) {
+    dat <- dat |>
+      mutate(
+        score = case_when(
+          is.na(score)                      ~ NA_real_,
+          score == 0 | score == 25 | score == 50 | score == 75 | score == 100 ~ (score / 25) + 1,
+          TRUE                              ~ NA_real_
+        )
+      )
+  }
+
+  dat |>
+    mutate(score = as.integer(round(score)))
+}
+
+verify_long_export <- function(dat, spec, sample_label) {
+  if (anyNA(dat$participant_id) || anyNA(dat$item_id) || anyNA(dat$score)) {
+    stop(glue::glue("{spec$instrument} {sample_label}: missing participant_id, item_id, or score detected."))
+  }
+
+  dupes <- dat |>
+    count(participant_id, item_id, name = "n") |>
+    filter(n != 1L)
+
+  if (nrow(dupes) > 0) {
+    stop(glue::glue("{spec$instrument} {sample_label}: non-unique participant/item rows detected."))
+  }
+
+  n_participants <- n_distinct(dat$participant_id)
+  n_items <- n_distinct(dat$item_id)
+
+  expected_rows <- n_participants * n_items
+  if (nrow(dat) != expected_rows) {
+    stop(glue::glue(
+      "{spec$instrument} {sample_label}: export is not rectangular (rows={nrow(dat)}, expected={expected_rows})."
+    ))
+  }
+
+  item_coverage <- dat |>
+    count(participant_id, name = "item_count")
+  if (any(item_coverage$item_count != n_items)) {
+    stop(glue::glue("{spec$instrument} {sample_label}: at least one participant is missing item rows."))
+  }
+
+  participant_coverage <- dat |>
+    count(item_id, name = "participant_count")
+  if (any(participant_coverage$participant_count != n_participants)) {
+    stop(glue::glue("{spec$instrument} {sample_label}: at least one item is missing participant rows."))
+  }
+
+  invisible(TRUE)
+}
+
+build_wide_matrix <- function(dat) {
+  dat |>
+    select(participant_id, item_id, score) |>
+    mutate(item_id = as.character(item_id)) |>
+    pivot_wider(names_from = item_id, values_from = score) |>
+    arrange(participant_id)
+}
+
+build_item_diagnostics <- function(wide_df, item_lookup, spec) {
+  score_cols <- setdiff(names(wide_df), "participant_id")
+
+  base_diag <- map_dfr(score_cols, function(col_name) {
+    item_id <- as.integer(col_name)
+    values <- wide_df[[col_name]]
+    variance_val <- var(values, na.rm = TRUE)
+    counts <- tabulate(values, nbins = spec$scale_max)
+
+    count_cols <- rep(NA_integer_, 7)
+    count_cols[seq_len(spec$scale_max)] <- counts
+
+    tibble(
+      item_id = item_id,
+      n_nonmissing = sum(!is.na(values)),
+      prop_nonmissing = mean(!is.na(values)),
+      n_levels = n_distinct(values, na.rm = TRUE),
+      item_variance = variance_val,
+      kept_for_efa = !is.na(variance_val) && variance_val > 0 && n_distinct(values, na.rm = TRUE) >= 2,
+      sparse_category_warning = any(counts[counts > 0] < sparse_category_threshold),
+      category_count_1 = count_cols[1],
+      category_count_2 = count_cols[2],
+      category_count_3 = count_cols[3],
+      category_count_4 = count_cols[4],
+      category_count_5 = count_cols[5],
+      category_count_6 = count_cols[6],
+      category_count_7 = count_cols[7]
+    )
+  })
+
+  base_diag |>
+    left_join(item_lookup |> select(item_id, item_text), by = "item_id") |>
+    relocate(item_text, .after = item_id) |>
+    arrange(item_id)
+}
+
+extract_scree_data <- function(rho) {
+  eig <- eigen(rho, symmetric = TRUE, only.values = TRUE)$values
+
+  tibble(
+    factor_number = seq_along(eig),
+    eigenvalue = as.numeric(eig)
+  )
+}
+
+summarize_loadings_matrix <- function(loadings_matrix, item_lookup) {
+  L <- as.matrix(loadings_matrix)
+
+  if (is.null(dim(L))) {
+    L <- matrix(L, ncol = 1)
+  }
+
+  abs_L <- abs(L)
+  primary_factor_num <- max.col(abs_L, ties.method = "first")
+  primary_loading <- L[cbind(seq_len(nrow(L)), primary_factor_num)]
+  primary_abs_loading <- abs(primary_loading)
+
+  secondary_abs_loading <- if (ncol(L) > 1) {
+    apply(abs_L, 1, function(x) sort(x, decreasing = TRUE)[2])
+  } else {
+    rep(0, nrow(L))
+  }
+
+  loading_gap <- primary_abs_loading - secondary_abs_loading
+  salient_loading <- primary_abs_loading >= salient_loading_cutoff
+  cross_loading <- if (ncol(L) > 1) {
+    secondary_abs_loading >= cross_loading_cutoff & loading_gap < loading_gap_cutoff
+  } else {
+    rep(FALSE, nrow(L))
+  }
+
+  clean_item <- salient_loading & !cross_loading
+
+  item_details <- tibble(
+    item_id = as.integer(rownames(L)),
+    primary_factor_num = primary_factor_num,
+    primary_factor_id = paste0("F", primary_factor_num),
+    primary_loading = primary_loading,
+    primary_abs_loading = primary_abs_loading,
+    secondary_abs_loading = secondary_abs_loading,
+    loading_gap = loading_gap,
+    salient_loading = salient_loading,
+    cross_loading = cross_loading,
+    clean_item = clean_item
+  ) |>
+    left_join(item_lookup, by = "item_id") |>
+    arrange(item_id)
+
+  factor_summary <- tibble(factor_num = seq_len(ncol(L))) |>
+    left_join(
+      item_details |>
+        filter(clean_item) |>
+        count(primary_factor_num, name = "clean_item_count"),
+      by = c("factor_num" = "primary_factor_num")
+    ) |>
+    mutate(
+      clean_item_count = replace_na(clean_item_count, 0L),
+      factor_id = paste0("F", factor_num),
+      clean_factor = clean_item_count >= 3L
+    )
+
+  list(
+    item_details = item_details,
+    factor_summary = factor_summary
+  )
+}
+
+fit_fa_model <- function(rho, n_obs, k) {
+  tryCatch(
+    suppressWarnings(
+      psych::fa(
+        r = rho,
+        nfactors = k,
+        n.obs = n_obs,
+        fm = "minres",
+        rotate = if (k == 1L) "none" else "oblimin"
+      )
+    ),
+    error = function(e) NULL
+  )
+}
+
+variance_explained_from_fa <- function(fa_fit) {
+  if (is.null(fa_fit) || is.null(fa_fit$Vaccounted)) {
+    return(NA_real_)
+  }
+
+  va <- fa_fit$Vaccounted
+  if ("Proportion Var" %in% rownames(va)) {
+    return(sum(va["Proportion Var", ], na.rm = TRUE))
+  }
+
+  NA_real_
+}
+
+extract_candidate_row <- function(instrument, k, fa_fit, item_lookup) {
+  if (is.null(fa_fit)) {
+    return(tibble(
+      instrument = instrument,
+      k = k,
+      fit_success = FALSE,
+      heywood = NA,
+      rmsea = NA_real_,
+      tli = NA_real_,
+      rmsr = NA_real_,
+      bic = NA_real_,
+      variance_explained = NA_real_,
+      clean_item_total = NA_integer_,
+      clean_factor_count = NA_integer_,
+      cross_loading_items = NA_integer_,
+      structurally_clean = FALSE
+    ))
+  }
+
+  L <- unclass(fa_fit$loadings)
+  if (is.null(dim(L))) {
+    L <- matrix(L, ncol = 1)
+  }
+
+  structure_summary <- summarize_loadings_matrix(L, item_lookup)
+  heywood <- any(fa_fit$communality > 1 + 1e-6, na.rm = TRUE) ||
+    any(fa_fit$uniquenesses < -1e-6, na.rm = TRUE)
+
+  tibble(
+    instrument = instrument,
+    k = k,
+    fit_success = TRUE,
+    heywood = heywood,
+    rmsea = unname(fa_fit$RMSEA["RMSEA"]),
+    tli = unname(fa_fit$TLI),
+    rmsr = unname(fa_fit$rms),
+    bic = unname(fa_fit$BIC),
+    variance_explained = variance_explained_from_fa(fa_fit),
+    clean_item_total = sum(structure_summary$item_details$clean_item, na.rm = TRUE),
+    clean_factor_count = sum(structure_summary$factor_summary$clean_factor, na.rm = TRUE),
+    cross_loading_items = sum(structure_summary$item_details$cross_loading, na.rm = TRUE),
+    structurally_clean = !heywood &&
+      sum(structure_summary$factor_summary$clean_factor, na.rm = TRUE) == k
+  )
+}
+
+safe_parallel_k <- function(rho, n_obs) {
+  # Defensive seed: fa.parallel() uses internal random draws. Resetting the
+
+  # seed here ensures parallel-analysis results are reproducible regardless of
+  # upstream code changes that may consume random numbers.
+  set.seed(42L)
+  pa <- NULL
+  pa_error_message <- NULL
+
+  tryCatch(
+    suppressWarnings(
+      invisible(
+        capture.output(
+          pa <- psych::fa.parallel(
+            rho,
+            n.obs = n_obs,
+            fm = "minres",
+            fa = "fa",
+            plot = FALSE
+          ),
+          file = NULL
+        )
+      )
+    ),
+    error = function(e) {
+      pa <<- NULL
+      pa_error_message <<- conditionMessage(e)
+    }
+  )
+
+  if (is.null(pa)) {
+    if (is.null(pa_error_message) || is.na(pa_error_message)) {
+      pa_error_message <- "unknown error"
+    }
+    message(glue::glue("Parallel analysis failed; returning NA for suggested k. Error: {pa_error_message}"))
+    return(NA_integer_)
+  }
+
+  as.integer(pa$nfact)
+}
+
+factorability_flag <- function(kmo_overall, usable_item_count) {
+  case_when(
+    usable_item_count < 3L ~ "Too few usable items",
+    is.na(kmo_overall) ~ "KMO unavailable",
+    kmo_overall < kmo_fail_cutoff ~ "Not suitable (<0.50)",
+    kmo_overall < kmo_marginal_cutoff ~ "Marginal (0.50-0.59)",
+    TRUE ~ "Adequate"
+  )
+}
+
+plot_scree <- function(scree_df, title_text, subtitle_text = "Gray line = eigenvalue 1; blue dashed = parallel-analysis k; red dotted = recommended k") {
+  parallel_lines <- scree_df |>
+    distinct(efa_sample, parallel_k_used) |>
+    filter(!is.na(parallel_k_used))
+
+  recommended_lines <- scree_df |>
+    distinct(efa_sample, recommended_k) |>
+    filter(!is.na(recommended_k))
+
+  ggplot(scree_df, aes(x = factor_number, y = eigenvalue)) +
+    geom_hline(yintercept = 1, color = "#7a7a7a", linewidth = 0.7) +
+    geom_vline(
+      data = parallel_lines,
+      aes(xintercept = parallel_k_used),
+      inherit.aes = FALSE,
+      color = "#4f79b7",
+      linetype = "longdash",
+      linewidth = 0.8
+    ) +
+    geom_vline(
+      data = recommended_lines,
+      aes(xintercept = recommended_k),
+      inherit.aes = FALSE,
+      color = "#c73e3a",
+      linetype = "dotted",
+      linewidth = 1
+    ) +
+    geom_line(color = "#1f2f56", linewidth = 0.9) +
+    geom_point(color = "#1f2f56", size = 2.2) +
+    scale_x_continuous(breaks = scree_df$factor_number) +
+    labs(
+      title = title_text,
+      subtitle = subtitle_text,
+      x = "Factor Number",
+      y = "Eigenvalue"
+    ) +
+    facet_wrap(
+      ~ efa_sample,
+      ncol = 2,
+      labeller = as_labeller(c(primary = "Primary", sensitivity = "Sensitivity"))
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+recommend_k <- function(candidate_rows, k_pa_raw, k_pa_used, factorability_value) {
+  if (factorability_value == "Too few usable items") {
+    return(list(
+      recommended_k = NA_integer_,
+      recommendation_status = "No clean recommendation",
+      recommendation_reason = "Too few usable items"
+    ))
+  }
+
+  if (factorability_value == "Not suitable (<0.50)") {
+    return(list(
+      recommended_k = NA_integer_,
+      recommendation_status = "No clean recommendation",
+      recommendation_reason = "Overall KMO below 0.50"
+    ))
+  }
+
+  clean_rows <- candidate_rows |>
+    filter(fit_success, structurally_clean)
+
+  if (nrow(clean_rows) == 0) {
+    return(list(
+      recommended_k = NA_integer_,
+      recommendation_status = "No clean recommendation",
+      recommendation_reason = "No candidate k produced a structurally clean solution"
+    ))
+  }
+
+  if (!is.na(k_pa_used) && any(clean_rows$k == k_pa_used)) {
+    return(list(
+      recommended_k = k_pa_used,
+      recommendation_status = "Recommended",
+      recommendation_reason = "Parallel analysis suggestion was structurally clean"
+    ))
+  }
+
+  if (!is.na(k_pa_used)) {
+    downward <- clean_rows |>
+      filter(k < k_pa_used) |>
+      arrange(desc(k))
+
+    if (nrow(downward) > 0) {
+      return(list(
+        recommended_k = downward$k[1],
+        recommendation_status = "Recommended",
+        recommendation_reason = "Parallel-analysis k was messy; chose nearest simpler clean solution below"
+      ))
+    }
+
+    upward <- clean_rows |>
+      filter(k > k_pa_used) |>
+      arrange(k)
+
+    if (nrow(upward) > 0) {
+      return(list(
+        recommended_k = upward$k[1],
+        recommendation_status = "Recommended",
+        recommendation_reason = "No clean solution below parallel-analysis k; chose nearest clean solution above"
+      ))
+    }
+  }
+
+  fallback <- clean_rows |>
+    arrange(k)
+
+  list(
+    recommended_k = fallback$k[1],
+    recommendation_status = "Recommended",
+    recommendation_reason = "Parallel analysis unavailable; chose smallest clean solution"
+  )
+}
+
+run_sample_analysis <- function(dat, spec, sample_label, run_candidates) {
+  verify_long_export(dat, spec, sample_label)
+
+  item_lookup <- dat |>
+    distinct(item_id, item_text) |>
+    arrange(item_id)
+
+  wide_df <- build_wide_matrix(dat)
+  item_diag <- build_item_diagnostics(wide_df, item_lookup, spec)
+
+  keep_item_ids <- item_diag |>
+    filter(kept_for_efa) |>
+    pull(item_id)
+
+  participant_n <- n_distinct(dat$participant_id)
+  usable_item_count <- length(keep_item_ids)
+
+  if (usable_item_count < 3L) {
+    diag_rows <- item_diag |>
+      mutate(
+        instrument = spec$instrument,
+        efa_sample = sample_label,
+        participant_n = participant_n,
+        retained_item_count = usable_item_count,
+        n_item_ratio = if_else(usable_item_count > 0, participant_n / usable_item_count, NA_real_),
+        kmo_overall = NA_real_,
+        item_msa = NA_real_,
+        bartlett_chisq = NA_real_,
+        bartlett_df = NA_real_,
+        bartlett_p = NA_real_,
+        polychoric_repair_needed = NA,
+        min_eigen_unsmoothed = NA_real_,
+        factorability_flag = "Too few usable items"
+      )
+
+    return(list(
+      diagnostics = diag_rows,
+      candidate_rows = tibble(),
+      recommendation = tibble(),
+      wide_kept = NULL,
+      rho = NULL,
+      item_lookup_kept = item_lookup |> filter(item_id %in% keep_item_ids),
+      participant_n = participant_n,
+      retained_item_count = usable_item_count,
+      kmo_overall = NA_real_,
+      factorability_flag = "Too few usable items",
+      k_max = NA_integer_
+    ))
+  }
+
+  wide_kept <- wide_df |>
+    select(participant_id, all_of(as.character(keep_item_ids))) |>
+    arrange(participant_id)
+
+  X_int_df <- wide_kept |>
+    select(-participant_id) |>
+    mutate(across(everything(), as.integer)) |>
+    as.data.frame()
+
+  poly_out <- compute_polychoric_safe(X_int_df)
+  rho <- poly_out$rho
+  kmo <- psych::KMO(rho)
+  bart <- psych::cortest.bartlett(rho, n = nrow(X_int_df))
+  factorability_value <- factorability_flag(kmo$MSA, usable_item_count)
+
+  msa_tbl <- tibble(
+    item_id = as.integer(names(kmo$MSAi)),
+    item_msa = as.numeric(kmo$MSAi)
+  )
+
+  diag_rows <- item_diag |>
+    left_join(msa_tbl, by = "item_id") |>
+    mutate(
+      instrument = spec$instrument,
+      efa_sample = sample_label,
+      participant_n = participant_n,
+      retained_item_count = usable_item_count,
+      n_item_ratio = participant_n / usable_item_count,
+      kmo_overall = as.numeric(kmo$MSA),
+      bartlett_chisq = as.numeric(bart$chisq),
+      bartlett_df = as.numeric(bart$df),
+      bartlett_p = as.numeric(bart$p.value),
+      polychoric_repair_needed = poly_out$repair_needed,
+      min_eigen_unsmoothed = poly_out$min_eigen_unsmoothed,
+      factorability_flag = factorability_value
+    ) |>
+    arrange(item_id) |>
+    select(
+      instrument, efa_sample, participant_n, retained_item_count, n_item_ratio,
+      factorability_flag, kmo_overall, item_msa,
+      bartlett_chisq, bartlett_df, bartlett_p,
+      polychoric_repair_needed, min_eigen_unsmoothed,
+      item_id, item_text, kept_for_efa, n_nonmissing, prop_nonmissing,
+      n_levels, item_variance, sparse_category_warning,
+      category_count_1, category_count_2, category_count_3, category_count_4,
+      category_count_5, category_count_6, category_count_7
+    )
+
+  item_lookup_kept <- item_lookup |>
+    filter(item_id %in% keep_item_ids) |>
+    arrange(item_id)
+
+  scree_data <- extract_scree_data(rho)
+
+  if (!run_candidates) {
+    return(list(
+      diagnostics = diag_rows,
+      candidate_rows = tibble(),
+      recommendation = tibble(),
+      scree_data = scree_data,
+      wide_kept = wide_kept,
+      rho = rho,
+      item_lookup_kept = item_lookup_kept,
+      participant_n = participant_n,
+      retained_item_count = usable_item_count,
+      kmo_overall = as.numeric(kmo$MSA),
+      factorability_flag = factorability_value,
+      k_max = as.integer(min(6L, floor(usable_item_count / 3)))
+    ))
+  }
+
+  k_max <- as.integer(min(6L, floor(usable_item_count / 3)))
+  k_values <- seq_len(k_max)
+  k_pa_raw <- safe_parallel_k(rho, nrow(X_int_df))
+  k_pa_used <- if (!is.na(k_pa_raw)) {
+    as.integer(min(max(k_pa_raw, 1L), k_max))
+  } else {
+    NA_integer_
+  }
+
+  candidate_rows <- purrr::map(k_values, function(k) {
+    fa_fit <- fit_fa_model(rho, nrow(X_int_df), k)
+    extract_candidate_row(spec$instrument, k, fa_fit, item_lookup_kept) |>
+      mutate(fa_fit_obj = list(fa_fit))
+  }) |>
+    bind_rows() |>
+    mutate(
+      efa_sample = sample_label,
+      participant_n = participant_n,
+      retained_item_count = usable_item_count,
+      n_item_ratio = participant_n / retained_item_count,
+      parallel_k_raw = k_pa_raw,
+      parallel_k_used = k_pa_used,
+      factorability_flag = factorability_value
+    )
+
+  recommendation <- recommend_k(candidate_rows, k_pa_raw, k_pa_used, factorability_value)
+
+  recommendation_tbl <- tibble(
+    instrument = spec$instrument,
+    participant_n = participant_n,
+    retained_item_count = usable_item_count,
+    n_item_ratio = participant_n / retained_item_count,
+    candidate_k_min = min(k_values),
+    candidate_k_max = max(k_values),
+    parallel_k_raw = k_pa_raw,
+    parallel_k_used = k_pa_used,
+    prior_k_hypothesis = prior_k_hypothesis[[spec$instrument]],
+    recommended_k = recommendation$recommended_k,
+    manual_locked_k = as.integer(locked_k[[spec$instrument]]),
+    factorability_flag = factorability_value,
+    recommendation_status = recommendation$recommendation_status,
+    recommendation_reason = recommendation$recommendation_reason
+  )
+
+  scree_data <- scree_data |>
+    mutate(
+      instrument = spec$instrument,
+      efa_sample = sample_label,
+      participant_n = participant_n,
+      retained_item_count = usable_item_count,
+      parallel_k_raw = k_pa_raw,
+      parallel_k_used = k_pa_used,
+      recommended_k = recommendation$recommended_k
+    )
+
+  list(
+    diagnostics = diag_rows,
+    candidate_rows = candidate_rows,
+    recommendation = recommendation_tbl,
+    scree_data = scree_data,
+    wide_kept = wide_kept,
+    rho = rho,
+    item_lookup_kept = item_lookup_kept,
+    participant_n = participant_n,
+    retained_item_count = usable_item_count,
+    kmo_overall = as.numeric(kmo$MSA),
+    factorability_flag = factorability_value,
+    k_max = k_max
+  )
+}
+
+extract_final_solution <- function(fa_fit, item_lookup, instrument, sample_label, locked_value, factor_order = NULL) {
+  L <- as.matrix(unclass(fa_fit$loadings))
+  if (is.null(dim(L))) {
+    L <- matrix(L, ncol = 1)
+  }
+
+  if (is.null(factor_order)) {
+    factor_order <- order(colSums(L^2, na.rm = TRUE), decreasing = TRUE)
+  }
+
+  L <- L[, factor_order, drop = FALSE]
+  colnames(L) <- paste0("F", seq_len(ncol(L)))
+
+  structure_summary <- summarize_loadings_matrix(L, item_lookup)
+
+  loadings_long <- as_tibble(L, rownames = "item_id") |>
+    mutate(item_id = as.integer(item_id)) |>
+    pivot_longer(
+      cols = starts_with("F"),
+      names_to = "factor_id",
+      values_to = "loading"
+    ) |>
+    left_join(
+      structure_summary$item_details |>
+        select(
+          item_id, primary_factor_id, primary_loading, primary_abs_loading,
+          secondary_abs_loading, loading_gap, salient_loading, cross_loading,
+          clean_item
+        ),
+      by = "item_id"
+    ) |>
+    left_join(item_lookup, by = "item_id") |>
+    mutate(
+      instrument = instrument,
+      efa_sample = sample_label,
+      locked_k = locked_value,
+      factor_is_primary = factor_id == primary_factor_id
+    ) |>
+    select(
+      instrument, efa_sample, locked_k, item_id, item_text, factor_id, loading,
+      factor_is_primary, primary_factor_id, primary_loading, primary_abs_loading,
+      secondary_abs_loading, loading_gap, salient_loading, cross_loading, clean_item
+    ) |>
+    arrange(item_id, factor_id)
+
+  item_map <- structure_summary$item_details |>
+    filter(clean_item) |>
+    transmute(
+      instrument = instrument,
+      locked_k = locked_value,
+      item_id,
+      item_text,
+      factor_id = primary_factor_id,
+      loading = primary_loading,
+      abs_loading = primary_abs_loading,
+      secondary_abs_loading,
+      loading_gap
+    ) |>
+    arrange(factor_id, desc(abs_loading), item_id)
+
+  factor_summary <- structure_summary$factor_summary |>
+    transmute(
+      instrument = instrument,
+      efa_sample = sample_label,
+      locked_k = locked_value,
+      factor_id,
+      clean_item_count,
+      clean_factor
+    )
+
+  list(
+    loadings_long = loadings_long,
+    item_map = item_map,
+    factor_summary = factor_summary,
+    loadings_matrix = L
+  )
+}
+
+match_factors_by_congruence <- function(primary_matrix, sensitivity_matrix) {
+  k <- ncol(primary_matrix)
+
+  if (k == 1L) {
+    congr <- psych::factor.congruence(primary_matrix, sensitivity_matrix)
+    return(tibble(
+      primary_factor_id = "F1",
+      sensitivity_factor_original = "F1",
+      congruence = abs(as.numeric(congr[1, 1]))
+    ))
+  }
+
+  congr <- psych::factor.congruence(primary_matrix, sensitivity_matrix)
+  perms <- as.matrix(do.call(expand.grid, rep(list(seq_len(k)), k)))
+  perms <- perms[apply(perms, 1, function(x) length(unique(x)) == k), , drop = FALSE]
+
+  perm_scores <- apply(perms, 1, function(perm) {
+    sum(abs(congr[cbind(seq_len(k), perm)]))
+  })
+
+  best_perm <- perms[which.max(perm_scores), ]
+
+  tibble(
+    primary_factor_id = paste0("F", seq_len(k)),
+    sensitivity_factor_original = paste0("F", best_perm),
+    congruence = abs(congr[cbind(seq_len(k), best_perm)])
+  )
+}
+
+remap_sensitivity_solution <- function(final_solution, matching_tbl) {
+  remap <- setNames(
+    matching_tbl$primary_factor_id,
+    matching_tbl$sensitivity_factor_original
+  )
+
+  final_solution$loadings_long <- final_solution$loadings_long |>
+    mutate(
+      original_factor_id = factor_id,
+      factor_id = unname(remap[factor_id]),
+      primary_factor_id = unname(remap[primary_factor_id])
+    ) |>
+    arrange(item_id, factor_id)
+
+  final_solution$item_map <- final_solution$item_map |>
+    mutate(
+      original_factor_id = factor_id,
+      factor_id = unname(remap[factor_id])
+    ) |>
+    arrange(factor_id, desc(abs_loading), item_id)
+
+  final_solution$factor_summary <- final_solution$factor_summary |>
+    mutate(
+      original_factor_id = factor_id,
+      factor_id = unname(remap[factor_id])
+    ) |>
+    arrange(factor_id)
+
+  final_solution
+}
+
+format_loading_label <- function(x) {
+  suffix <- case_when(
+    abs(x) >= heatmap_strong_cutoff ~ "**",
+    abs(x) >= heatmap_weak_cutoff ~ "*",
+    TRUE ~ ""
+  )
+
+  paste0(formatC(x, format = "f", digits = 2), suffix)
+}
+
+prepare_heatmap_df <- function(loadings_long) {
+  if (is.null(loadings_long) || nrow(loadings_long) == 0) {
+    return(tibble())
+  }
+
+  item_levels <- loadings_long |>
+    distinct(item_id, item_text, primary_factor_id, primary_abs_loading) |>
+    arrange(primary_factor_id, desc(primary_abs_loading), item_id) |>
+    mutate(item_label = str_wrap(item_text, width = 58)) |>
+    pull(item_label)
+
+  loadings_long |>
+    mutate(
+      item_label = str_wrap(item_text, width = 58),
+      item_label = factor(item_label, levels = rev(unique(item_levels))),
+      factor_id = factor(factor_id, levels = unique(factor_id)),
+      loading_label = format_loading_label(loading)
+    )
+}
+
+plot_loadings_heatmap <- function(loadings_long, title_text, subtitle_text = glue::glue("* |loading| >= {heatmap_weak_cutoff}   ** |loading| >= {heatmap_strong_cutoff}")) {
+  heat_df <- prepare_heatmap_df(loadings_long)
+
+  if (nrow(heat_df) == 0) {
+    return(
+      ggplot() +
+        annotate("text", x = 0, y = 0, label = "No loadings available for this view yet.") +
+        theme_void()
+    )
+  }
+
+  ggplot(heat_df, aes(x = factor_id, y = item_label, fill = loading)) +
+    geom_tile(color = "white", linewidth = 0.6) +
+    geom_text(aes(label = loading_label), size = 3.7) +
+    scale_fill_gradient2(
+      low = "#c73e3a",
+      mid = "#f7f7f7",
+      high = "#4f79b7",
+      midpoint = 0,
+      limits = c(-1, 1),
+      name = "Loading"
+    ) +
+    labs(
+      title = title_text,
+      subtitle = subtitle_text,
+      x = NULL,
+      y = NULL
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(size = 11),
+      axis.text.y = element_text(size = 11),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+fit_preview_solution <- function(result_obj, sample_name, k_value) {
+  sample_obj <- result_obj[[sample_name]]
+
+  if (is.na(k_value) || is.null(sample_obj$rho) || is.na(sample_obj$kmo_overall)) {
+    return(NULL)
+  }
+
+  if (sample_obj$factorability_flag == "Too few usable items") {
+    return(NULL)
+  }
+
+  if (!is.na(sample_obj$kmo_overall) && sample_obj$kmo_overall < kmo_fail_cutoff) {
+    return(NULL)
+  }
+
+  if (is.na(sample_obj$k_max) || k_value < 1L || k_value > sample_obj$k_max) {
+    return(NULL)
+  }
+
+  fa_fit <- fit_fa_model(sample_obj$rho, sample_obj$participant_n, k_value)
+
+  if (is.null(fa_fit)) {
+    return(NULL)
+  }
+
+  extract_final_solution(
+    fa_fit = fa_fit,
+    item_lookup = sample_obj$item_lookup_kept,
+    instrument = result_obj$spec$instrument,
+    sample_label = sample_name,
+    locked_value = k_value
+  )
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 4: Run Diagnostics and Candidate Solutions
+
+```{r run-analyses}
+
+analysis_results <- instrument_specs |>
+  split(instrument_specs$instrument) |>
+  purrr::map(function(spec_df) {
+    spec <- as.list(spec_df[1, ])
+
+    primary_dat <- read_efa_input(spec, "primary")
+    sensitivity_dat <- read_efa_input(spec, "sensitivity")
+
+    list(
+      spec = spec,
+      primary = run_sample_analysis(primary_dat, spec, "primary", run_candidates = TRUE),
+      sensitivity = run_sample_analysis(sensitivity_dat, spec, "sensitivity", run_candidates = TRUE)
+    )
+  })
+
+efa_diagnostics_summary <- map_dfr(analysis_results, function(x) {
+  bind_rows(x$primary$diagnostics, x$sensitivity$diagnostics)
+})
+
+efa_candidate_solutions <- map_dfr(analysis_results, function(x) {
+  x$primary$candidate_rows |>
+    select(-any_of("fa_fit_obj"))
+})
+
+efa_recommended_k <- map_dfr(analysis_results, function(x) {
+  x$primary$recommendation
+})
+
+efa_sensitivity_recommended_k <- map_dfr(analysis_results, function(x) {
+  x$sensitivity$recommendation
+})
+
+efa_scree_data <- map_dfr(analysis_results, function(x) {
+  bind_rows(x$primary$scree_data, x$sensitivity$scree_data)
+})
+
+recommended_preview_solutions <- purrr::imap(analysis_results, function(result_obj, instrument_name) {
+  rec_k <- efa_recommended_k |>
+    filter(instrument == instrument_name) |>
+    pull(recommended_k)
+
+  if (length(rec_k) != 1L || is.na(rec_k)) {
+    return(NULL)
+  }
+
+  fit_preview_solution(result_obj, "primary", as.integer(rec_k))
+})
+
+observed_sample_counts <- efa_diagnostics_summary |>
+  distinct(instrument, efa_sample, participant_n) |>
+  arrange(instrument, efa_sample)
+
+expected_sample_counts <- tribble(
+  ~instrument,         ~efa_sample,    ~participant_n,
+  "AIReflection",      "primary",                  91L,
+  "AIReflection",      "sensitivity",              82L,
+  "BeliefsAboutAI",    "primary",                  91L,
+  "BeliefsAboutAI",    "sensitivity",              82L,
+  "IMI",               "primary",                  88L,
+  "IMI",               "sensitivity",              82L,
+  "WritingEfficacy",   "primary",                  88L,
+  "WritingEfficacy",   "sensitivity",              82L
+) |>
+  arrange(instrument, efa_sample)
+
+sample_count_check <- observed_sample_counts |>
+  full_join(expected_sample_counts, by = c("instrument", "efa_sample"), suffix = c("_observed", "_expected")) |>
+  mutate(
+    participant_n_observed = as.integer(participant_n_observed),
+    participant_n_expected = as.integer(participant_n_expected),
+    mismatch = is.na(participant_n_observed) | is.na(participant_n_expected) |
+      (participant_n_observed != participant_n_expected)
+  )
+
+if (any(sample_count_check$mismatch)) {
+  mismatches <- sample_count_check |>
+    filter(mismatch) |>
+    select(instrument, efa_sample, participant_n_observed, participant_n_expected)
+  stop(
+    paste0(
+      "EFA sample counts do not match expected locked values. Mismatches:\n",
+      paste(capture.output(print(mismatches)), collapse = "\n")
+    ),
+    call. = FALSE
+  )
+}
+
+cat("=== Recommended K Summary ===\n")
+print(efa_recommended_k)
+```
+
+------------------------------------------------------------------------
+
+## Section 5: Review Tables
+
+```{r review-tables}
+
+cat("=== Diagnostics Snapshot ===\n")
+efa_diagnostics_summary |>
+  distinct(
+    instrument, efa_sample, participant_n, retained_item_count,
+    n_item_ratio, factorability_flag, kmo_overall,
+    bartlett_chisq, bartlett_df, bartlett_p, polychoric_repair_needed
+  ) |>
+  arrange(instrument, efa_sample) |>
+  print(n = 20)
+
+cat("\n=== Candidate Solutions ===\n")
+efa_candidate_solutions |>
+  arrange(instrument, k) |>
+  print(n = 50)
+
+cat("\n=== Locked K Settings ===\n")
+tibble(
+  instrument = names(locked_k),
+  locked_k = as.integer(locked_k)
+) |>
+  print()
+```
+
+------------------------------------------------------------------------
+
+## Section 5A: What Happens Next
+
+```{r workflow-status}
+workflow_status <- efa_recommended_k |>
+  transmute(
+    instrument,
+    participant_n,
+    retained_item_count,
+    factorability_flag,
+    recommended_k,
+    manual_locked_k,
+    current_stage = case_when(
+      is.na(manual_locked_k) ~ "First-pass review only",
+      TRUE ~ "Locked final solution requested"
+    ),
+    next_action = case_when(
+      factorability_flag == "Not suitable (<0.50)" ~ "Do not lock k yet; instrument is not factorable enough",
+      factorability_flag == "Too few usable items" ~ "No EFA possible with current retained items",
+      is.na(recommended_k) ~ "Review diagnostics manually; no clean recommended k",
+      is.na(manual_locked_k) ~ paste0("Review the preview heatmap, then set locked_k = ", recommended_k, " if you agree"),
+      manual_locked_k == recommended_k ~ "Rerun complete; interpret final item map and sensitivity results",
+      TRUE ~ "Rerun complete; interpret the locked final solution you chose"
+    )
+  )
+
+knitr::kable(workflow_status)
+```
+
+`KMO` is important because it checks whether the items share enough common variance to justify factor analysis in the first place. In plain English: if `KMO` is very low, the items are not hanging together well enough for a factor solution to be trustworthy, even if you can still mathematically fit one. That is why this script uses `KMO` as a gatekeeper before recommending a final `k`.
+
+```{r primary-vs-sensitivity-k}
+sample_kmo <- efa_diagnostics_summary |>
+  distinct(instrument, efa_sample, kmo_overall)
+
+k_comparison <- efa_recommended_k |>
+  left_join(
+    sample_kmo |>
+      filter(efa_sample == "primary") |>
+      select(instrument, primary_kmo = kmo_overall),
+    by = "instrument"
+  ) |>
+  select(
+    instrument,
+    primary_kmo,
+    primary_parallel_k = parallel_k_used,
+    primary_recommended_k = recommended_k,
+    primary_reason = recommendation_reason
+  ) |>
+  left_join(
+    efa_sensitivity_recommended_k |>
+      left_join(
+        sample_kmo |>
+          filter(efa_sample == "sensitivity") |>
+          select(instrument, sensitivity_kmo = kmo_overall),
+        by = "instrument"
+      ) |>
+      select(
+        instrument,
+        sensitivity_kmo,
+        sensitivity_parallel_k = parallel_k_used,
+        sensitivity_recommended_k = recommended_k,
+        sensitivity_reason = recommendation_reason
+      ),
+    by = "instrument"
+  ) |>
+  mutate(
+    primary_kmo = round(primary_kmo, 3),
+    sensitivity_kmo = round(sensitivity_kmo, 3),
+    factor_count_changed_in_sensitivity = case_when(
+      is.na(primary_recommended_k) & is.na(sensitivity_recommended_k) ~ "No recommendation either way",
+      primary_recommended_k == sensitivity_recommended_k ~ "No",
+      TRUE ~ "Yes"
+    )
+  )
+
+knitr::kable(k_comparison)
+```
+
+This is a **robustness table**, not the main decision rule. The primary sample still drives the working recommendation, and the sensitivity column is there to show whether that recommendation looks stable in the stricter paired-only sample.
+
+At the end of the EFA workflow, the goal is **not** to stop at a pretty loading pattern. The goal is to make a defendable item-to-factor map. Once you lock `k` and rerun:
+
+- `03_efa_analysis/efa_diagnostics/EFA_Final_Loadings.csv` stores the full loading matrix for the locked solution
+- `03_efa_analysis/EFA_Final_Item_Map.csv` keeps only clean items assigned to one factor
+- `03_efa_analysis/efa_diagnostics/EFA_Sensitivity_Comparison.csv` tells you whether that structure survives the stricter paired sample
+
+That final item map is what we use later to build **unit-weighted subscale means** for the ANOVAs.
+
+## Section 5B: Scree Plots
+
+Scree plots are a helpful **visual supplement**, not the main decision rule. In this workflow, the working recommendation still comes from the combination of parallel analysis, factorability checks, and whether the candidate loading pattern is structurally clean.
+
+```{r scree-plots, results='asis', fig.width=11, fig.height=5.5}
+for (instrument_name in unique(efa_scree_data$instrument)) {
+  scree_df <- efa_scree_data |>
+    filter(instrument == instrument_name)
+
+  cat("\n\n### ", instrument_name, "\n\n", sep = "")
+
+  print(
+    plot_scree(
+      scree_df,
+      title_text = glue::glue("{instrument_name}: Scree Plot"),
+      subtitle_text = "Gray line = eigenvalue 1; blue dashed = parallel-analysis k; red dotted = recommended k"
+    )
+  )
+
+  cat("\n\n")
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 5C: Recommended Solution Preview Heatmaps
+
+These are **review-stage previews** of the recommended primary solutions. They help you see whether the proposed factor structure looks interpretable before you commit to a locked `k`.
+
+```{r preview-heatmaps, results='asis', fig.width=12, fig.height=8}
+for (instrument_name in names(recommended_preview_solutions)) {
+  preview_solution <- recommended_preview_solutions[[instrument_name]]
+  rec_row <- efa_recommended_k |>
+    filter(instrument == instrument_name)
+
+  cat("\n\n### ", instrument_name, "\n\n", sep = "")
+
+  if (is.null(preview_solution)) {
+    cat("No preview heatmap available because this instrument does not currently have a clean recommended `k`.\n\n")
+    next
+  }
+
+  cat(
+    glue::glue(
+      "Recommended primary preview at `k = {rec_row$recommended_k[[1]]}`. This is for visual review only until `locked_k` is filled in.\n\n"
+    )
+  )
+
+  print(
+    plot_loadings_heatmap(
+      preview_solution$loadings_long,
+      title_text = glue::glue("{instrument_name}: Recommended Primary Preview"),
+      subtitle_text = glue::glue("* |loading| >= {cross_loading_cutoff}   ** |loading| >= {salient_loading_cutoff}")
+    )
+  )
+
+  cat("\n\n")
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 6: Final Locked Solutions and Sensitivity Check
+
+```{r final-solutions}
+empty_final_loadings <- tibble(
+  instrument = character(),
+  efa_sample = character(),
+  locked_k = integer(),
+  item_id = integer(),
+  item_text = character(),
+  factor_id = character(),
+  loading = numeric(),
+  factor_is_primary = logical(),
+  primary_factor_id = character(),
+  primary_loading = numeric(),
+  primary_abs_loading = numeric(),
+  secondary_abs_loading = numeric(),
+  loading_gap = numeric(),
+  salient_loading = logical(),
+  cross_loading = logical(),
+  clean_item = logical(),
+  original_factor_id = character()
+)
+
+empty_item_map <- tibble(
+  instrument = character(),
+  locked_k = integer(),
+  item_id = integer(),
+  item_text = character(),
+  factor_id = character(),
+  loading = numeric(),
+  abs_loading = numeric(),
+  secondary_abs_loading = numeric(),
+  loading_gap = numeric(),
+  original_factor_id = character()
+)
+
+empty_sensitivity <- tibble(
+  instrument = character(),
+  locked_k = integer(),
+  factor_id = character(),
+  matched_sensitivity_factor = character(),
+  congruence = numeric(),
+  primary_core_n = integer(),
+  sensitivity_core_n = integer(),
+  shared_core_n = integer(),
+  shared_core_prop = numeric(),
+  factor_sensitivity_failure = logical(),
+  instrument_sensitivity_failure = logical(),
+  sensitivity_note = character()
+)
+
+final_loadings_list <- list()
+final_item_map_list <- list()
+sensitivity_rows <- list()
+
+fit_locked_primary <- function(result_obj, locked_value) {
+  spec <- result_obj$spec
+  primary <- result_obj$primary
+
+  if (is.na(locked_value)) {
+    return(NULL)
+  }
+
+  if (primary$factorability_flag == "Too few usable items") {
+    stop(glue::glue("{spec$instrument}: locked k requested but fewer than 3 usable items remain."))
+  }
+
+  if (!is.na(primary$kmo_overall) && primary$kmo_overall < kmo_fail_cutoff) {
+    stop(glue::glue("{spec$instrument}: locked k requested but overall KMO is below 0.50."))
+  }
+
+  if (locked_value < 1L || locked_value > primary$k_max) {
+    stop(glue::glue(
+      "{spec$instrument}: locked k={locked_value} is outside the tested range 1:{primary$k_max}."
+    ))
+  }
+
+  candidate_row <- primary$candidate_rows |>
+    filter(k == locked_value)
+
+  if (nrow(candidate_row) != 1L || !candidate_row$structurally_clean) {
+    stop(glue::glue(
+      "{spec$instrument}: locked k={locked_value} does not produce a structurally clean primary solution."
+    ))
+  }
+
+  fa_fit <- candidate_row$fa_fit_obj[[1]]
+  if (is.null(fa_fit)) {
+    fa_fit <- fit_fa_model(primary$rho, primary$participant_n, locked_value)
+  }
+  if (is.null(fa_fit)) {
+    stop(glue::glue("{spec$instrument}: final primary EFA failed at locked k={locked_value}."))
+  }
+
+  extract_final_solution(
+    fa_fit = fa_fit,
+    item_lookup = primary$item_lookup_kept,
+    instrument = spec$instrument,
+    sample_label = "primary",
+    locked_value = locked_value
+  )
+}
+
+fit_locked_sensitivity <- function(result_obj, locked_value) {
+  spec <- result_obj$spec
+  sensitivity <- result_obj$sensitivity
+
+  if (sensitivity$factorability_flag == "Too few usable items") {
+    return(list(
+      final_solution = NULL,
+      failure_note = "Sensitivity sample had fewer than 3 usable items"
+    ))
+  }
+
+  if (!is.na(sensitivity$kmo_overall) && sensitivity$kmo_overall < kmo_fail_cutoff) {
+    return(list(
+      final_solution = NULL,
+      failure_note = "Sensitivity KMO was below 0.50"
+    ))
+  }
+
+  if (locked_value < 1L || locked_value > sensitivity$k_max) {
+    return(list(
+      final_solution = NULL,
+      failure_note = "Locked k was outside the tested sensitivity range"
+    ))
+  }
+
+  candidate_row <- sensitivity$candidate_rows |>
+    filter(k == locked_value)
+
+  fa_fit <- NULL
+  if (nrow(candidate_row) == 1L && "fa_fit_obj" %in% names(candidate_row)) {
+    fa_fit <- candidate_row$fa_fit_obj[[1]]
+  }
+  if (is.null(fa_fit)) {
+    fa_fit <- fit_fa_model(sensitivity$rho, sensitivity$participant_n, locked_value)
+  }
+  if (is.null(fa_fit)) {
+    return(list(
+      final_solution = NULL,
+      failure_note = "Sensitivity EFA failed at the locked k"
+    ))
+  }
+
+  list(
+    final_solution = extract_final_solution(
+      fa_fit = fa_fit,
+      item_lookup = sensitivity$item_lookup_kept,
+      instrument = spec$instrument,
+      sample_label = "sensitivity",
+      locked_value = locked_value
+    ),
+    failure_note = NA_character_
+  )
+}
+
+for (instrument_name in names(analysis_results)) {
+  locked_value <- locked_k[[instrument_name]]
+
+  if (is.na(locked_value)) {
+    next
+  }
+
+  result_obj <- analysis_results[[instrument_name]]
+  primary_final <- fit_locked_primary(result_obj, locked_value)
+  sensitivity_fit <- fit_locked_sensitivity(result_obj, locked_value)
+
+  final_loadings_list[[instrument_name]] <- primary_final$loadings_long
+  final_item_map_list[[instrument_name]] <- primary_final$item_map
+
+  if (is.null(sensitivity_fit$final_solution)) {
+    sensitivity_rows[[instrument_name]] <- tibble(
+      instrument = instrument_name,
+      locked_k = locked_value,
+      factor_id = paste0("F", seq_len(locked_value)),
+      matched_sensitivity_factor = NA_character_,
+      congruence = NA_real_,
+      primary_core_n = as.integer(
+        table(factor(primary_final$item_map$factor_id, levels = paste0("F", seq_len(locked_value))))
+      ),
+      sensitivity_core_n = NA_integer_,
+      shared_core_n = NA_integer_,
+      shared_core_prop = NA_real_,
+      factor_sensitivity_failure = TRUE,
+      instrument_sensitivity_failure = TRUE,
+      sensitivity_note = sensitivity_fit$failure_note
+    )
+    next
+  }
+
+  primary_matrix <- primary_final$loadings_matrix
+  sensitivity_matrix <- sensitivity_fit$final_solution$loadings_matrix
+
+  common_items <- intersect(rownames(primary_matrix), rownames(sensitivity_matrix))
+
+  if (length(common_items) < 3L) {
+    sensitivity_rows[[instrument_name]] <- tibble(
+      instrument = instrument_name,
+      locked_k = locked_value,
+      factor_id = paste0("F", seq_len(locked_value)),
+      matched_sensitivity_factor = NA_character_,
+      congruence = NA_real_,
+      primary_core_n = as.integer(
+        table(factor(primary_final$item_map$factor_id, levels = paste0("F", seq_len(locked_value))))
+      ),
+      sensitivity_core_n = NA_integer_,
+      shared_core_n = NA_integer_,
+      shared_core_prop = NA_real_,
+      factor_sensitivity_failure = TRUE,
+      instrument_sensitivity_failure = TRUE,
+      sensitivity_note = "Fewer than 3 common retained items across primary and sensitivity"
+    )
+    next
+  }
+
+  matching_tbl <- match_factors_by_congruence(
+    primary_matrix[common_items, , drop = FALSE],
+    sensitivity_matrix[common_items, , drop = FALSE]
+  )
+
+  sensitivity_final <- remap_sensitivity_solution(sensitivity_fit$final_solution, matching_tbl)
+  final_loadings_list[[paste0(instrument_name, "_sensitivity")]] <- sensitivity_final$loadings_long
+
+  factor_rows <- map_dfr(seq_len(locked_value), function(idx) {
+    factor_id <- paste0("F", idx)
+    matched_row <- matching_tbl |>
+      filter(primary_factor_id == factor_id)
+
+    primary_core <- primary_final$item_map |>
+      filter(.data$factor_id == factor_id) |>
+      pull(item_id)
+
+    sensitivity_core <- sensitivity_final$item_map |>
+      filter(.data$factor_id == factor_id) |>
+      pull(item_id)
+
+    shared_core <- intersect(primary_core, sensitivity_core)
+    shared_prop <- if (length(primary_core) > 0) {
+      length(shared_core) / length(primary_core)
+    } else {
+      NA_real_
+    }
+
+    factor_fail <- (matched_row$congruence < congruence_cutoff) ||
+      (!is.na(shared_prop) && shared_prop < core_item_retention_cutoff)
+
+    tibble(
+      instrument = instrument_name,
+      locked_k = locked_value,
+      factor_id = factor_id,
+      matched_sensitivity_factor = matched_row$sensitivity_factor_original,
+      congruence = matched_row$congruence,
+      primary_core_n = length(primary_core),
+      sensitivity_core_n = length(sensitivity_core),
+      shared_core_n = length(shared_core),
+      shared_core_prop = shared_prop,
+      factor_sensitivity_failure = factor_fail,
+      sensitivity_note = NA_character_
+    )
+  })
+
+  instrument_failure <- any(factor_rows$factor_sensitivity_failure, na.rm = TRUE)
+  factor_rows <- factor_rows |>
+    mutate(instrument_sensitivity_failure = instrument_failure)
+
+  sensitivity_rows[[instrument_name]] <- factor_rows
+}
+
+efa_final_loadings <- if (length(final_loadings_list) > 0) {
+  bind_rows(final_loadings_list) |>
+    mutate(
+      original_factor_id = coalesce(original_factor_id, factor_id)
+    ) |>
+    arrange(instrument, efa_sample, item_id, factor_id)
+} else {
+  empty_final_loadings
+}
+
+efa_final_item_map <- if (length(final_item_map_list) > 0) {
+  bind_rows(final_item_map_list) |>
+    mutate(original_factor_id = factor_id) |>
+    arrange(instrument, factor_id, desc(abs_loading), item_id)
+} else {
+  empty_item_map
+}
+
+efa_sensitivity_comparison <- if (length(sensitivity_rows) > 0) {
+  bind_rows(sensitivity_rows) |>
+    arrange(instrument, factor_id)
+} else {
+  empty_sensitivity
+}
+
+if (all(is.na(locked_k))) {
+  cat("No locked_k values set. Final loadings, final item map, and sensitivity comparison will be empty placeholders.\n")
+}
+
+assert_expected_count(nrow(efa_recommended_k), 4L, "EFA_Recommended_K row count")
+assert_required_columns(
+  efa_recommended_k,
+  c("instrument", "recommended_k", "factorability_flag", "recommendation_status", "recommendation_reason"),
+  "EFA_Recommended_K contract"
+)
+assert_unique_key_rows(efa_recommended_k, "instrument", "EFA_Recommended_K")
+
+if (nrow(efa_final_item_map) > 0) {
+  assert_required_columns(
+    efa_final_item_map,
+    c("instrument", "factor_id", "item_id"),
+    "EFA_Final_Item_Map contract"
+  )
+  assert_factor_id_format(efa_final_item_map$factor_id, "EFA_Final_Item_Map factor_id")
+  assert_unique_key_rows(efa_final_item_map, c("instrument", "item_id"), "EFA_Final_Item_Map unique clean items")
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 6A: Locked Solution Heatmaps
+
+```{r locked-heatmaps, results='asis', fig.width=12, fig.height=8}
+if (nrow(efa_final_loadings) == 0) {
+  cat("No locked-solution heatmaps yet because `locked_k` is still all `NA`. Use the preview heatmaps above to choose `k`, then rerun the file.\n")
+} else {
+  heatmap_groups <- efa_final_loadings |>
+    group_by(instrument, efa_sample) |>
+    group_split()
+
+  for (heat_df in heatmap_groups) {
+    instrument_name <- unique(heat_df$instrument)
+    sample_name <- unique(heat_df$efa_sample)
+    locked_value <- unique(heat_df$locked_k)
+
+    cat("\n\n### ", instrument_name, " (", sample_name, ")\n\n", sep = "")
+
+    print(
+      plot_loadings_heatmap(
+        heat_df,
+        title_text = glue::glue("{instrument_name}: Locked {str_to_title(sample_name)} Solution (k = {locked_value})"),
+        subtitle_text = glue::glue("* |loading| >= {cross_loading_cutoff}   ** |loading| >= {salient_loading_cutoff}")
+      )
+    )
+
+    cat("\n\n")
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 7: Export Outputs
+
+```{r export}
+write_csv(efa_diagnostics_summary, file.path(efa_diagnostics_dir, "EFA_Diagnostics_Summary.csv"))
+write_csv(efa_candidate_solutions, file.path(efa_diagnostics_dir, "EFA_Candidate_Solutions.csv"))
+write_csv(efa_recommended_k, file.path(script_dir, "EFA_Recommended_K.csv"))
+write_csv(efa_final_loadings, file.path(efa_diagnostics_dir, "EFA_Final_Loadings.csv"))
+write_csv(efa_sensitivity_comparison, file.path(efa_diagnostics_dir, "EFA_Sensitivity_Comparison.csv"))
+write_csv(efa_final_item_map, file.path(script_dir, "EFA_Final_Item_Map.csv"))
+
+cat("Exported:", file.path(efa_diagnostics_dir, "EFA_Diagnostics_Summary.csv"), "\n")
+cat("Exported:", file.path(efa_diagnostics_dir, "EFA_Candidate_Solutions.csv"), "\n")
+cat("Exported:", file.path(script_dir, "EFA_Recommended_K.csv"), "\n")
+cat("Exported:", file.path(efa_diagnostics_dir, "EFA_Final_Loadings.csv"), "\n")
+cat("Exported:", file.path(efa_diagnostics_dir, "EFA_Sensitivity_Comparison.csv"), "\n")
+cat("Exported:", file.path(script_dir, "EFA_Final_Item_Map.csv"), "\n")
+
+efa_analysis_manifest <- tibble(
+  output_type = c(
+    "efa_diagnostics_summary",
+    "efa_candidate_solutions",
+    "efa_recommended_k",
+    "efa_final_loadings",
+    "efa_sensitivity_comparison",
+    "efa_final_item_map"
+  ),
+  path = c(
+    file.path(efa_diagnostics_dir, "EFA_Diagnostics_Summary.csv"),
+    file.path(efa_diagnostics_dir, "EFA_Candidate_Solutions.csv"),
+    file.path(script_dir, "EFA_Recommended_K.csv"),
+    file.path(efa_diagnostics_dir, "EFA_Final_Loadings.csv"),
+    file.path(efa_diagnostics_dir, "EFA_Sensitivity_Comparison.csv"),
+    file.path(script_dir, "EFA_Final_Item_Map.csv")
+  ),
+  rows = c(
+    nrow(efa_diagnostics_summary),
+    nrow(efa_candidate_solutions),
+    nrow(efa_recommended_k),
+    nrow(efa_final_loadings),
+    nrow(efa_sensitivity_comparison),
+    nrow(efa_final_item_map)
+  ),
+  description = c(
+    "Per-instrument EFA diagnostics: KMO, factorability flag, recommended k",
+    "All candidate factor solutions (k=1..max) with fit statistics",
+    "Locked recommended k per instrument; consumed by 05_beliefs and 06_findings",
+    "Final factor loadings for locked solutions (primary + sensitivity samples)",
+    "Tucker congruence coefficients comparing primary vs sensitivity solutions",
+    "Final locked item-to-factor map (instrument, factor_id, item_id); consumed by 04_order_effects"
+  )
+)
+
+write_csv(efa_analysis_manifest, file.path(efa_diagnostics_dir, "EFA_Analysis_Manifest.csv"))
+knitr::kable(
+  efa_analysis_manifest |> select(-rows),
+  caption = "03_efa_analysis.qmd — Output Manifest"
+)
+```
+
+Side tangent, looked at AI beliefs variance and found some interesting ones with this
+
+```{r}
+library(tidyverse)
+
+# 1. Load the diagnostics file
+diag <- read_csv(file.path(efa_diagnostics_dir, "EFA_Diagnostics_Summary.csv"),
+                 show_col_types = FALSE)
+
+# 2. Filter for Beliefs, select columns, and rank by Variance (High to Low)
+beliefs_variance <- diag |>
+  filter(
+    instrument == "BeliefsAboutAI",
+    efa_sample == "primary",
+    kept_for_efa == TRUE
+  ) |>
+  select(item_id, item_text, item_variance, item_msa, n_levels) |>
+  arrange(desc(item_variance)) # 'desc' puts the highest variance at the top
+
+# 3. Export this to a new CSV for your records
+write_csv(beliefs_variance, file.path(audit_dir, "Beliefs_Variance_Ranked.csv"))
+
+# 4. Print it to the console so you can see it now
+cat("=== BeliefsAboutAI Items Ranked by Variance (High to Low) ===\n")
+print(beliefs_variance, n = 30)
+```

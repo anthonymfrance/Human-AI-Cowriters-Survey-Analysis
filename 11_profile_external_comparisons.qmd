@@ -1,0 +1,848 @@
+---
+title: "Profile Comparisons on ART, AI Use, and AI Beliefs"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+output-dir: "11_profile_external_comparisons"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+This report compares the named participant profiles against external variables that were not used to define the clusters.
+
+Profiles were defined in [10_participant_profiles.qmd](10_participant_profiles.qmd) using only validated factor scores from `IMI`, `WritingEfficacy`, and `AIReflection`.
+
+Comparison families in this script:
+
+- `ART` metrics
+- `Q17` AI-use indices
+- Beliefs theme averages
+- all `22` individual `BeliefsAboutAI` items
+
+Inference strategy:
+
+- omnibus `Kruskal-Wallis` tests for each variable
+- `BH` correction within each variable family
+- pairwise `Wilcoxon` follow-up tests only for variables that survive the omnibus family correction
+- `BH` correction across the three pairwise tests within each variable
+
+```{r setup}
+library(tidyverse)
+library(glue)
+library(knitr)
+source("scoring_helpers.R", local = knitr::knit_global())
+```
+
+## Setup
+
+```{r config}
+script_dir <- "11_profile_external_comparisons"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+profile_assignments_file <- file.path(
+  "10_participant_profiles", "csv", "Participant_Profile_Assignments.csv"
+)
+profile_signatures_file <- file.path(
+  "10_participant_profiles", "csv", "Profile_Signatures.csv"
+)
+q17_index_file <- file.path("07_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
+beliefs_metadata_file <- file.path(
+  "08_ai_beliefs_items", "csv", "AIBeliefs_Item_Metadata.csv"
+)
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
+
+required_files <- c(
+  profile_assignments_file,
+  profile_signatures_file,
+  q17_index_file,
+  beliefs_metadata_file,
+  master_wide_file
+)
+
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    paste0(
+      "Profile external comparisons are missing required inputs: ",
+      paste(missing_files, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+theme_order <- c(
+  "AI Literacy and Limitations",
+  "Academic Utility",
+  "Psychological Comfort and Anonymity",
+  "Practical Convenience",
+  "Risks and Concerns",
+  "Future Integration"
+)
+
+# Participants intentionally excluded from the Q17 index in script 07.
+# 9g0fXm: straight-line first-dup (all 5s) — excluded in 07_q17_ai_usePART2
+# to avoid inflating ai_tools_regular_n. They remain in all non-Q17 comparisons.
+known_q17_exclusions <- c("9g0fXm")
+```
+
+## Load Data
+
+```{r load-data}
+profile_assignments <- read_csv(profile_assignments_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+profile_signatures <- read_csv(profile_signatures_file, show_col_types = FALSE)
+cluster_levels <- profile_signatures$cluster
+
+q17_index <- read_csv(q17_index_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+beliefs_metadata <- read_csv(beliefs_metadata_file, show_col_types = FALSE) |>
+  mutate(theme = factor(theme, levels = theme_order))
+
+master_wide <- read_csv(master_wide_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+profile_assignments <- profile_assignments |>
+  mutate(cluster = factor(cluster, levels = cluster_levels))
+
+assert_expected_count(nrow(profile_assignments), 82L, "profile assignments row count")
+assert_unique_pid_rows(profile_assignments, "participant_id", "profile assignments")
+assert_unique_pid_rows(q17_index, "participant_id", "Q17 profile comparison")
+assert_expected_count(nrow(master_wide), 82L, "Final_Master_Wide profile comparison row count")
+assert_unique_pid_rows(master_wide, "participant_id", "Final_Master_Wide profile comparison")
+
+# Check for unexpected Q17 gaps (i.e. anyone missing who is NOT a known exclusion).
+q17_missing_from_profiles <- setdiff(profile_assignments$participant_id, q17_index$participant_id)
+unexpected_q17_missing <- setdiff(q17_missing_from_profiles, known_q17_exclusions)
+
+if (length(unexpected_q17_missing) > 0L) {
+  stop(
+    paste0(
+      "Q17 profile comparison: clustered participants missing from Q17 index: ",
+      paste(head(unexpected_q17_missing, 20), collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+if (length(q17_missing_from_profiles) > 0L) {
+  message(
+    "Dropping ", length(q17_missing_from_profiles),
+    " participant(s) from Q17 comparisons (known Q17 exclusions): ",
+    paste(q17_missing_from_profiles, collapse = ", ")
+  )
+}
+
+# profile_assignments_q17 excludes known Q17 exclusions.
+# profile_assignments (full) is kept intact for ART and beliefs comparisons.
+profile_assignments_q17 <- profile_assignments |>
+  filter(!participant_id %in% known_q17_exclusions)
+
+assert_identical_pid_sets(
+  list(
+    profile_assignments = profile_assignments$participant_id,
+    master_wide = master_wide$participant_id
+  ),
+  "profile comparison participant set"
+)
+```
+
+## Profile Overview
+
+```{r profile-overview}
+knitr::kable(profile_signatures)
+```
+
+## Build Analysis Frames
+
+```{r analysis-frames}
+# art_theme_df uses profile_assignments_q17 so the Q17 left_join has no gaps.
+# ART and beliefs columns for 9g0fXm are still present; only Q17 cols will be NA.
+art_theme_df <- profile_assignments_q17 |>
+  select(
+    participant_id,
+    cluster,
+    art_net_real_minus_fake,
+    art_adjusted_rate,
+    art_real_hits,
+    art_fake_false_alarms,
+    starts_with("BeliefsTheme_")
+  ) |>
+  left_join(
+    q17_index |>
+      select(
+        participant_id,
+        ai_tools_heard_n,
+        ai_tools_used_n,
+        ai_tools_regular_n,
+        ai_tools_often_n,
+        ai_use_mean,
+        ai_use_mean_heard_only
+      ),
+    by = "participant_id"
+  )
+
+assert_expected_count(nrow(art_theme_df), 82L - length(known_q17_exclusions), "profile comparison analysis rows")
+assert_unique_pid_rows(art_theme_df, "participant_id", "profile comparison analysis rows")
+
+beliefs_item_cols <- beliefs_metadata$item_col
+assert_required_columns(master_wide, beliefs_item_cols, "Final_Master_Wide beliefs item columns")
+
+# beliefs_item_df uses the full profile_assignments so 9g0fXm is included.
+beliefs_item_df <- profile_assignments |>
+  select(participant_id, cluster) |>
+  left_join(
+    master_wide |>
+      select(participant_id, all_of(beliefs_item_cols)),
+    by = "participant_id"
+  )
+
+assert_expected_count(nrow(beliefs_item_df), 82L, "beliefs item profile comparison rows")
+assert_unique_pid_rows(beliefs_item_df, "participant_id", "beliefs item profile comparison rows")
+```
+
+## Variable Families
+
+```{r variable-families}
+art_vars <- tribble(
+  ~variable, ~variable_label,
+  "art_net_real_minus_fake", "ART net (real - fake)",
+  "art_adjusted_rate", "ART adjusted rate",
+  "art_real_hits", "ART real hits",
+  "art_fake_false_alarms", "ART false alarms"
+)
+
+q17_vars <- tribble(
+  ~variable, ~variable_label,
+  "ai_tools_heard_n", "AI tools heard of",
+  "ai_tools_used_n", "AI tools used",
+  "ai_tools_regular_n", "AI tools used regularly",
+  "ai_tools_often_n", "AI tools used often",
+  "ai_use_mean", "Q17 average use",
+  "ai_use_mean_heard_only", "Q17 average use among heard-of tools"
+)
+
+theme_vars <- tibble(
+  variable = names(art_theme_df)[str_detect(names(art_theme_df), "^BeliefsTheme_")]
+) |>
+  mutate(
+    variable_label = variable |>
+      str_remove("^BeliefsTheme_") |>
+      str_replace_all("_", " "),
+    theme = factor(variable_label, levels = theme_order)
+  ) |>
+  arrange(theme) |>
+  select(-theme)
+
+beliefs_item_vars <- beliefs_metadata |>
+  filter(inferential) |>
+  transmute(
+    variable = item_col,
+    variable_label = item_label,
+    item_num,
+    item_text,
+    theme = as.character(theme)
+  )
+```
+
+## Statistical Helpers
+
+```{r helpers}
+build_family_descriptives <- function(df, var_tbl, family) {
+  long <- df |>
+    select(cluster, all_of(var_tbl$variable)) |>
+    pivot_longer(
+      cols = all_of(var_tbl$variable),
+      names_to = "variable",
+      values_to = "value"
+    ) |>
+    mutate(value = as.numeric(value)) |>
+    left_join(var_tbl, by = "variable") |>
+    group_by(family = family, variable, variable_label, cluster) |>
+    summarise(
+      n = sum(!is.na(value)),
+      mean = mean(value, na.rm = TRUE),
+      median = median(value, na.rm = TRUE),
+      sd = sd(value, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  extra_cols <- setdiff(names(var_tbl), c("variable", "variable_label"))
+  if (length(extra_cols) > 0) {
+    long <- long |>
+      left_join(var_tbl |> distinct(variable, across(all_of(extra_cols))), by = "variable")
+  }
+
+  long
+}
+
+run_kruskal_one <- function(df, variable, variable_label, family, extra = NULL) {
+  dat <- df |>
+    select(cluster, value = all_of(variable)) |>
+    mutate(
+      cluster = factor(cluster, levels = cluster_levels),
+      value = as.numeric(value)
+    ) |>
+    filter(!is.na(cluster), !is.na(value))
+
+  base_out <- tibble(
+    family = family,
+    variable = variable,
+    variable_label = variable_label,
+    n_total = nrow(dat),
+    groups_observed = n_distinct(dat$cluster),
+    kw_statistic = NA_real_,
+    kw_df = NA_real_,
+    p_value = NA_real_,
+    epsilon_sq = NA_real_,
+    note = NA_character_
+  )
+
+  if (!is.null(extra)) {
+    base_out <- bind_cols(base_out, extra)
+  }
+
+  if (nrow(dat) == 0L) {
+    return(base_out |> mutate(note = "No non-missing observations"))
+  }
+
+  if (n_distinct(dat$cluster) < 2L) {
+    return(base_out |> mutate(note = "Fewer than 2 observed profile groups"))
+  }
+
+  kw <- tryCatch(
+    kruskal.test(value ~ cluster, data = dat),
+    error = function(e) e
+  )
+
+  if (inherits(kw, "error")) {
+    return(base_out |> mutate(note = conditionMessage(kw)))
+  }
+
+  n_obs <- nrow(dat)
+  k_obs <- n_distinct(dat$cluster)
+  kw_stat <- unname(as.numeric(kw$statistic))
+  epsilon_sq_val <- if (n_obs > k_obs) {
+    max((kw_stat - k_obs + 1) / (n_obs - k_obs), 0)
+  } else {
+    NA_real_
+  }
+
+  base_out |>
+    mutate(
+      kw_statistic = kw_stat,
+      kw_df = unname(as.numeric(kw$parameter)),
+      p_value = unname(as.numeric(kw$p.value)),
+      epsilon_sq = epsilon_sq_val
+    )
+}
+
+run_kruskal_family <- function(df, var_tbl, family) {
+  extra_cols <- setdiff(names(var_tbl), c("variable", "variable_label"))
+
+  out <- map_dfr(seq_len(nrow(var_tbl)), function(i) {
+    extra_tbl <- if (length(extra_cols) > 0L) {
+      var_tbl[i, extra_cols, drop = FALSE]
+    } else {
+      NULL
+    }
+
+    run_kruskal_one(
+      df = df,
+      variable = var_tbl$variable[[i]],
+      variable_label = var_tbl$variable_label[[i]],
+      family = family,
+      extra = extra_tbl
+    )
+  })
+
+  out |>
+    mutate(
+      p_bh = p.adjust(p_value, method = "BH"),
+      sig_bh = !is.na(p_bh) & p_bh < 0.05
+    ) |>
+    arrange(p_bh, p_value, variable)
+}
+
+run_pairwise_one <- function(df, variable, variable_label, family, extra = NULL) {
+  dat <- df |>
+    select(cluster, value = all_of(variable)) |>
+    mutate(
+      cluster = factor(cluster, levels = cluster_levels),
+      value = as.numeric(value)
+    ) |>
+    filter(!is.na(cluster), !is.na(value))
+
+  observed_clusters <- dat |>
+    count(cluster, name = "n_group") |>
+    filter(n_group > 0) |>
+    pull(cluster) |>
+    as.character()
+
+  base_cols <- tibble(
+    family = family,
+    variable = variable,
+    variable_label = variable_label,
+    cluster_a = character(),
+    cluster_b = character(),
+    n_a = integer(),
+    n_b = integer(),
+    median_a = double(),
+    median_b = double(),
+    median_diff = double(),
+    p_value = double(),
+    note = character()
+  )
+
+  if (!is.null(extra)) {
+    base_cols <- bind_cols(base_cols, extra[rep(1, 0), , drop = FALSE])
+  }
+
+  if (length(observed_clusters) < 2L) {
+    return(base_cols)
+  }
+
+  pair_list <- combn(observed_clusters, 2, simplify = FALSE)
+
+  out <- map_dfr(pair_list, function(pair) {
+    sub <- dat |>
+      filter(as.character(cluster) %in% pair)
+
+    counts <- sub |>
+      count(cluster, name = "n_group") |>
+      mutate(cluster = as.character(cluster))
+
+    medians <- sub |>
+      group_by(cluster) |>
+      summarise(median_value = median(value, na.rm = TRUE), .groups = "drop") |>
+      mutate(cluster = as.character(cluster))
+
+    n_a <- counts$n_group[counts$cluster == pair[[1]]]
+    n_b <- counts$n_group[counts$cluster == pair[[2]]]
+    median_a <- medians$median_value[medians$cluster == pair[[1]]]
+    median_b <- medians$median_value[medians$cluster == pair[[2]]]
+
+    base_row <- tibble(
+      family = family,
+      variable = variable,
+      variable_label = variable_label,
+      cluster_a = pair[[1]],
+      cluster_b = pair[[2]],
+      n_a = n_a,
+      n_b = n_b,
+      median_a = median_a,
+      median_b = median_b,
+      median_diff = median_a - median_b,
+      p_value = NA_real_,
+      note = NA_character_
+    )
+
+    if (!is.null(extra)) {
+      base_row <- bind_cols(base_row, extra)
+    }
+
+    if (n_a < 2L || n_b < 2L) {
+      return(base_row |> mutate(note = "Insufficient observations for pairwise test"))
+    }
+
+    wt <- tryCatch(
+      wilcox.test(value ~ cluster, data = sub, exact = FALSE),
+      error = function(e) e
+    )
+
+    if (inherits(wt, "error")) {
+      return(base_row |> mutate(note = conditionMessage(wt)))
+    }
+
+    base_row |> mutate(p_value = unname(as.numeric(wt$p.value)))
+  })
+
+  out |>
+    mutate(
+      p_bh = p.adjust(p_value, method = "BH"),
+      sig_bh = !is.na(p_bh) & p_bh < 0.05,
+      direction = case_when(
+        is.na(median_diff) | median_diff == 0 ~ "No median difference",
+        median_diff > 0 ~ paste0(cluster_a, " > ", cluster_b),
+        TRUE ~ paste0(cluster_b, " > ", cluster_a)
+      )
+    ) |>
+    arrange(p_bh, p_value, cluster_a, cluster_b)
+}
+
+run_pairwise_for_significant <- function(df, sig_results) {
+  if (nrow(sig_results) == 0L) {
+    return(tibble(
+      family = character(),
+      variable = character(),
+      variable_label = character(),
+      cluster_a = character(),
+      cluster_b = character(),
+      n_a = integer(),
+      n_b = integer(),
+      median_a = double(),
+      median_b = double(),
+      median_diff = double(),
+      p_value = double(),
+      note = character(),
+      p_bh = double(),
+      sig_bh = logical(),
+      direction = character()
+    ))
+  }
+
+  extra_cols <- setdiff(names(sig_results), c(
+    "family", "variable", "variable_label", "n_total", "groups_observed",
+    "kw_statistic", "kw_df", "p_value", "epsilon_sq", "note", "p_bh", "sig_bh"
+  ))
+
+  map_dfr(seq_len(nrow(sig_results)), function(i) {
+    extra_tbl <- if (length(extra_cols) > 0L) {
+      sig_results[i, extra_cols, drop = FALSE]
+    } else {
+      NULL
+    }
+
+    run_pairwise_one(
+      df = df,
+      variable = sig_results$variable[[i]],
+      variable_label = sig_results$variable_label[[i]],
+      family = sig_results$family[[i]],
+      extra = extra_tbl
+    )
+  })
+}
+
+scale_or_zero <- function(x) {
+  if (all(is.na(x))) {
+    return(rep(NA_real_, length(x)))
+  }
+
+  if (sd(x, na.rm = TRUE) == 0) {
+    return(rep(0, length(x)))
+  }
+
+  as.numeric(scale(x))
+}
+```
+
+## Family Descriptives
+
+```{r descriptives}
+art_desc <- build_family_descriptives(art_theme_df, art_vars, "ART")
+q17_desc <- build_family_descriptives(art_theme_df, q17_vars, "Q17")
+theme_desc <- build_family_descriptives(art_theme_df, theme_vars, "Beliefs themes")
+beliefs_item_desc <- build_family_descriptives(beliefs_item_df, beliefs_item_vars, "Beliefs items")
+
+write_csv(art_desc, file.path(csv_dir, "ART_Profile_Descriptives.csv"))
+write_csv(q17_desc, file.path(csv_dir, "Q17_Profile_Descriptives.csv"))
+write_csv(theme_desc, file.path(csv_dir, "Beliefs_Theme_Profile_Descriptives.csv"))
+write_csv(beliefs_item_desc, file.path(csv_dir, "Beliefs_Item_Profile_Descriptives.csv"))
+```
+
+## Omnibus Tests
+
+```{r omnibus-tests}
+art_results <- run_kruskal_family(art_theme_df, art_vars, "ART")
+q17_results <- run_kruskal_family(art_theme_df, q17_vars, "Q17")
+theme_results <- run_kruskal_family(art_theme_df, theme_vars, "Beliefs themes")
+beliefs_item_results <- run_kruskal_family(beliefs_item_df, beliefs_item_vars, "Beliefs items") |>
+  arrange(theme, p_bh, p_value, item_num)
+
+omnibus_summary <- bind_rows(
+  art_results,
+  q17_results,
+  theme_results,
+  beliefs_item_results
+) |>
+  group_by(family) |>
+  summarise(
+    n_tests = n(),
+    n_sig_bh = sum(sig_bh, na.rm = TRUE),
+    top_signal = variable_label[which.min(coalesce(p_bh, Inf))],
+    best_p_bh = min(p_bh, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(best_p_bh = if_else(is.infinite(best_p_bh), NA_real_, best_p_bh))
+
+write_csv(art_results, file.path(csv_dir, "ART_Profile_Kruskal_Results.csv"))
+write_csv(q17_results, file.path(csv_dir, "Q17_Profile_Kruskal_Results.csv"))
+write_csv(theme_results, file.path(csv_dir, "Beliefs_Theme_Profile_Kruskal_Results.csv"))
+write_csv(beliefs_item_results, file.path(csv_dir, "Beliefs_Item_Profile_Kruskal_Results.csv"))
+write_csv(omnibus_summary, file.path(csv_dir, "Profile_Comparison_Omnibus_Summary.csv"))
+```
+
+```{r omnibus-summary-table}
+knitr::kable(omnibus_summary)
+```
+
+```{r art-q17-theme-table}
+art_q17_theme_table <- bind_rows(art_results, q17_results, theme_results) |>
+  select(family, variable_label, kw_statistic, kw_df, epsilon_sq, p_value, p_bh, sig_bh) |>
+  mutate(
+    kw_statistic = round(kw_statistic, 3),
+    epsilon_sq = round(epsilon_sq, 3),
+    p_value = signif(p_value, 3),
+    p_bh = signif(p_bh, 3)
+  )
+
+knitr::kable(art_q17_theme_table)
+```
+
+```{r beliefs-item-top-table}
+beliefs_item_top <- beliefs_item_results |>
+  select(theme, item_num, item_text, kw_statistic, epsilon_sq, p_value, p_bh, sig_bh) |>
+  arrange(p_bh, p_value, item_num) |>
+  slice_head(n = 12) |>
+  mutate(
+    kw_statistic = round(kw_statistic, 3),
+    epsilon_sq = round(epsilon_sq, 3),
+    p_value = signif(p_value, 3),
+    p_bh = signif(p_bh, 3),
+    item_text = str_trunc(item_text, width = 90)
+  )
+
+knitr::kable(beliefs_item_top)
+```
+
+## Pairwise Follow-Up Tests
+
+```{r pairwise-tests}
+art_pairwise <- run_pairwise_for_significant(art_theme_df, art_results |> filter(sig_bh))
+q17_pairwise <- run_pairwise_for_significant(art_theme_df, q17_results |> filter(sig_bh))
+theme_pairwise <- run_pairwise_for_significant(art_theme_df, theme_results |> filter(sig_bh))
+beliefs_item_pairwise <- run_pairwise_for_significant(
+  beliefs_item_df,
+  beliefs_item_results |> filter(sig_bh)
+) |>
+  arrange(theme, p_bh, p_value, item_num, cluster_a, cluster_b)
+
+write_csv(art_pairwise, file.path(csv_dir, "ART_Profile_Pairwise_Wilcoxon_Results.csv"))
+write_csv(q17_pairwise, file.path(csv_dir, "Q17_Profile_Pairwise_Wilcoxon_Results.csv"))
+write_csv(theme_pairwise, file.path(csv_dir, "Beliefs_Theme_Profile_Pairwise_Wilcoxon_Results.csv"))
+write_csv(
+  beliefs_item_pairwise,
+  file.path(csv_dir, "Beliefs_Item_Profile_Pairwise_Wilcoxon_Results.csv")
+)
+```
+
+```{r pairwise-summary-table}
+pairwise_summary <- bind_rows(
+  art_pairwise,
+  q17_pairwise,
+  theme_pairwise,
+  beliefs_item_pairwise
+) |>
+  group_by(family) |>
+  summarise(
+    n_pairwise_tests = n(),
+    n_sig_bh = sum(sig_bh, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+knitr::kable(pairwise_summary)
+```
+
+```{r beliefs-item-pairwise-top}
+beliefs_item_pairwise_top <- beliefs_item_pairwise |>
+  select(theme, item_num, item_text, cluster_a, cluster_b, median_a, median_b,
+         median_diff, p_value, p_bh, sig_bh, direction) |>
+  arrange(p_bh, p_value, item_num, cluster_a, cluster_b) |>
+  slice_head(n = 18) |>
+  mutate(
+    item_text = str_trunc(item_text, width = 80),
+    median_a = round(median_a, 2),
+    median_b = round(median_b, 2),
+    median_diff = round(median_diff, 2),
+    p_value = signif(p_value, 3),
+    p_bh = signif(p_bh, 3)
+  )
+
+knitr::kable(beliefs_item_pairwise_top)
+```
+
+## Heatmaps
+
+```{r heatmap-data}
+external_heatmap_df <- bind_rows(art_desc, q17_desc, theme_desc) |>
+  mutate(
+    family = factor(family, levels = c("ART", "Q17", "Beliefs themes")),
+    profile_z = ave(median, variable, FUN = scale_or_zero),
+    cell_label = formatC(median, format = "f", digits = 2),
+    cluster = factor(cluster, levels = cluster_levels),
+    variable_label = factor(variable_label, levels = rev(unique(variable_label)))
+  )
+
+top_beliefs_item_levels <- beliefs_item_results |>
+  arrange(p_bh, p_value, item_num) |>
+  slice_head(n = 12) |>
+  pull(variable)
+
+beliefs_item_heatmap_df <- beliefs_item_desc |>
+  filter(variable %in% top_beliefs_item_levels) |>
+  mutate(
+    item_label_wrapped = beliefs_item_vars$variable_label[
+      match(variable, beliefs_item_vars$variable)
+    ] |>
+      str_remove("^Item \\d+: ") |>
+      str_wrap(width = 52),
+    cluster = factor(cluster, levels = cluster_levels),
+    profile_z = ave(median, variable, FUN = scale_or_zero),
+    cell_label = formatC(median, format = "f", digits = 2)
+  )
+
+beliefs_item_levels <- beliefs_item_results |>
+  filter(variable %in% top_beliefs_item_levels) |>
+  arrange(p_bh, p_value, item_num) |>
+  pull(variable_label) |>
+  str_remove("^Item \\d+: ") |>
+  str_wrap(width = 52)
+
+beliefs_item_heatmap_df <- beliefs_item_heatmap_df |>
+  mutate(item_label_wrapped = factor(item_label_wrapped, levels = rev(beliefs_item_levels)))
+```
+
+```{r external-heatmap-plot, fig.width=11, fig.height=8}
+external_heatmap_plot <- ggplot(
+  external_heatmap_df,
+  aes(x = cluster, y = variable_label, fill = profile_z)
+) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  facet_wrap(~ family, scales = "free_y", ncol = 1) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    name = "Profile z"
+  ) +
+  labs(
+    title = "Profile Differences Across ART, Q17, and Beliefs Themes",
+    subtitle = "Cells show profile medians; fill is standardized within variable across profiles",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Profile_External_Medians_Heatmap.png"),
+  plot = external_heatmap_plot,
+  width = 11,
+  height = 8,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "Profile_External_Medians_Heatmap.pdf"),
+  plot = external_heatmap_plot,
+  width = 11,
+  height = 8,
+  units = "in",
+  bg = "white"
+)
+
+external_heatmap_plot
+```
+
+```{r beliefs-item-heatmap-plot, fig.width=11, fig.height=8.5}
+beliefs_item_heatmap_plot <- ggplot(
+  beliefs_item_heatmap_df,
+  aes(x = cluster, y = item_label_wrapped, fill = profile_z)
+) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 2.9) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    name = "Profile z"
+  ) +
+  labs(
+    title = "Top Beliefs Items by Profile",
+    subtitle = "Top 12 item-level omnibus signals; cells show profile medians",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold")
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Profile_Beliefs_Items_Top12_Heatmap.png"),
+  plot = beliefs_item_heatmap_plot,
+  width = 11,
+  height = 8.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "Profile_Beliefs_Items_Top12_Heatmap.pdf"),
+  plot = beliefs_item_heatmap_plot,
+  width = 11,
+  height = 8.5,
+  units = "in",
+  bg = "white"
+)
+
+beliefs_item_heatmap_plot
+```
+
+## Output Manifest
+
+```{r manifest}
+manifest <- tibble(
+  object = c(
+    "art_descriptives",
+    "q17_descriptives",
+    "beliefs_theme_descriptives",
+    "beliefs_item_descriptives",
+    "art_kruskal_results",
+    "q17_kruskal_results",
+    "beliefs_theme_kruskal_results",
+    "beliefs_item_kruskal_results",
+    "omnibus_summary",
+    "art_pairwise_results",
+    "q17_pairwise_results",
+    "beliefs_theme_pairwise_results",
+    "beliefs_item_pairwise_results"
+  ),
+  file = c(
+    "ART_Profile_Descriptives.csv",
+    "Q17_Profile_Descriptives.csv",
+    "Beliefs_Theme_Profile_Descriptives.csv",
+    "Beliefs_Item_Profile_Descriptives.csv",
+    "ART_Profile_Kruskal_Results.csv",
+    "Q17_Profile_Kruskal_Results.csv",
+    "Beliefs_Theme_Profile_Kruskal_Results.csv",
+    "Beliefs_Item_Profile_Kruskal_Results.csv",
+    "Profile_Comparison_Omnibus_Summary.csv",
+    "ART_Profile_Pairwise_Wilcoxon_Results.csv",
+    "Q17_Profile_Pairwise_Wilcoxon_Results.csv",
+    "Beliefs_Theme_Profile_Pairwise_Wilcoxon_Results.csv",
+    "Beliefs_Item_Profile_Pairwise_Wilcoxon_Results.csv"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "Profile_External_Comparison_Manifest.csv"))
+knitr::kable(manifest)
+```

@@ -1,0 +1,1215 @@
+---
+title: "Cowriters Survey Order Effects Analysis"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+output-dir: "04_order_effects"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+# Order Effects Analysis
+
+This script is a downstream inferential step after the EFA
+export/analysis pipeline. It builds composite scores from the locked EFA
+item map, compares Traditional-First versus AI-First participants, and
+tests Tool × Order interactions with a secondary topic-controlled model.
+
+```{r setup}
+
+library(tidyverse)
+library(knitr)
+if (!file.exists("scoring_helpers.R")) {
+  stop("Required file scoring_helpers.R not found.", call. = FALSE)
+}
+source("scoring_helpers.R", local = knitr::knit_global())
+set.seed(42L)
+```
+
+## Section 1: Paths and Input Data
+
+```{r load-data}
+order_levels <- c("Traditional_First", "AI_First")
+topic_levels <- c("Metaphor", "Category")
+adjustment_methods <- c("BH", "bonferroni")
+
+script_dir <- "04_order_effects"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
+final_item_map_file <- file.path("03_efa_analysis", "EFA_Final_Item_Map.csv")
+factor_scores_all_file <- file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
+beliefs_wide_file <- file.path("05_beliefs_item_analysis", "csv", "BeliefsAboutAI_Wide.csv")
+factor_name_map_file <- file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv")
+beliefs_long_file <- file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv")
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+master_wide <- read_csv(master_wide_file, show_col_types = FALSE)
+tracking <- read_csv(
+  "Participant Tracking - IDs and Conditions Table.csv",
+  show_col_types = FALSE
+)
+final_item_map <- read_csv(final_item_map_file, show_col_types = FALSE)
+
+required_master_cols <- c("participant_id", "order", "condition_1", "condition_2")
+missing_master_cols <- setdiff(required_master_cols, names(master_wide))
+if (length(missing_master_cols) > 0) {
+  stop(
+    paste0(
+      basename(master_wide_file), " is missing required columns: ",
+      paste(missing_master_cols, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+required_tracking_cols <- c("ParticipantID", "Topic 1", "Topic 2", "Condition 1", "Condition 2")
+missing_tracking_cols <- setdiff(required_tracking_cols, names(tracking))
+if (length(missing_tracking_cols) > 0) {
+  stop(
+    paste0(
+      "Participant tracking file is missing required columns: ",
+      paste(missing_tracking_cols, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+assert_required_columns(final_item_map, c("instrument", "factor_id", "item_id"), "EFA_Final_Item_Map")
+assert_factor_id_format(final_item_map$factor_id, "EFA_Final_Item_Map factor_id")
+```
+
+## Section 2: Build Analysis-Ready Participant Table (Order + Topic)
+
+```{r build-participant-table}
+
+tracking_topics <- tracking |>
+  transmute(
+    participant_id = as.character(ParticipantID),
+    topic_1 = as.character(`Topic 1`),
+    topic_2 = as.character(`Topic 2`),
+    condition_1_track = as.character(`Condition 1`),
+    condition_2_track = as.character(`Condition 2`)
+  ) |>
+  filter(!is.na(participant_id))
+
+assert_unique_pid_rows(
+  tracking_topics,
+  pid_col = "participant_id",
+  context_label = "tracking_topics"
+)
+
+participant_analysis <- master_wide |>
+  mutate(participant_id = as.character(participant_id)) |>
+  inner_join(tracking_topics, by = "participant_id") |>
+  mutate(
+    order = factor(order, levels = order_levels),
+    traditional_topic = case_when(
+      condition_1 == "Alone" ~ topic_1,
+      condition_2 == "Alone" ~ topic_2,
+      TRUE ~ NA_character_
+    ),
+    ai_topic = case_when(
+      condition_1 == "LLM" ~ topic_1,
+      condition_2 == "LLM" ~ topic_2,
+      TRUE ~ NA_character_
+    ),
+    traditional_topic = factor(traditional_topic, levels = topic_levels),
+    ai_topic          = factor(ai_topic,          levels = topic_levels),
+    # first_topic = the article type in session 1 (between-subjects covariate).
+    # Because design is fully counterbalanced, first_topic = traditional_topic
+    # for Traditional-First participants and = ai_topic for AI-First participants.
+    # It is constant per participant and goes outside Error() in the ANOVA.
+    first_topic = factor(
+      case_when(
+        order == "Traditional_First" ~ as.character(traditional_topic),
+        order == "AI_First"          ~ as.character(ai_topic),
+        TRUE                         ~ NA_character_
+      ),
+      levels = topic_levels
+    )
+  )
+
+assert_expected_count(nrow(participant_analysis), 82L, "participant_analysis row count")
+assert_unique_pid_rows(participant_analysis, "participant_id", "participant_analysis")
+assert_no_missing_values(
+  participant_analysis,
+  c("participant_id", "order", "condition_1", "condition_2", "topic_1", "topic_2", "first_topic"),
+  "participant_analysis"
+)
+
+order_mismatch <- participant_analysis |>
+  filter(
+    !is.na(order),
+    !is.na(condition_1),
+    !is.na(condition_2),
+    (
+      order == "Traditional_First" & !(condition_1 == "Alone" & condition_2 == "LLM")
+    ) |
+      (
+        order == "AI_First" & !(condition_1 == "LLM" & condition_2 == "Alone")
+      )
+  )
+
+if (nrow(order_mismatch) > 0) {
+  stop(
+    paste0(
+      "Order/condition mismatch detected for participants: ",
+      paste(order_mismatch$participant_id, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+participant_topic_summary <- participant_analysis |>
+  summarise(
+    n_participants = n(),
+    traditional_topic_missing = sum(is.na(traditional_topic)),
+    ai_topic_missing = sum(is.na(ai_topic)),
+    order_missing = sum(is.na(order))
+  )
+
+write_csv(participant_topic_summary, file.path(csv_dir, "Participant_Topic_Summary.csv"))
+```
+
+## Section 3: Build Unit-Weighted Composite Scores from Locked Item Map
+
+```{r build-composites}
+
+instrument_prefix_map <- tribble(
+  ~instrument,       ~item_prefix,
+  "IMI",            "IMI_",
+  "WritingEfficacy", "Efficacy_",
+  "AIReflection",   "Refl_",
+  "BeliefsAboutAI", "Beliefs_"
+)
+
+locked_item_map <- if ("efa_sample" %in% names(final_item_map)) {
+  final_item_map |>
+    filter(efa_sample == "primary")
+} else {
+  final_item_map
+}
+
+if ("clean_item" %in% names(locked_item_map)) {
+  locked_item_map <- locked_item_map |> filter(clean_item)
+}
+
+locked_item_map <- locked_item_map |>
+  filter(!is.na(instrument), !is.na(factor_id), !is.na(item_id)) |>
+  distinct(instrument, factor_id, item_id)
+
+if (nrow(locked_item_map) == 0) {
+  stop(paste0("No locked clean items found in ", final_item_map_file, "."), call. = FALSE)
+}
+
+print(unique(locked_item_map$instrument))
+print(filter(locked_item_map, grepl("rit", instrument, ignore.case = TRUE)))
+
+composite_membership <- locked_item_map |>
+  left_join(instrument_prefix_map, by = "instrument") |>
+  mutate(
+    item_col = paste0(item_prefix, item_id),
+    composite = paste0(instrument, "_", factor_id)
+  )
+
+if (any(is.na(composite_membership$item_prefix))) {
+  bad_instruments <- composite_membership |>
+    filter(is.na(item_prefix)) |>
+    distinct(instrument) |>
+    pull(instrument)
+
+  stop(
+    paste0(
+      "Instrument-to-prefix mapping missing for: ",
+      paste(bad_instruments, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+missing_item_cols <- setdiff(unique(composite_membership$item_col), names(participant_analysis))
+if (length(missing_item_cols) > 0) {
+  stop(
+    paste0(
+      "Composite item columns missing from Final_Master_Wide: ",
+      paste(missing_item_cols, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+composite_specs <- composite_membership |>
+  group_by(instrument, factor_id, composite) |>
+  summarise(
+    item_cols = list(sort(unique(item_col))),
+    n_items = n(),
+    composite_meaning = paste0(
+      first(instrument),
+      " ",
+      first(factor_id),
+      " unit-weighted mean of clean items"
+    ),
+    rowmeans_na_rm = FALSE,
+    .groups = "drop"
+  )
+
+assert_nonempty_df(composite_specs, "composite_specs")
+
+participant_with_composites <- participant_analysis
+
+for (i in seq_len(nrow(composite_specs))) {
+  comp_name <- composite_specs$composite[[i]]
+  item_cols <- composite_specs$item_cols[[i]]
+
+  participant_with_composites[[comp_name]] <- rowMeans(
+    participant_with_composites[, item_cols, drop = FALSE],
+    # Hard stop on partial composites: because these are unit-weighted means of
+    # locked EFA item sets, every contributing item must be present.
+    na.rm = FALSE
+  )
+}
+
+composite_cols <- composite_specs$composite
+
+composite_score_summary <- participant_with_composites |>
+  summarise(
+    across(
+      all_of(composite_cols),
+      list(
+        mean = ~ mean(.x, na.rm = TRUE),
+        sd = ~ sd(.x, na.rm = TRUE),
+        n_nonmissing = ~ sum(!is.na(.x))
+      ),
+      .names = "{.col}__{.fn}"
+    )
+  )
+
+write_csv(composite_membership, file.path(csv_dir, "Composite_Item_Membership.csv"))
+write_csv(composite_specs, file.path(csv_dir, "Composite_Specs.csv"))
+write_csv(composite_score_summary, file.path(csv_dir, "Composite_Score_Summary.csv"))
+```
+
+## Section 4: Long Composite Table + Descriptives by Order
+
+```{r descriptives}
+
+composite_long <- participant_with_composites |>
+  select(
+    participant_id,
+    order,
+    traditional_topic,
+    ai_topic,
+    all_of(composite_cols)
+  ) |>
+  pivot_longer(
+    cols = all_of(composite_cols),
+    names_to = "composite",
+    values_to = "score"
+  )
+
+order_descriptives <- composite_long |>
+  group_by(composite, order) |>
+  summarise(
+    n = sum(!is.na(score)),
+    mean = mean(score, na.rm = TRUE),
+    sd = sd(score, na.rm = TRUE),
+    median = median(score, na.rm = TRUE),
+    iqr = IQR(score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(composite, order)
+
+write_csv(composite_long, file.path(csv_dir, "Composite_Long.csv"))
+write_csv(order_descriptives, file.path(csv_dir, "Order_Descriptives_By_Composite.csv"))
+```
+
+```{r descriptive-plots, fig.width=10, fig.height=6}
+
+make_filename_safe <- function(x) {
+  stringr::str_replace_all(x, "[^A-Za-z0-9_\\-]+", "_")
+}
+
+for (comp in composite_cols) {
+  p <- composite_long |>
+    filter(composite == comp) |>
+    ggplot(aes(x = order, y = score, fill = order)) +
+    geom_violin(alpha = 0.35, width = 0.9, color = NA, na.rm = TRUE) +
+    geom_boxplot(width = 0.18, outlier.alpha = 0.6, na.rm = TRUE) +
+    scale_fill_manual(values = c(
+      "Traditional_First" = "#4f79b7",
+      "AI_First" = "#c96b3b"
+    )) +
+    labs(
+      title = paste0("Order Split: ", comp),
+      x = "Order Group",
+      y = "Composite Score",
+      fill = NULL
+    ) +
+    theme_minimal(base_size = 12)
+
+  file_stub <- make_filename_safe(comp)
+
+  ggsave(
+    filename = file.path(plot_dir, paste0(file_stub, "_order_violin_box.png")),
+    plot = p,
+    width = 10,
+    height = 6,
+    units = "in",
+    dpi = 300,
+    bg = "white"
+  )
+
+  ggsave(
+    filename = file.path(plot_dir, paste0(file_stub, "_order_violin_box.pdf")),
+    plot = p,
+    width = 10,
+    height = 6,
+    units = "in",
+    bg = "white"
+  )
+}
+```
+
+## Section 5: Mann-Whitney U Tests by Order
+
+**Multiple-comparison correction strategy:** Composite-level tests
+(Section 5) form one correction family — all EFA-derived composites
+tested for order effects. Item-level tests (Section 5b) use a two-tier
+strategy: BH correction within each instrument (controls FDR per
+instrument) and Bonferroni correction globally across all items. Mixed
+ANOVA interaction p-values (Section 6) are corrected within each model
+type (primary, topic-controlled) separately.
+
+```{r mann-whitney}
+
+# Two-vector wilcox: x = Trad-First scores, y = AI-First scores.
+# wilcox.test() returns the rank-sum W statistic for x, not U directly.
+# Convert W -> U before computing rank-biserial effect size.
+#
+# Sign convention: positive rb -> Traditional-First tends higher.
+# This depends on W being the rank-sum for the Traditional-First group,
+# which requires trad_vec to always be passed as x (first argument).
+# The formula interface (used in the item-level section below) also produces
+# W for the first factor level of `order`, which is "Traditional_First"
+# because order_levels is defined with that level first.
+rank_biserial_from_u <- function(u_stat, n1, n2) {
+  (2 * as.numeric(u_stat) / (n1 * n2)) - 1
+}
+
+mann_whitney_results <- map_dfr(composite_cols, function(comp) {
+  dat <- participant_with_composites |>
+    select(order, all_of(comp)) |>
+    rename(score = all_of(comp)) |>
+    filter(!is.na(order), !is.na(score))
+
+  trad_vec <- dat |> filter(order == "Traditional_First") |> pull(score)
+  ai_vec   <- dat |> filter(order == "AI_First")          |> pull(score)
+
+  n_trad <- length(trad_vec)
+  n_ai   <- length(ai_vec)
+
+  med_trad <- median(trad_vec)
+  med_ai   <- median(ai_vec)
+
+  if (n_trad < 2 || n_ai < 2) {
+    return(tibble(
+      composite = comp,
+      n_traditional_first = n_trad,
+      n_ai_first = n_ai,
+      median_traditional_first = med_trad,
+      median_ai_first = med_ai,
+      w_stat = NA_real_,
+      u_stat = NA_real_,
+      p_value = NA_real_,
+      estimate_hl = NA_real_,
+      conf_low = NA_real_,
+      conf_high = NA_real_,
+      rank_biserial = NA_real_,
+      note = "insufficient sample size"
+    ))
+  }
+
+  test <- suppressWarnings(
+    wilcox.test(
+      x         = trad_vec,
+      y         = ai_vec,
+      exact     = FALSE,
+      conf.int  = TRUE,
+      conf.level = 0.95
+    )
+  )
+
+  w <- as.numeric(unname(test$statistic))
+
+
+  tibble(
+    composite = comp,
+    n_traditional_first = n_trad,
+    n_ai_first = n_ai,
+    median_traditional_first = med_trad,
+    median_ai_first = med_ai,
+    w_stat = w,
+    u_stat = as.numeric(w),
+    p_value = test$p.value,
+    estimate_hl = if (!is.null(test$estimate)) as.numeric(test$estimate) else NA_real_,
+    conf_low  = if (!is.null(test$conf.int)) as.numeric(test$conf.int[[1]]) else NA_real_,
+    conf_high = if (!is.null(test$conf.int)) as.numeric(test$conf.int[[2]]) else NA_real_,
+    rank_biserial = rank_biserial_from_u(w, n_trad, n_ai),
+    note = NA_character_
+  )
+}) |>
+  left_join(
+    composite_specs |>
+      select(composite, instrument, factor_id, n_items, composite_meaning, rowmeans_na_rm),
+    by = "composite"
+  ) |>
+  mutate(
+    p_bh = p.adjust(p_value, method = adjustment_methods[[1]]),
+    p_bonferroni = p.adjust(p_value, method = adjustment_methods[[2]]),
+    effect_size = rank_biserial
+  ) |>
+  select(
+    composite, instrument, factor_id, n_items, composite_meaning, rowmeans_na_rm,
+    n_traditional_first, n_ai_first, median_traditional_first, median_ai_first,
+    w_stat, u_stat, p_value, p_bh, p_bonferroni, estimate_hl, conf_low, conf_high,
+    effect_size, note
+  ) |>
+  arrange(p_bh, p_value)
+
+write_csv(mann_whitney_results, file.path(csv_dir, "Mann_Whitney_Order_Comparisons.csv"))
+```
+
+```{r}
+# ============================================================
+# S5b: Item-Level Order Effects (Mann-Whitney per item)
+# ============================================================
+
+# Prefix map: instrument name → column prefix in master data
+item_prefix_map <- tribble(
+  ~instrument,       ~prefix,    ~n_items,
+  "IMI",             "IMI_",         18,
+  "WritingEfficacy", "Efficacy_",    20,
+  "AIReflection",    "Refl_",        12,
+  "BeliefsAboutAI",  "Beliefs_",     22
+)
+
+# Build long item-level dataframe
+item_long <- item_prefix_map |>
+  pmap_dfr(function(instrument, prefix, n_items) {
+    cols <- paste0(prefix, seq_len(n_items))
+    missing <- setdiff(cols, names(participant_with_composites))
+    if (length(missing) > 0) {
+      stop(
+        paste0(
+          "Item-level order effects are missing required columns for ",
+          instrument, ": ", paste(missing, collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+    participant_with_composites |>
+      select(participant_id, order, all_of(cols)) |>
+      pivot_longer(
+        cols = all_of(cols),
+        names_to  = "column",
+        values_to = "score"
+      ) |>
+      mutate(
+        instrument = instrument,
+        item_num   = as.integer(str_extract(column, "\\d+$")),
+        item_label = paste0(instrument, "_item", item_num)
+      )
+  })
+
+# Mann-Whitney per item
+item_mw_results <- item_long |>
+  group_by(instrument, item_label, item_num) |>
+  group_modify(function(df, keys) {
+    trad <- df |> filter(order == "Traditional_First") |> pull(score)
+    ai   <- df |> filter(order == "AI_First")          |> pull(score)
+    
+    if (length(trad) < 3 || length(ai) < 3) {
+      return(tibble(
+        n_traditional_first = length(trad),
+        n_ai_first          = length(ai),
+        w_stat = NA_real_, u_stat = NA_real_, p_value = NA_real_,
+        estimate_hl = NA_real_, conf_low = NA_real_, conf_high = NA_real_,
+        rank_biserial = NA_real_, note = "Insufficient data"
+      ))
+    }
+    
+    test <- wilcox.test(trad, ai, exact = FALSE, conf.int = TRUE)
+    w    <- as.numeric(unname(test$statistic))
+    r_rb <- rank_biserial_from_u(w, length(trad), length(ai))
+    
+    tibble(
+      n_traditional_first = length(trad),
+      n_ai_first          = length(ai),
+      w_stat        = w,
+      u_stat        = w,
+      p_value       = test$p.value,
+      estimate_hl   = test$estimate,
+      conf_low      = test$conf.int[[1]],
+      conf_high     = test$conf.int[[2]],
+      rank_biserial = as.numeric(r_rb),
+      note          = NA_character_
+    )
+  }) |>
+  ungroup()
+
+# BH correction within each instrument, Bonferroni global
+item_mw_results <- item_mw_results |>
+  group_by(instrument) |>
+  mutate(p_bh_within = p.adjust(p_value, method = "BH")) |>
+  ungroup() |>
+  mutate(p_bonferroni_global = p.adjust(p_value, method = "bonferroni")) |>
+  arrange(instrument, item_num)
+
+# Flag significant items
+item_mw_results <- item_mw_results |>
+  mutate(
+    sig_within_instrument = p_bh_within       < 0.05,
+    sig_global            = p_bonferroni_global < 0.05
+  )
+
+# Export
+write_csv(
+  item_mw_results,
+  file.path(csv_dir, "Item_Level_Order_Comparisons.csv")
+)
+
+# Summary table — significant items only
+sig_items <- item_mw_results |>
+  filter(sig_within_instrument) |>
+  select(instrument, item_label, n_traditional_first, n_ai_first,
+         w_stat, p_value, p_bh_within, p_bonferroni_global, rank_biserial)
+
+cat("\n--- Significant items (BH within instrument) ---\n")
+if (nrow(sig_items) == 0) {
+  cat("None.\n")
+} else {
+  print(kable(sig_items))
+}
+```
+
+## Section 6: Predeclared Tool-Comparable Pairs and 2×2 Mixed ANOVAs
+
+```{r mixed-anovas}
+
+extract_aov_table <- function(aov_fit) {
+  # Flattens a nested summary(aov(..., Error(...))) object into one tidy table
+  # with term-level statistics and the originating error stratum label.
+  summary_obj <- summary(aov_fit)
+
+  map2_dfr(summary_obj, names(summary_obj), function(stratum_obj, stratum_name) {
+    if (!is.list(stratum_obj) || length(stratum_obj) == 0) {
+      return(tibble())
+    }
+
+    tab <- stratum_obj[[1]]
+
+    if (!is.data.frame(tab)) {
+      return(tibble())
+    }
+
+    tab |>
+      as.data.frame() |>
+      tibble::rownames_to_column("term") |>
+      as_tibble() |>
+      mutate(stratum = stratum_name)
+  })
+}
+
+extract_term <- function(aov_fit, term_name) {
+  tbl <- extract_aov_table(aov_fit)
+
+  if (nrow(tbl) == 0) {
+    return(tibble(
+      term = term_name,
+      stratum = NA_character_,
+      df = NA_real_,
+      sum_sq = NA_real_,
+      mean_sq = NA_real_,
+      f_value = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  p_col <- names(tbl)[str_detect(names(tbl), "Pr\\(>F\\)")]
+  f_col <- names(tbl)[str_detect(names(tbl), "F value")]
+
+  if (length(p_col) > 1 || length(f_col) > 1) {
+    stop(
+      paste0(
+        "ANOVA term extraction found ambiguous statistic columns. ",
+        "Detected p columns: ", paste(p_col, collapse = ", "),
+        " | F columns: ", paste(f_col, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  row <- tbl |>
+    filter(term == term_name) |>
+    slice(1)
+
+  if (nrow(row) == 0) {
+    return(tibble(
+      term = term_name,
+      stratum = NA_character_,
+      df = NA_real_,
+      sum_sq = NA_real_,
+      mean_sq = NA_real_,
+      f_value = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  tibble(
+    term = term_name,
+    stratum = row$stratum,
+    df = if ("Df" %in% names(row)) as.numeric(row$Df) else NA_real_,
+    sum_sq = if ("Sum Sq" %in% names(row)) as.numeric(row$`Sum Sq`) else NA_real_,
+    mean_sq = if ("Mean Sq" %in% names(row)) as.numeric(row$`Mean Sq`) else NA_real_,
+    f_value = if (length(f_col) == 1) as.numeric(row[[f_col]]) else NA_real_,
+    p_value = if (length(p_col) == 1) as.numeric(row[[p_col]]) else NA_real_
+  )
+}
+
+# Predeclared tool-comparable pairs: each row declares one Traditional-side
+# instrument and one AI-side instrument to compare at matched factor IDs (F1,
+# F2, ...). This is intentionally explicit so the pairing logic can be edited
+# without changing model code.
+pairing_map <- tribble(
+  ~traditional_instrument, ~ai_instrument,
+  "IMI", "AIReflection",
+  "WritingEfficacy", "BeliefsAboutAI"
+)
+
+composite_lookup <- composite_specs |>
+  select(instrument, factor_id, composite) |>
+  distinct()
+
+pair_specs <- pairing_map |>
+  left_join(
+    composite_lookup |>
+      rename(
+        traditional_instrument = instrument,
+        traditional_composite = composite
+      ),
+    by = "traditional_instrument"
+  ) |>
+  left_join(
+    composite_lookup |>
+      rename(
+        ai_instrument = instrument,
+        ai_composite = composite
+      ),
+    by = c("ai_instrument", "factor_id")
+  ) |>
+  filter(!is.na(traditional_composite), !is.na(ai_composite)) |>
+  mutate(
+    pair_id = paste0(traditional_instrument, "_", factor_id, "__vs__", ai_instrument, "_", factor_id),
+    construct = factor_id
+  ) |>
+  distinct(pair_id, construct, traditional_instrument, ai_instrument, traditional_composite, ai_composite)
+
+# Check if any declared pairs were dropped (e.g. BeliefsAboutAI has no locked
+# EFA factors because KMO < 0.50 — its composite rows will be absent).
+# This is expected for BeliefsAboutAI; a hard stop fires for anything else.
+declared_instruments <- unique(c(pairing_map$traditional_instrument, pairing_map$ai_instrument))
+available_locked_instruments <- unique(composite_lookup$instrument)
+dropped_instruments   <- setdiff(declared_instruments, available_locked_instruments)
+if (length(dropped_instruments) > 0) {
+  expected_drops <- c("BeliefsAboutAI")
+  unexpected_drops <- setdiff(dropped_instruments, expected_drops)
+
+  cat(
+    "NOTE: The following instruments were declared in pairing_map but have no ",
+    "locked EFA composites and were dropped before pair_specs was built: ",
+    paste(dropped_instruments, collapse = ", "), "\n"
+  )
+
+  if (length(unexpected_drops) > 0) {
+    stop(
+      paste0(
+        "Unexpected instrument(s) dropped from pair_specs: ",
+        paste(unexpected_drops, collapse = ", "),
+        ". Check that locked_k is set for these instruments in 03_efa_analysis.qmd."
+      ),
+      call. = FALSE
+    )
+  }
+
+  cat("BeliefsAboutAI drop is expected (KMO < 0.50, not factorable).\n")
+}
+
+write_csv(pair_specs, file.path(csv_dir, "Tool_Comparable_Pair_Specs.csv"))
+
+tool_factor_levels <- c("Traditional", "AI")
+traditional_score_col <- "traditional_score"
+ai_score_col <- "ai_score"
+
+mixed_anova_rows <- if (nrow(pair_specs) == 0) {
+  tibble(
+    pair_id = character(),
+    construct = character(),
+    traditional_composite = character(),
+    ai_composite = character(),
+    n_participants = integer(),
+    model = character(),
+    tool_order_f = numeric(),
+    tool_order_p = numeric(),
+    note = character()
+  )
+} else {
+  map_dfr(seq_len(nrow(pair_specs)), function(i) {
+    spec <- pair_specs[i, ]
+
+   long_dat <- participant_with_composites |>
+  transmute(
+    participant_id,
+    order,
+    first_topic,           # ADD THIS
+    traditional_topic,
+    ai_topic,
+    traditional_score = .data[[spec$traditional_composite[[1]]]],
+    ai_score = .data[[spec$ai_composite[[1]]]]
+  ) |>
+      pivot_longer(
+        cols = all_of(c(traditional_score_col, ai_score_col)),
+        names_to = "tool_row",
+        values_to = "score"
+      ) |>
+      mutate(
+        Tool = factor(if_else(tool_row == traditional_score_col, tool_factor_levels[[1]], tool_factor_levels[[2]]),
+                      levels = tool_factor_levels),
+        # Topic intentionally omitted here — first_topic (between-subjects)
+        # is carried from participant_with_composites and used in the ANOVA directly.
+        Order = factor(order, levels = order_levels)
+      ) |>
+      filter(!is.na(score), !is.na(Order), !is.na(Tool))
+
+    if (n_distinct(long_dat$participant_id) < 4) {
+      return(bind_rows(
+        tibble(
+          pair_id = spec$pair_id,
+          construct = spec$construct,
+          traditional_composite = spec$traditional_composite,
+          ai_composite = spec$ai_composite,
+          n_participants = n_distinct(long_dat$participant_id),
+          model = "primary",
+          tool_order_f = NA_real_,
+          tool_order_p = NA_real_,
+          note = "insufficient overlap for mixed ANOVA"
+        ),
+        tibble(
+          pair_id = spec$pair_id,
+          construct = spec$construct,
+          traditional_composite = spec$traditional_composite,
+          ai_composite = spec$ai_composite,
+          n_participants = n_distinct(long_dat$participant_id),
+          model = "topic_controlled",
+          tool_order_f = NA_real_,
+          tool_order_p = NA_real_,
+          note = "insufficient overlap for mixed ANOVA"
+        )
+      ))
+    }
+
+    fit_primary <- suppressWarnings(
+      aov(score ~ Tool * Order + Error(participant_id / Tool), data = long_dat)
+    )
+
+    fit_topic <- suppressWarnings(
+      # first_topic is between-subjects (constant per participant) so it goes
+      # outside Error(). This controls for article-type assignment without
+      # conflating topic with the within-subjects Tool factor.
+      # Sphericity note: the within-subjects Tool factor has only two levels,
+      # so the sphericity assumption is satisfied by definition.
+      aov(score ~ Tool * Order + first_topic + Error(participant_id / Tool), data = long_dat)
+    )
+
+    primary_interaction <- extract_term(fit_primary, "Tool:Order")
+    topic_interaction <- extract_term(fit_topic, "Tool:Order")
+
+    bind_rows(
+      tibble(
+        pair_id = spec$pair_id,
+        construct = spec$construct,
+        traditional_composite = spec$traditional_composite,
+        ai_composite = spec$ai_composite,
+        n_participants = n_distinct(long_dat$participant_id),
+        model = "primary",
+        tool_order_f = primary_interaction$f_value,
+        tool_order_p = primary_interaction$p_value,
+        note = NA_character_
+      ),
+      tibble(
+        pair_id = spec$pair_id,
+        construct = spec$construct,
+        traditional_composite = spec$traditional_composite,
+        ai_composite = spec$ai_composite,
+        n_participants = n_distinct(long_dat$participant_id),
+        model = "topic_controlled",
+        tool_order_f = topic_interaction$f_value,
+        tool_order_p = topic_interaction$p_value,
+        note = NA_character_
+      )
+    )
+  })
+}
+
+mixed_anova_results <- mixed_anova_rows |>
+  group_by(model) |>
+  mutate(
+    p_bh = p.adjust(tool_order_p, method = adjustment_methods[[1]]),
+    p_bonferroni = p.adjust(tool_order_p, method = adjustment_methods[[2]])
+  ) |>
+  ungroup() |>
+  mutate(
+    sphericity_note = "Within-subject Tool factor has 2 levels; sphericity is met by definition."
+  ) |>
+  arrange(model, p_bh, tool_order_p)
+
+interaction_summary <- mixed_anova_results |>
+  select(
+    pair_id, construct, model, n_participants,
+    traditional_composite, ai_composite,
+    tool_order_f, tool_order_p, p_bh, p_bonferroni
+  ) |>
+  mutate(model = factor(model, levels = c("primary", "topic_controlled"))) |>
+  pivot_wider(
+    names_from = model,
+    values_from = c(tool_order_f, tool_order_p, p_bh, p_bonferroni),
+    names_expand = TRUE
+  ) |>
+  mutate(
+    persists_after_topic_control = case_when(
+      is.na(p_bh_primary) | is.na(p_bh_topic_controlled) ~ NA_character_,
+      p_bh_primary < 0.05 & p_bh_topic_controlled < 0.05 ~ "Yes (BH-adjusted)",
+      p_bh_primary < 0.05 & p_bh_topic_controlled >= 0.05 ~ "No (drops after topic control)",
+      TRUE ~ "Not significant in primary model (BH-adjusted)"
+    )
+  )
+
+write_csv(mixed_anova_results, file.path(csv_dir, "Mixed_ANOVA_Tool_Order_Results.csv"))
+write_csv(interaction_summary, file.path(csv_dir, "Tool_Order_Interaction_Summary.csv"))
+```
+
+## Section 7: Export Ready Tables
+
+```{r final-exports}
+
+analysis_ready <- participant_with_composites |>
+  select(
+    participant_id,
+    order,
+    condition_1,
+    condition_2,
+    traditional_topic,
+    ai_topic,
+    first_topic,
+    ends_with("_F1"),
+    ends_with("_F2"),
+    ends_with("_F3")
+  )
+
+
+write_csv(analysis_ready, file.path(csv_dir, "Order_Effects_Analysis_Ready.csv"))
+
+export_manifest <- tibble(
+  output_type = c(
+    "analysis_ready",
+    "composite_membership",
+    "composite_specs",
+    "order_descriptives",
+    "mann_whitney",
+    "item_level_mann_whitney",
+    "pair_specs",
+    "mixed_anova",
+    "interaction_summary"
+  ),
+  file = c(
+    "Order_Effects_Analysis_Ready.csv",
+    "Composite_Item_Membership.csv",
+    "Composite_Specs.csv",
+    "Order_Descriptives_By_Composite.csv",
+    "Mann_Whitney_Order_Comparisons.csv",
+    "Item_Level_Order_Comparisons.csv",
+    "Tool_Comparable_Pair_Specs.csv",
+    "Mixed_ANOVA_Tool_Order_Results.csv",
+    "Tool_Order_Interaction_Summary.csv"
+  )
+)
+
+write_csv(export_manifest, file.path(csv_dir, "Order_Effects_Export_Manifest.csv"))
+
+kable(export_manifest)
+```
+
+## Section 8: Order-Stratified Correlation Analysis
+
+This section asks whether key cross-instrument factor correlations and
+Beliefs item correlations differ depending on which session participants
+completed first. Each correlation is computed three ways: full sample,
+Traditional-First only, AI-First only. Fisher's z-test formally tests
+whether the two subgroup correlations differ significantly.
+
+**Interpretation note:** Splitting N = 82 into \~45 and \~37 reduces
+power substantially. A subgroup correlation going null does not
+necessarily mean the effect changed — it may simply reflect reduced
+sample size. Use Fisher's z p-value, not subgroup nullity alone, to
+judge differences.
+
+```{r order-strat-setup}
+library(psych)  # for paired.r()
+
+# --- Load inputs ---
+# Factor scores: use the file produced by Script 06 (or 05 — same scores)
+factor_scores_all <- read_csv(
+  factor_scores_all_file,
+  show_col_types = FALSE
+) |>
+  mutate(participant_id = as.character(participant_id))
+
+# Beliefs item wide: produced by Script 05
+beliefs_wide <- read_csv(
+  beliefs_wide_file,
+  show_col_types = FALSE
+) |>
+  mutate(participant_id = as.character(participant_id))
+
+# Order labels: already built in Section 2 of this script as participant_analysis
+# Pull just what we need
+order_labels <- participant_analysis |>
+  select(participant_id, order) |>
+  mutate(participant_id = as.character(participant_id))
+
+# --- Join everything ---
+strat_base <- order_labels |>
+  left_join(factor_scores_all, by = "participant_id") |>
+  left_join(beliefs_wide,      by = "participant_id")
+
+factor_cols_strat <- names(factor_scores_all) |> setdiff("participant_id")
+belief_cols_strat <- names(beliefs_wide)       |> setdiff("participant_id")
+```
+
+```{r order-strat-helpers}
+
+# Compute Spearman rho for one group subset
+spearman_one_group <- function(data, col_x, col_y, group_label) {
+  d <- data |>
+    select(all_of(c(col_x, col_y))) |>
+    filter(!is.na(.data[[col_x]]), !is.na(.data[[col_y]]))
+
+  if (nrow(d) < 10 || n_distinct(d[[col_x]]) < 2 || n_distinct(d[[col_y]]) < 2) {
+    return(tibble(
+      group = group_label, n = nrow(d),
+      rho = NA_real_, p = NA_real_, note = "insufficient data"
+    ))
+  }
+
+  test <- suppressWarnings(
+    cor.test(d[[col_x]], d[[col_y]], method = "spearman", exact = FALSE)
+  )
+
+  tibble(
+    group = group_label,
+    n     = nrow(d),
+    rho   = unname(test$estimate),
+    p     = test$p.value,
+    note  = NA_character_
+  )
+}
+
+# Compute full + stratified correlations + Fisher z-test for one pair
+correlate_stratified <- function(data, col_x, col_y) {
+  full  <- spearman_one_group(data,                              col_x, col_y, "Full")
+  trad  <- spearman_one_group(filter(data, order == "Traditional_First"), col_x, col_y, "Traditional_First")
+  ai    <- spearman_one_group(filter(data, order == "AI_First"),          col_x, col_y, "AI_First")
+
+  # Fisher z-test comparing the two subgroup correlations
+  fisher_p <- tryCatch({
+    if (is.na(trad$rho) || is.na(ai$rho)) {
+      NA_real_
+    } else {
+      psych::r.test(
+      n   = trad$n,
+      r12 = trad$rho,
+      n2  = ai$n,
+      r34 = ai$rho
+    )$p 
+    }
+  }, error = function(e) NA_real_)
+
+  bind_rows(full, trad, ai) |>
+    mutate(
+      col_x    = col_x,
+      col_y    = col_y,
+      fisher_p = fisher_p
+    )
+}
+```
+
+```{r factor-factor-stratified}
+# --- Factor × Factor stratified correlations ---
+# All unique factor pairs (same pairs as Section 6 factor map)
+
+factor_pairs_strat <- t(combn(factor_cols_strat, 2)) |>
+  as_tibble(.name_repair = "minimal") |>
+  setNames(c("col_x", "col_y"))
+
+factor_strat_results <- pmap_dfr(
+  factor_pairs_strat,
+  function(col_x, col_y) correlate_stratified(strat_base, col_x, col_y)
+)
+
+# Load factor name map for readable labels
+factor_name_map_loaded <- read_csv(
+  factor_name_map_file,
+  show_col_types = FALSE
+)
+
+factor_label_lookup_strat <- factor_name_map_loaded |>
+  transmute(factor = factor, display_label)
+
+factor_strat_wide <- factor_strat_results |>
+  pivot_wider(
+    names_from  = group,
+    values_from = c(n, rho, p),
+    names_glue  = "{group}_{.value}"
+  ) |>
+  left_join(factor_label_lookup_strat |> rename(col_x = factor, label_x = display_label), by = "col_x") |>
+  left_join(factor_label_lookup_strat |> rename(col_y = factor, label_y = display_label), by = "col_y") |>
+  mutate(
+    fisher_sig = case_when(
+      is.na(fisher_p)  ~ "NA",
+      fisher_p < 0.001 ~ "p < .001",
+      fisher_p < 0.01  ~ "p < .01",
+      fisher_p < 0.05  ~ "p < .05",
+      TRUE             ~ paste0("p = ", round(fisher_p, 3))
+    ),
+    rho_diff = round(Traditional_First_rho - AI_First_rho, 3)
+  ) |>
+  arrange(fisher_p, desc(abs(rho_diff)))
+
+write_csv(
+  factor_strat_wide,
+  file.path(csv_dir, "Factor_Factor_Order_Stratified_Correlations.csv")
+)
+
+# Display top pairs sorted by largest rho difference between order groups
+factor_strat_wide |>
+  select(
+    label_x, label_y,
+    Full_n, Full_rho, Full_p,
+    Traditional_First_n, Traditional_First_rho, Traditional_First_p,
+    AI_First_n, AI_First_rho, AI_First_p,
+    fisher_p, fisher_sig, rho_diff
+  ) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3))) |>
+  kable(caption = "Factor × Factor correlations stratified by order group. fisher_p tests whether Traditional-First rho differs significantly from AI-First rho.")
+```
+
+```{r beliefs-factor-stratified}
+# --- Beliefs Item × Factor stratified correlations ---
+# Focus on items that survived BH correction in Script 05 full-sample analysis.
+# Defined here explicitly so this section is self-contained.
+# Update this vector if your significant item list changes.
+
+sig_belief_items <- paste0("Beliefs_", c(1, 4, 8, 9, 10, 11, 12, 14, 15, 17, 19, 21, 22))
+sig_belief_items <- intersect(sig_belief_items, belief_cols_strat)  # guard against missing cols
+
+# Pairs to test: sig belief items × all factor cols
+belief_factor_pairs <- expand_grid(
+  col_x = sig_belief_items,
+  col_y = factor_cols_strat
+)
+
+belief_strat_results <- pmap_dfr(
+  belief_factor_pairs,
+  function(col_x, col_y) correlate_stratified(strat_base, col_x, col_y)
+)
+
+# Belief item text lookup
+belief_item_text <- beliefs_wide |>
+  select(starts_with("Beliefs_")) |>
+  names() |>
+  tibble(belief_col = _) |>
+  mutate(item_num = as.integer(str_extract(belief_col, "\\d+"))) |>
+  arrange(item_num)
+
+# Note: item text comes from the long file — load it here for labeling
+beliefs_long_text <- read_csv(
+  beliefs_long_file,
+  show_col_types = FALSE
+) |>
+  distinct(item_num = as.integer(item_num), item_text) |>
+  mutate(belief_col = paste0("Beliefs_", item_num))
+
+belief_strat_wide <- belief_strat_results |>
+  pivot_wider(
+    names_from  = group,
+    values_from = c(n, rho, p),
+    names_glue  = "{group}_{.value}"
+  ) |>
+  left_join(beliefs_long_text |> select(belief_col, item_text) |> rename(col_x = belief_col), by = "col_x") |>
+  left_join(factor_label_lookup_strat |> rename(col_y = factor, label_y = display_label), by = "col_y") |>
+  mutate(
+    fisher_sig = case_when(
+      is.na(fisher_p)  ~ "NA",
+      fisher_p < 0.001 ~ "p < .001",
+      fisher_p < 0.01  ~ "p < .01",
+      fisher_p < 0.05  ~ "p < .05",
+      TRUE             ~ paste0("p = ", round(fisher_p, 3))
+    ),
+    rho_diff = round(Traditional_First_rho - AI_First_rho, 3)
+  ) |>
+  arrange(fisher_p, desc(abs(rho_diff)))
+
+write_csv(
+  belief_strat_wide,
+  file.path(csv_dir, "Beliefs_Factor_Order_Stratified_Correlations.csv")
+)
+
+# Display: focus on Item 1 x WritingEfficacy F1 first (your key finding),
+# then top hits by rho difference
+belief_strat_wide |>
+  select(
+    item_text, label_y,
+    Full_n, Full_rho, Full_p,
+    Traditional_First_n, Traditional_First_rho, Traditional_First_p,
+    AI_First_n, AI_First_rho, AI_First_p,
+    fisher_p, fisher_sig, rho_diff
+  ) |>
+  mutate(
+    item_text = str_trunc(item_text, 60),
+    across(where(is.numeric), ~ round(.x, 3))
+  ) |>
+  kable(caption = "Beliefs item × Factor correlations stratified by order group. fisher_p tests subgroup rho difference.")
+```
+
+```{r order-strat-exports}
+strat_export_manifest <- tibble(
+  file = c(
+    "Factor_Factor_Order_Stratified_Correlations.csv",
+    "Beliefs_Factor_Order_Stratified_Correlations.csv"
+  ),
+  description = c(
+    "Factor × factor Spearman correlations split by order group with Fisher z-test",
+    "Beliefs item × factor Spearman correlations split by order group with Fisher z-test"
+  )
+)
+
+write_csv(strat_export_manifest, file.path(csv_dir, "Order_Stratified_Export_Manifest.csv"))
+kable(strat_export_manifest)
+```

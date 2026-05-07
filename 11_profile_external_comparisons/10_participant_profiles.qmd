@@ -1,0 +1,603 @@
+---
+title: "Participant Profiles from Validated Factor Scores"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+output-dir: "10_participant_profiles"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+This report builds exploratory participant profiles using only the
+validated factor-score structure from the three factorable instruments:
+`IMI`, `WritingEfficacy`, and `AIReflection`.
+
+Clustering inputs:
+
+- `IMI` factors
+- `WritingEfficacy` factors
+- `AIReflection` factors
+
+Descriptive overlays only:
+
+- `ART` metrics
+- `Q17` AI-use indices
+- `BeliefsAboutAI` theme averages
+- order assignment
+
+This is intentional. `BeliefsAboutAI` did not support a clean factor
+solution, so it is used to describe profiles, not to define them.
+
+```{r setup}
+library(tidyverse)
+library(cluster)
+library(glue)
+library(knitr)
+source("scoring_helpers.R", local = knitr::knit_global())
+
+set.seed(42L)
+```
+
+## Setup
+
+```{r config}
+script_dir <- "10_participant_profiles"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+factor_merged_file <- file.path("09_art_vs_all_factors_items", "csv", "ART_Factor_Merged.csv")
+factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+q17_index_file <- file.path("07_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
+
+required_files <- c(
+  factor_merged_file,
+  factor_lookup_file,
+  q17_index_file,
+  master_wide_file
+)
+
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    paste0(
+      "Participant profiling is missing required inputs: ",
+      paste(missing_files, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+candidate_k_values <- 2:5
+min_cluster_size_floor <- 8L
+preferred_profile_labels <- c(
+  "AI-Receptive but Less Confident Writers",
+  "Strategic but AI-Skeptical Writers",
+  "Engaged, Self-Regulated Writers"
+)
+```
+
+## Load Data
+
+```{r load-data}
+factor_df <- read_csv(factor_merged_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+factor_lookup <- read_csv(factor_lookup_file, show_col_types = FALSE)
+q17_index <- read_csv(q17_index_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+master_wide <- read_csv(master_wide_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+factor_cols <- factor_lookup$factor
+
+required_factor_cols <- c(
+  "participant_id", "order", "art_net_real_minus_fake",
+  "art_real_hits", "art_fake_false_alarms", "art_adjusted_rate",
+  factor_cols
+)
+
+assert_required_columns(factor_df, required_factor_cols, "ART_Factor_Merged")
+assert_expected_count(nrow(factor_df), 82L, "participant profiling factor rows")
+assert_unique_pid_rows(factor_df, "participant_id", "participant profiling factor rows")
+assert_no_missing_values(factor_df, c("participant_id", factor_cols), "participant profiling factors")
+
+assert_required_columns(
+  q17_index,
+  c("participant_id", "ai_tools_heard_n", "ai_tools_used_n", "ai_tools_regular_n", "ai_use_mean"),
+  "Q17_Participant_AI_Use_Index"
+)
+assert_unique_pid_rows(q17_index, "participant_id", "Q17 participant index")
+
+assert_required_columns(
+  master_wide,
+  c("participant_id", "order", "condition_1", "condition_2"),
+  "Final_Master_Wide"
+)
+assert_unique_pid_rows(master_wide, "participant_id", "Final_Master_Wide")
+```
+
+## Beliefs Theme Averages
+
+```{r beliefs-themes}
+beliefs_theme_map <- tribble(
+  ~item_num, ~theme,
+  1L,  "AI Literacy and Limitations",
+  2L,  "AI Literacy and Limitations",
+  3L,  "AI Literacy and Limitations",
+  4L,  "AI Literacy and Limitations",
+  5L,  "AI Literacy and Limitations",
+  6L,  "Academic Utility",
+  7L,  "Academic Utility",
+  8L,  "Academic Utility",
+  9L,  "Academic Utility",
+  10L, "Psychological Comfort and Anonymity",
+  11L, "Psychological Comfort and Anonymity",
+  12L, "Psychological Comfort and Anonymity",
+  13L, "Practical Convenience",
+  14L, "Practical Convenience",
+  15L, "Practical Convenience",
+  16L, "Practical Convenience",
+  17L, "Risks and Concerns",
+  18L, "Risks and Concerns",
+  19L, "Risks and Concerns",
+  20L, "Risks and Concerns",
+  21L, "Future Integration",
+  22L, "Future Integration"
+)
+
+beliefs_cols <- paste0("Beliefs_", beliefs_theme_map$item_num)
+assert_required_columns(master_wide, beliefs_cols, "Final_Master_Wide beliefs columns")
+
+beliefs_theme_long <- master_wide |>
+  select(participant_id, all_of(beliefs_cols)) |>
+  pivot_longer(
+    cols = all_of(beliefs_cols),
+    names_to = "belief_item",
+    values_to = "score"
+  ) |>
+  mutate(item_num = as.integer(str_remove(belief_item, "Beliefs_"))) |>
+  left_join(beliefs_theme_map, by = "item_num") |>
+  group_by(participant_id, theme) |>
+  summarise(theme_mean = mean(as.numeric(score), na.rm = TRUE), .groups = "drop")
+
+beliefs_theme_scores <- beliefs_theme_long |>
+  mutate(theme_col = paste0("BeliefsTheme_", str_replace_all(theme, "[^A-Za-z0-9]+", "_"))) |>
+  select(participant_id, theme_col, theme_mean) |>
+  pivot_wider(names_from = theme_col, values_from = theme_mean)
+
+beliefs_theme_lookup <- beliefs_theme_long |>
+  distinct(theme) |>
+  mutate(theme_col = paste0("BeliefsTheme_", str_replace_all(theme, "[^A-Za-z0-9]+", "_")))
+```
+
+## Build Analysis Frame
+
+```{r analysis-frame}
+analysis_df <- factor_df |>
+  left_join(
+    q17_index |>
+      select(
+        participant_id,
+        ai_tools_heard_n,
+        ai_tools_used_n,
+        ai_tools_regular_n,
+        ai_tools_often_n,
+        ai_use_mean,
+        ai_use_mean_heard_only
+      ),
+    by = "participant_id"
+  ) |>
+  left_join(
+    master_wide |>
+      select(participant_id, condition_1, condition_2),
+    by = "participant_id"
+  ) |>
+  left_join(beliefs_theme_scores, by = "participant_id")
+
+assert_expected_count(nrow(analysis_df), 82L, "participant profiling analysis rows")
+assert_unique_pid_rows(analysis_df, "participant_id", "participant profiling analysis rows")
+```
+
+## Cluster Selection
+
+```{r cluster-selection}
+factor_matrix_scaled <- analysis_df |>
+  select(all_of(factor_cols)) |>
+  as.matrix() |>
+  scale() |>
+  unclass()
+
+row.names(factor_matrix_scaled) <- analysis_df$participant_id
+
+dist_obj <- dist(factor_matrix_scaled)
+hc_fit <- hclust(dist_obj, method = "ward.D2")
+
+candidate_k_values <- candidate_k_values[candidate_k_values < nrow(factor_matrix_scaled)]
+
+cluster_eval <- map_dfr(candidate_k_values, function(k) {
+  membership <- cutree(hc_fit, k = k)
+  cluster_sizes <- table(membership)
+  sil <- cluster::silhouette(membership, dist_obj)
+
+  tibble(
+    k = k,
+    avg_silhouette = mean(sil[, "sil_width"]),
+    min_cluster_size = min(cluster_sizes),
+    max_cluster_size = max(cluster_sizes),
+    size_pattern = paste(as.integer(cluster_sizes), collapse = "/")
+  )
+})
+
+valid_cluster_eval <- cluster_eval |>
+  filter(min_cluster_size >= min_cluster_size_floor)
+
+best_cluster_row <- if (nrow(valid_cluster_eval) > 0) {
+  valid_cluster_eval |>
+    arrange(desc(avg_silhouette), k) |>
+    slice(1)
+} else {
+  cluster_eval |>
+    arrange(desc(avg_silhouette), k) |>
+    slice(1)
+}
+
+best_k <- best_cluster_row$k[[1]]
+
+cluster_levels <- c(
+  preferred_profile_labels[seq_len(min(best_k, length(preferred_profile_labels)))],
+  if (best_k > length(preferred_profile_labels)) {
+    paste0("Profile_", seq(length(preferred_profile_labels) + 1L, best_k))
+  } else {
+    character()
+  }
+)
+
+write_csv(cluster_eval, file.path(csv_dir, "Cluster_Model_Selection.csv"))
+```
+
+```{r cluster-selection-table}
+knitr::kable(cluster_eval)
+```
+
+## Assign Profiles
+
+```{r assign-profiles}
+raw_membership <- cutree(hc_fit, k = best_k)
+
+profile_order <- tibble(
+  participant_id = analysis_df$participant_id,
+  raw_cluster = raw_membership
+) |>
+  left_join(
+    tibble(participant_id = analysis_df$participant_id, pc1 = prcomp(factor_matrix_scaled)$x[, 1]),
+    by = "participant_id"
+  ) |>
+  group_by(raw_cluster) |>
+  summarise(cluster_pc1_mean = mean(pc1), .groups = "drop") |>
+  arrange(cluster_pc1_mean) |>
+  mutate(
+    profile_num = row_number(),
+    cluster = cluster_levels[profile_num]
+  )
+
+analysis_df <- analysis_df |>
+  mutate(raw_cluster = raw_membership) |>
+  left_join(profile_order, by = "raw_cluster") |>
+  mutate(cluster = factor(cluster, levels = cluster_levels)) |>
+  select(-raw_cluster, -cluster_pc1_mean)
+
+cluster_sizes <- analysis_df |>
+  count(cluster, name = "n", .drop = FALSE) |>
+  mutate(cluster = as.character(cluster))
+
+assert_expected_count(sum(cluster_sizes$n), 82L, "participant profiling total clustered participants")
+write_csv(cluster_sizes, file.path(csv_dir, "Cluster_Sizes.csv"))
+```
+
+## Factor-Based Profile Signatures
+
+```{r profile-signatures}
+factor_centroids <- analysis_df |>
+  group_by(cluster) |>
+  summarise(
+    n = n(),
+    across(all_of(factor_cols), mean),
+    .groups = "drop"
+  )
+
+factor_centroids_long <- factor_centroids |>
+  pivot_longer(
+    cols = all_of(factor_cols),
+    names_to = "factor",
+    values_to = "mean_factor_score"
+  ) |>
+  left_join(factor_lookup, by = "factor")
+
+factor_centroid_z <- factor_centroids_long |>
+  group_by(factor) |>
+  mutate(profile_z = as.numeric(scale(mean_factor_score))) |>
+  ungroup()
+
+profile_top_strengths <- factor_centroid_z |>
+  group_by(cluster) |>
+  slice_max(order_by = profile_z, n = 2, with_ties = FALSE) |>
+  summarise(top_strengths = paste(proposed_name, collapse = " | "), .groups = "drop")
+
+profile_top_lows <- factor_centroid_z |>
+  group_by(cluster) |>
+  slice_min(order_by = profile_z, n = 2, with_ties = FALSE) |>
+  summarise(top_lows = paste(proposed_name, collapse = " | "), .groups = "drop")
+
+profile_signatures <- profile_top_strengths |>
+  left_join(profile_top_lows, by = "cluster") |>
+  left_join(cluster_sizes, by = "cluster") |>
+  relocate(n, .after = cluster)
+
+write_csv(profile_signatures, file.path(csv_dir, "Profile_Signatures.csv"))
+```
+
+```{r profile-signature-table}
+knitr::kable(profile_signatures)
+```
+
+## External Profile Descriptives
+
+```{r external-descriptives}
+beliefs_theme_cols <- beliefs_theme_lookup$theme_col
+
+profile_summary <- analysis_df |>
+  group_by(cluster) |>
+  summarise(
+    n = n(),
+    prop_traditional_first = mean(order == "Traditional_First"),
+    art_net_mean = mean(art_net_real_minus_fake),
+    art_net_sd = sd(art_net_real_minus_fake),
+    art_adjusted_mean = mean(art_adjusted_rate),
+    art_real_hits_mean = mean(art_real_hits),
+    art_false_alarm_mean = mean(art_fake_false_alarms),
+    ai_use_mean = mean(ai_use_mean, na.rm = TRUE),
+    ai_use_mean_heard_only = mean(ai_use_mean_heard_only, na.rm = TRUE),
+    ai_tools_heard_mean = mean(ai_tools_heard_n, na.rm = TRUE),
+    ai_tools_used_mean = mean(ai_tools_used_n, na.rm = TRUE),
+    ai_tools_often_mean = mean(ai_tools_often_n, na.rm = TRUE),
+    ai_tools_regular_mean = mean(ai_tools_regular_n, na.rm = TRUE),
+    across(all_of(beliefs_theme_cols), ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  left_join(profile_signatures |> select(cluster, top_strengths, top_lows), by = "cluster")
+
+write_csv(profile_summary, file.path(csv_dir, "Profile_External_Summary.csv"))
+```
+
+```{r external-summary-table}
+profile_summary |>
+  mutate(
+    prop_traditional_first = round(prop_traditional_first, 3),
+    art_net_mean = round(art_net_mean, 2),
+    art_adjusted_mean = round(art_adjusted_mean, 3),
+    ai_use_mean = round(ai_use_mean, 2)
+  ) |>
+  knitr::kable()
+```
+
+## PCA Map of Participants
+
+```{r pca-data}
+pca_fit <- prcomp(factor_matrix_scaled, center = FALSE, scale. = FALSE)
+
+pca_df <- tibble(
+  participant_id = analysis_df$participant_id,
+  PC1 = pca_fit$x[, 1],
+  PC2 = pca_fit$x[, 2]
+) |>
+  left_join(
+    analysis_df |>
+      select(participant_id, cluster),
+    by = "participant_id"
+  )
+
+pca_cluster_centers <- pca_df |>
+  group_by(cluster) |>
+  summarise(
+    PC1 = mean(PC1),
+    PC2 = mean(PC2),
+    .groups = "drop"
+  )
+```
+
+```{r pca-plot, fig.width=9.5, fig.height=6.5}
+pca_plot <- ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 2.5, alpha = 0.85) +
+  geom_point(
+    data = pca_cluster_centers,
+    aes(x = PC1, y = PC2, color = cluster),
+    size = 6,
+    shape = 4,
+    stroke = 1.4,
+    inherit.aes = FALSE
+  ) +
+  labs(
+    title = "Participant Profiles in Factor Space",
+    subtitle = glue("Ward hierarchical clustering on standardized factor scores (k = {best_k})"),
+    x = "PC1",
+    y = "PC2",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Participant_Profiles_PCA.png"),
+  plot = pca_plot,
+  width = 10,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "Participant_Profiles_PCA.pdf"),
+  plot = pca_plot,
+  width = 10,
+  height = 7,
+  units = "in",
+  bg = "white"
+)
+
+pca_plot
+```
+
+## Factor Heatmap by Profile
+
+```{r heatmap-data}
+heatmap_df <- factor_centroid_z |>
+  mutate(
+    display_label = factor(
+      display_label,
+      levels = factor_lookup |>
+        arrange(match(instrument, c("IMI", "WritingEfficacy", "AIReflection")), factor_num) |>
+        pull(display_label)
+    ),
+    cluster = factor(cluster, levels = cluster_levels),
+    cell_label = formatC(profile_z, format = "f", digits = 2)
+  )
+```
+
+```{r heatmap-plot, fig.width=10, fig.height=6.8}
+heatmap_plot <- ggplot(heatmap_df, aes(x = cluster, y = display_label, fill = profile_z)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    name = "Profile z"
+  ) +
+  labs(
+    title = "Profile Heatmap Across Validated Factors",
+    subtitle = "Positive values indicate that the profile is elevated on that factor relative to other profiles",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Participant_Profile_Factor_Heatmap.png"),
+  plot = heatmap_plot,
+  width = 11,
+  height = 7.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "Participant_Profile_Factor_Heatmap.pdf"),
+  plot = heatmap_plot,
+  width = 11,
+  height = 7.5,
+  units = "in",
+  bg = "white"
+)
+
+heatmap_plot
+```
+
+## Participant-Level Export
+
+```{r participant-export}
+participant_profiles <- analysis_df |>
+  select(
+    participant_id,
+    cluster,
+    order,
+    condition_1,
+    condition_2,
+    art_net_real_minus_fake,
+    art_adjusted_rate,
+    art_real_hits,
+    art_fake_false_alarms,
+    ai_use_mean,
+    ai_use_mean_heard_only,
+    ai_tools_heard_n,
+    ai_tools_used_n,
+    ai_tools_often_n,
+    ai_tools_regular_n,
+    all_of(factor_cols),
+    all_of(beliefs_theme_cols)
+  )
+
+write_csv(participant_profiles, file.path(csv_dir, "Participant_Profile_Assignments.csv"))
+write_csv(factor_centroids, file.path(csv_dir, "Profile_Factor_Centroids_Raw.csv"))
+write_csv(factor_centroid_z, file.path(csv_dir, "Profile_Factor_Centroids_Z.csv"))
+```
+
+## Summary
+
+```{r summary}
+summary_table <- tibble(
+  metric = c(
+    "Participants clustered",
+    "Validated factor inputs",
+    "Chosen number of profiles",
+    "Best average silhouette",
+    "Minimum profile size",
+    "Maximum profile size"
+  ),
+  value = c(
+    nrow(analysis_df),
+    length(factor_cols),
+    best_k,
+    round(best_cluster_row$avg_silhouette[[1]], 3),
+    min(cluster_sizes$n),
+    max(cluster_sizes$n)
+  )
+)
+
+knitr::kable(summary_table)
+```
+
+## Output Manifest
+
+```{r manifest}
+manifest <- tibble(
+  object = c(
+    "cluster_model_selection",
+    "cluster_sizes",
+    "profile_signatures",
+    "profile_external_summary",
+    "participant_profile_assignments",
+    "profile_factor_centroids_raw",
+    "profile_factor_centroids_z"
+  ),
+  file = c(
+    "Cluster_Model_Selection.csv",
+    "Cluster_Sizes.csv",
+    "Profile_Signatures.csv",
+    "Profile_External_Summary.csv",
+    "Participant_Profile_Assignments.csv",
+    "Profile_Factor_Centroids_Raw.csv",
+    "Profile_Factor_Centroids_Z.csv"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "Participant_Profiles_Manifest.csv"))
+
+knitr::kable(manifest)
+```

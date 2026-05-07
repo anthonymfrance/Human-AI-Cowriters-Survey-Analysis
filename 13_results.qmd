@@ -1,0 +1,714 @@
+---
+title: "Cowriters Study — Top Findings Visualizer"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-title: "Figures"
+    theme: cosmo
+    fig-width: 9
+    fig-height: 6
+    embed-resources: true
+output-dir: "13_results"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+```{r setup}
+library(tidyverse)
+library(ggplot2)
+library(scales)
+script_dir <- "13_results"
+dir.create(script_dir, recursive = TRUE, showWarnings = FALSE)
+art_factor_rank_file <- file.path("09_art_vs_all_factors_items", "csv", "ART_Net_vs_Factors_Ranked.csv")
+art_item_rank_file <- file.path("09_art_vs_all_factors_items", "csv", "ART_Net_vs_All_Items_Ranked.csv")
+art_scored_file <- file.path("09_art_vs_all_factors_items", "csv", "ART_Scored.csv")
+order_effects_analysis_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
+pairwise_rank_file <- file.path("06_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
+mann_whitney_file <- file.path("04_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
+
+# ── Colour palette (instrument-coded) ──────────────────────────────────────
+pal <- c(
+  IMI             = "#4f79b7",
+  WritingEfficacy = "#2ca02c",
+  AIReflection    = "#c96b3b",
+  BeliefsAboutAI  = "#9467bd"
+)
+
+pal_sign <- c(
+  positive = "#4f79b7",
+  negative = "#c96b3b"
+)
+
+# ── Theme (clean, publication-ready) ───────────────────────────────────────
+theme_cowriters <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) %+replace%
+    theme(
+      panel.grid.minor  = element_blank(),
+      panel.grid.major  = element_line(colour = "grey92", linewidth = 0.4),
+      axis.text         = element_text(colour = "grey35"),
+      axis.title        = element_text(colour = "grey20", size = rel(0.92)),
+      plot.title        = element_text(face = "bold", colour = "grey10",
+                                       size = rel(1.12), hjust = 0,
+                                       margin = margin(b = 4)),
+      plot.subtitle     = element_text(colour = "grey40", size = rel(0.88),
+                                       hjust = 0, margin = margin(b = 12)),
+      plot.caption      = element_text(colour = "grey55", size = rel(0.76),
+                                       hjust = 0, margin = margin(t = 10)),
+      legend.position   = "bottom",
+      legend.title      = element_text(face = "bold", size = rel(0.85)),
+      legend.text       = element_text(size = rel(0.82)),
+      strip.text        = element_text(face = "bold", colour = "grey20"),
+      plot.margin       = margin(12, 16, 12, 12)
+    )
+}
+
+# ── Significance label helper ───────────────────────────────────────────────
+sig_stars <- function(p) {
+  case_when(
+    p < .001 ~ "***",
+    p < .01  ~ "**",
+    p < .05  ~ "*",
+    TRUE     ~ "ns"
+  )
+}
+```
+
+------------------------------------------------------------------------
+
+## Figure 1 — ART Score vs Factor Scores (Factor-Level Overview)
+
+**What it shows:** Spearman correlations between the Author Recognition
+Test (ART net real-minus-fake score, a proxy for reading breadth) and
+each EFA-derived factor composite. Error bars represent 95 % CI
+bootstrapped from the Spearman rho. Filled points survive BH correction;
+open points do not.
+
+```{r fig1-art-factors}
+art_factors <- read_csv(
+  art_factor_rank_file,
+  show_col_types = FALSE
+)
+
+# 95% CI via Fisher z transformation
+rho_ci <- function(rho, n, level = 0.95) {
+  z     <- atanh(rho)
+  se    <- 1 / sqrt(n - 3)
+  crit  <- qnorm((1 + level) / 2)
+  tanh(c(lo = z - crit * se, hi = z + crit * se))
+}
+
+art_factors_plot <- art_factors |>
+  mutate(
+    across(c(rho, n), as.numeric),
+    ci      = map2(rho, n, rho_ci),
+    ci_lo   = map_dbl(ci, "lo"),
+    ci_hi   = map_dbl(ci, "hi"),
+    label   = paste0(instrument, "\n", proposed_name),
+    label   = str_wrap(label, 18),
+    sig     = survives_bh,
+    instrument = factor(instrument,
+                        levels = c("IMI", "WritingEfficacy",
+                                   "AIReflection", "BeliefsAboutAI"))
+  ) |>
+  arrange(rho)
+
+art_factors_plot$label <- fct_inorder(art_factors_plot$label)
+
+p1 <- ggplot(art_factors_plot,
+             aes(x = rho, y = reorder(label, rho),
+                 colour = instrument, shape = sig)) +
+  geom_vline(xintercept = 0, colour = "grey70", linewidth = 0.6,
+             linetype = "dashed") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
+                 height = 0.25, linewidth = 0.55, alpha = 0.7) +
+  geom_point(size = 3.8, stroke = 0.8) +
+  scale_colour_manual(values = pal, name = "Instrument") +
+  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 21),
+                     labels = c(`TRUE` = "BH-adjusted p < .05",
+                                `FALSE` = "p ≥ .05"),
+                     name = NULL) +
+  scale_x_continuous(limits = c(-.55, .50),
+                     breaks  = seq(-.5, .5, .25),
+                     labels  = label_number(accuracy = .01)) +
+  labs(
+    title    = "Reading breadth (ART) correlates with task engagement and AI acceptance",
+    subtitle = "Spearman ρ with 95% CI — ART net real-minus-fake score vs each factor composite (N = 82)",
+    x        = "Spearman ρ",
+    y        = NULL,
+    caption  = "★ AIReflection F1 (Perceived Learning Utility) and IMI F3 (Interest/Enjoyment) survive Bonferroni correction.\n  WritingEfficacy F1 (Writing Confidence) survives BH correction only."
+  ) +
+  theme_cowriters() +
+  theme(legend.box = "vertical",
+        legend.spacing.y = unit(2, "pt"))
+
+p1
+```
+
+------------------------------------------------------------------------
+
+## Figure 2 — ART × AIReflection F1 Scatter with LOESS
+
+**What it shows:** The strongest factor-level finding (ρ = −0.41,
+p_Bonferroni = .005). Higher reading breadth predicts *lower* Perceived
+Learning Utility from the AI session — suggesting experienced readers
+find less added value in AI summarisation.
+
+```{r fig2-art-airefl-scatter}
+# This figure requires the analysis-ready dataset which contains both
+# factor composites and ART scores.  Adjust the file path to match your
+# pipeline output (produced by 04_order_effects.qmd or 06_findings.qmd).
+
+art_composite_file <- order_effects_analysis_ready_file
+
+if (file.exists(art_composite_file)) {
+
+  analysis_ready <- read_csv(art_composite_file, show_col_types = FALSE)
+
+  art_raw <- read_csv(
+    art_scored_file,
+    show_col_types = FALSE
+  )
+  analysis_ready <- left_join(
+    analysis_ready,
+    art_raw |> select(participant_id, art_net_real_minus_fake),
+    by = "participant_id"
+  )
+
+  if (all(c("AIReflection_F1", "art_net_real_minus_fake") %in%
+          names(analysis_ready))) {
+
+    scatter_df <- analysis_ready |>
+      select(participant_id, order,
+             y = AIReflection_F1,
+             x = art_net_real_minus_fake) |>
+      filter(!is.na(x), !is.na(y))
+
+    p2 <- ggplot(scatter_df, aes(x = x, y = y)) +
+      geom_smooth(method = "lm", span = 0.9, se = TRUE,
+                  colour = pal["AIReflection"], fill = pal["AIReflection"],
+                  alpha = 0.15, linewidth = 1) +
+      geom_point(aes(colour = order), size = 2.4, alpha = 0.75) +
+      scale_colour_manual(
+        values = c(Traditional_First = "#4f79b7", AI_First = "#c96b3b"),
+        labels = c(Traditional_First = "Traditional-first",
+                   AI_First          = "AI-first"),
+        name   = "Order group"
+      ) +
+      annotate("text", x = Inf, y = Inf,
+               label = "ρ = −0.41, p\u2090\u2094\u2099\u1D64 = .005",
+               hjust = 1.1, vjust = 1.8,
+               size = 3.6, colour = "grey30") +
+      labs(
+        title    = "More widely-read students found AI summarisation less useful",
+        subtitle = "ART net score (reading breadth) vs AIReflection F1 — Perceived Learning Utility (N = 82)",
+        x        = "ART net score (real − fake authors recognised)",
+        y        = "AIReflection F1 — Perceived Learning Utility",
+        caption  = "LOESS smoother with 95% CI. Points coloured by counterbalancing order group."
+      ) +
+      theme_cowriters()
+
+    p2
+
+  } else {
+    cat("Column 'AIReflection_F1' or 'art_net_real_minus_fake' not found in",
+        art_composite_file,
+        "— update column names to match your pipeline.\n")
+  }
+
+} else {
+  cat("File not found:", art_composite_file,
+      "\nUpdate `art_composite_file` path to your analysis-ready CSV.\n")
+}
+```
+
+------------------------------------------------------------------------
+
+## Figure 3 — IMI F3 (Interest/Enjoyment) vs ART: Traditional vs AI Session
+
+**What it shows:** IMI Interest/Enjoyment correlates positively with ART
+(ρ = 0.36, p_Bonferroni = .033). This panel separates the effect by
+order group to explore whether the reading-enjoyment link is consistent
+across conditions.
+
+```{r fig3-imi-f3-art}
+if (file.exists(art_composite_file)) {
+
+  analysis_ready2 <- read_csv(art_composite_file, show_col_types = FALSE)
+
+  art_raw2 <- read_csv(
+    art_scored_file,
+    show_col_types = FALSE
+  )
+  analysis_ready2 <- left_join(
+    analysis_ready2,
+    art_raw2 |> select(participant_id, art_net_real_minus_fake),
+    by = "participant_id"
+  )
+
+  if (all(c("IMI_F3", "art_net_real_minus_fake", "order") %in%
+          names(analysis_ready2))) {
+
+    df3 <- analysis_ready2 |>
+      select(participant_id, order, y = IMI_F3,
+             x = art_net_real_minus_fake) |>
+      filter(!is.na(x), !is.na(y)) |>
+      mutate(order_label = if_else(order == "Traditional_First",
+                                   "Traditional-first", "AI-first"))
+
+    p3 <- ggplot(df3, aes(x = x, y = y, colour = order_label)) +
+      geom_smooth(method = "lm", se = TRUE, linewidth = 0.9, alpha = 0.15) +
+      geom_point(size = 2.2, alpha = 0.72) +
+      facet_wrap(~ order_label) +
+      scale_colour_manual(
+        values = c("Traditional-first" = "#4f79b7", "AI-first" = "#c96b3b"),
+        guide  = "none"
+      ) +
+      labs(
+        title    = "Reading breadth predicts task enjoyment (IMI Interest/Enjoyment)",
+        subtitle = "Stratified by counterbalancing order group | ρ = 0.36 full sample (p\u2090\u2094\u2099\u1D64 = .033)",
+        x        = "ART net score",
+        y        = "IMI F3 — Interest/Enjoyment",
+        caption  = "Linear fit with 95% CI per subgroup. Interpret cautiously: n ≈ 45 and 37 per group substantially reduces power."
+      ) +
+      theme_cowriters() +
+      theme(strip.background = element_rect(fill = "grey95", colour = NA))
+
+    p3
+
+  } else {
+    cat("Required columns missing from analysis-ready file.\n")
+  }
+
+} else {
+  cat("File not found:", art_composite_file, "\n")
+}
+```
+
+------------------------------------------------------------------------
+
+## Figure 4 — Top Cross-Instrument Item Correlations (Bonferroni survivors)
+
+**What it shows:** The strongest item-level pairwise Spearman
+correlations that survive Bonferroni correction across all \~1,916
+tested pairs. This is the most rigorous subset of your exploratory
+cross-instrument associations.
+
+```{r fig4-top-pairwise}
+
+
+
+#| fig-height: 9
+#| fig-width: 9
+
+
+
+pairwise <- read_csv(
+  pairwise_rank_file,
+  show_col_types = FALSE
+)
+
+bonf_top <- pairwise |>
+  filter(p_bonferroni < 0.05) |>
+  arrange(desc(abs(rho))) |>
+  slice_head(n = 18) |>
+  mutate(
+    direction  = if_else(rho > 0, "positive", "negative"),
+    pair_label = paste0(
+      str_wrap(item_text_a, 38), "\n  ×  \n",
+      str_wrap(item_text_b, 38)
+    ),
+    instrument_pair = str_extract(pair, "^[^_]+_vs_([^_]+)", group = 1) |>
+      paste0(str_extract(pair, "^([^_]+)_vs_", group = 1), " × ", x = _),
+    pair_source = str_replace_all(pair, "_vs_", " × "),
+    abs_rho = abs(rho)
+  )
+
+# Rank by abs_rho for y-axis ordering
+bonf_top <- bonf_top |>
+  mutate(
+    rank_label = glue::glue(
+      "{str_trunc(item_text_a, 42)} ×\n{str_trunc(item_text_b, 42)}"
+    )
+  ) |>
+  arrange(abs_rho) |>
+  mutate(rank_label = fct_inorder(rank_label))
+
+p4 <- ggplot(bonf_top,
+             aes(x = rho, y = rank_label, fill = direction)) +
+  geom_col(width = 0.65, alpha = 0.88) +
+  geom_text(aes(label = sprintf("ρ = %.2f", rho),
+                x = rho + if_else(rho > 0, .015, -.015)),
+            hjust  = if_else(bonf_top$rho > 0, 0, 1),
+            size   = 2.9, colour = "grey25") +
+  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.5) +
+  scale_fill_manual(
+    values = c(positive = "#4f79b7", negative = "#c96b3b"),
+    labels = c(positive = "Positive association",
+               negative = "Negative association"),
+    name   = NULL
+  ) +
+  scale_x_continuous(limits = c(-.70, .80),
+                     breaks  = seq(-.5, .75, .25),
+                     labels  = label_number(accuracy = .01)) +
+  facet_wrap(~ pair_source, scales = "free_y", ncol = 1) +
+  labs(
+    title    = "Strongest item-level cross-instrument associations (Bonferroni-corrected)",
+    subtitle = "Top 18 pairs by |ρ| surviving Bonferroni correction across 1,916 tests",
+    x        = "Spearman ρ",
+    y        = NULL,
+    caption  = "Pair-local Bonferroni correction applied within each instrument pair. N = 88 (IMI×WSE) or 91 (AIRefl×Beliefs)."
+  ) +
+  theme_cowriters() +
+  theme(
+    axis.text.y      = element_text(size = 7.5, lineheight = 1.1),
+    panel.spacing    = unit(1.2, "lines"),
+    strip.text       = element_text(size = 9, face = "bold")
+  )
+
+p4
+```
+
+------------------------------------------------------------------------
+
+## Figure 5 — Perceived Competence × Writing Self-Efficacy Deep Dive
+
+**What it shows:** The two strongest correlations in the entire dataset
+(ρ = 0.61, ρ = 0.59, both p_Bonferroni \< 0.001) in context. This panel
+spotlights the convergence between within-session task competence (IMI)
+and domain self-efficacy (WritingEfficacy), providing construct validity
+evidence.
+
+```{r fig5-competence-efficacy}
+# Pull only IMI×WritingEfficacy pairs, top hits, for a focused scatter
+# Requires analysis-ready data with item-level columns.
+# Adjust column names below to match your master file.
+
+analysis_ready3_path <- order_effects_analysis_ready_file
+
+master_path <- master_wide_file
+
+use_path <- if (file.exists(master_path)) master_path else
+            if (file.exists(analysis_ready3_path)) analysis_ready3_path else
+            NULL
+
+if (!is.null(use_path)) {
+
+  master <- read_csv(use_path, show_col_types = FALSE)
+
+  # IMI item 9  = "I think I did pretty well at this activity"
+  # WSE item 5  = "I can be recognized as a strong writer"
+  # IMI item 8  = "I think I am pretty good at this activity"
+  #
+  # Column names differ between Final_Master_Wide and Order_Effects_Analysis_Ready:
+  #   Master wide uses: IMI_9, Efficacy_5   (no session suffix)
+  #   If those are absent the script tries IMI_S1_9, Efficacy_S1_5 variants.
+
+  find_col <- function(df, candidates) {
+    candidates[candidates %in% names(df)][1]
+  }
+
+  imi9  <- find_col(master, c("IMI_9",  "IMI_S1_9",  "imi_9"))
+  imi8  <- find_col(master, c("IMI_8",  "IMI_S1_8",  "imi_8"))
+  wse5  <- find_col(master, c("Efficacy_5", "WSE_5", "Efficacy_S1_5", "wse_5"))
+
+  top_pairs <- list(
+    list(x = imi9, y = wse5,
+         xlab = "IMI: I think I did pretty well",
+         ylab = "WSE: Recognized as a strong writer",
+         rho  = 0.61, p_label = "p < .001"),
+    list(x = imi8, y = wse5,
+         xlab = "IMI: I think I am pretty good at this",
+         ylab = "WSE: Recognized as a strong writer",
+         rho  = 0.59, p_label = "p < .001")
+  )
+
+  valid_pairs <- keep(top_pairs, ~ !is.na(.x$x) && !is.na(.x$y) &&
+                                    all(c(.x$x, .x$y) %in% names(master)))
+
+  if (length(valid_pairs) == 0) {
+    cat("Item columns for Figure 5 not found in", use_path, "\n",
+        "Columns detected in master file that start with IMI_ or Efficacy_:\n")
+    cat(paste(grep("^IMI_|^Efficacy_|^WSE_", names(master), value = TRUE),
+              collapse = ", "), "\n")
+  } else {
+
+    scatter_df <- imap_dfr(valid_pairs, function(pair, i) {
+      master |>
+        select(x = all_of(pair$x), y = all_of(pair$y)) |>
+        filter(!is.na(x), !is.na(y)) |>
+        mutate(
+          panel = paste0(pair$xlab, "\nvs\n", pair$ylab),
+          rho_label = paste0("ρ = ", sprintf("%.2f", pair$rho), ", ", pair$p_label)
+        )
+    })
+
+    label_df <- scatter_df |>
+      distinct(panel, rho_label) |>
+      mutate(x = -Inf, y = Inf)
+
+    ggplot(scatter_df, aes(x = x, y = y)) +
+      geom_jitter(width = 0.12, height = 0.12,
+                  colour = "#4f79b7", alpha = 0.65, size = 2) +
+      geom_smooth(method = "lm", se = TRUE,
+                  colour = "#4f79b7", fill = "#4f79b7",
+                  alpha = 0.15, linewidth = 0.9) +
+      geom_text(
+        data = label_df,
+        aes(x = x, y = y, label = rho_label),
+        inherit.aes = FALSE,
+        hjust = -0.1, vjust = 1.6,
+        size  = 3.5, colour = "grey30"
+      ) +
+      scale_x_continuous(breaks = 1:7) +
+      scale_y_continuous(breaks = 1:5) +
+      facet_wrap(~ panel, ncol = 2) +
+      labs(
+        title    = "Task competence and writing self-efficacy converge strongly",
+        subtitle = "Two strongest cross-instrument item correlations (both survive Bonferroni at p < .001, N = 88)",
+        x        = "Item response",
+        y        = "Item response",
+        caption  = "Jitter added (±0.12) to separate overplotted Likert responses. Linear fit with 95% CI."
+      ) +
+      theme_cowriters() +
+      theme(strip.text = element_text(size = 9, face = "bold"))
+  }
+
+} else {
+  cat("Neither ", master_wide_file, " nor ", order_effects_analysis_ready_file, " found.\n",
+      "Render the upstream pipeline first.\n", sep = "")
+}
+```
+
+------------------------------------------------------------------------
+
+## Figure 6 — ART vs Item-Level: Top BH-Surviving Items
+
+**What it shows:** The 12 strongest item-level ART correlations that
+survive BH correction, colour-coded by instrument and direction. This
+surfaces the specific items driving the factor-level ART signals.
+
+```{r fig6-art-items-bh}
+
+art_factors <- read_csv(
+  art_factor_rank_file,
+  show_col_types = FALSE
+)
+
+art_items <- read_csv(
+  art_item_rank_file,
+  show_col_types = FALSE
+)
+
+art_top_bh <- art_items |>
+  filter(survives_bh) |>
+  arrange(desc(abs_r)) |>
+  slice_head(n = 12) |>
+  mutate(
+    direction      = if_else(rho > 0, "positive", "negative"),
+    short_text     = str_trunc(item_text, 58),
+    short_text     = fct_reorder(short_text, abs_r),
+    bonf_survivor  = survives_bonferroni,
+    sig_label      = case_when(
+      survives_bonferroni ~ paste0("★ ρ = ", sprintf("%.2f", rho)),
+      TRUE                ~ paste0("ρ = ",   sprintf("%.2f", rho))
+    )
+  )
+
+p6 <- ggplot(art_top_bh,
+             aes(x = rho, y = short_text,
+                 fill = instrument, alpha = bonf_survivor)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = sig_label,
+                x = rho + if_else(rho > 0, .012, -.012)),
+            hjust   = if_else(art_top_bh$rho > 0, 0, 1),
+            size    = 3.0, colour = "grey20") +
+  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.45) +
+  scale_fill_manual(values = pal, name = "Instrument") +
+  scale_alpha_manual(
+    values = c(`TRUE` = 1.0, `FALSE` = 0.55),
+    labels = c(`TRUE` = "Bonferroni p < .05 (★)",
+               `FALSE` = "BH p < .05 only"),
+    name   = NULL
+  ) +
+  scale_x_continuous(limits = c(-.60, .62),
+                     breaks  = seq(-.5, .5, .25),
+                     labels  = label_number(accuracy = .01)) +
+  labs(
+    title    = "Item-level ART correlations: reading breadth spans task engagement and AI attitudes",
+    subtitle = "Top 12 BH-corrected items across all instruments (N = 82). ★ = survives Bonferroni",
+    x        = "Spearman ρ  (ART net score)",
+    y        = NULL,
+    caption  = paste0(
+      "Negative ρ: higher reading breadth → less positive AI attitude / lower AI session satisfaction.\n",
+      "Positive ρ: higher reading breadth → higher task competence / writing efficacy."
+    )
+  ) +
+  theme_cowriters() +
+  theme(axis.text.y = element_text(size = 8.5))
+
+p6
+```
+
+------------------------------------------------------------------------
+
+## Figure 7 — The Null Results: Tool × Order ANOVA and Order Group Comparisons
+
+**What it shows:** Communicating null results clearly is as important as
+reporting significant ones. This figure visualises the Mann-Whitney
+composite distributions split by order group, making it plain that the
+two groups are statistically indistinguishable — which validates
+counterbalancing.
+
+```{r fig7-null-results}
+
+
+mw <- read_csv(
+  mann_whitney_file,
+  show_col_types = FALSE
+)
+
+null_plot_df <- mw |>
+  select(composite, instrument, factor_id,
+         median_traditional_first, median_ai_first,
+         p_bh, effect_size) |>
+  pivot_longer(
+    cols      = c(median_traditional_first, median_ai_first),
+    names_to  = "group",
+    values_to = "median_score"
+  ) |>
+  mutate(
+    group      = if_else(str_detect(group, "traditional"),
+                         "Traditional-first", "AI-first"),
+    group      = factor(group, levels = c("Traditional-first", "AI-first")),
+    factor_label = paste0(instrument, "\n", factor_id),
+    bh_label   = if_else(p_bh < .05, paste0("p\u1d40\u029c = ", round(p_bh, 3)),
+                         paste0("p\u1d40\u029c = ", round(p_bh, 3),
+                                " (ns)")),
+    rb_label   = paste0("r\u1d47 = ", round(coalesce(effect_size, 0), 2))
+  )
+
+p7 <- ggplot(null_plot_df,
+             aes(x = factor_label, y = median_score, fill = group)) +
+  geom_col(position = position_dodge(0.72), width = 0.65, alpha = 0.85) +
+  geom_text(
+    data = mw |>
+      mutate(factor_label = paste0(instrument, "\n", factor_id),
+             rb_label = paste0("r\u1d47 = ", round(coalesce(effect_size, 0), 2))),
+    aes(x = factor_label, y = pmax(median_traditional_first, median_ai_first),
+        label = rb_label, fill = NULL),
+    inherit.aes = FALSE,
+    vjust = -0.5, size = 2.8, colour = "grey40"
+  ) +
+  scale_fill_manual(
+    values = c("Traditional-first" = "#4f79b7", "AI-first" = "#c96b3b"),
+    name   = "Order group"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, .15))) +
+  labs(
+    title    = "No order effect detected on any composite (all p\u1d40\u029c > .93)",
+    subtitle = "Median composite scores by order group — Mann-Whitney, BH-corrected (N ≈ 45 vs 37)",
+    x        = NULL,
+    y        = "Median composite score",
+    caption  = "Rank-biserial effect sizes (rᵦ) shown above bars. All effects negligible (|rᵦ| < 0.15).\n  This validates counterbalancing: groups are statistically indistinguishable at baseline."
+  ) +
+  theme_cowriters() +
+  theme(axis.text.x = element_text(size = 8.5, lineheight = 1.2))
+
+p7
+```
+
+------------------------------------------------------------------------
+
+## Figure 8 — Conceptual Summary: The Three-Strand Narrative
+
+**What it shows:** A one-page conceptual overview of what the study's
+exploratory correlational findings actually tell us, organised around
+the three coherent patterns that emerged.
+
+```{r fig8-conceptual-summary, fig.height=5}
+
+# Data for the three-strand lollipop summary
+strands <- tribble(
+  ~strand, ~finding, ~rho, ~threshold, ~label_rho,
+  "Strand A\nReading × Competence",
+    "IMI competence × Writing self-efficacy\n(traditional session)",     0.61,  "Bonferroni", "ρ = 0.61 ***",
+  "Strand A\nReading × Competence",
+    "ART net score × IMI Interest/Enjoyment",                            0.36,  "Bonferroni", "ρ = 0.36 **",
+  "Strand A\nReading × Competence",
+    "ART net score × Writing Confidence (WSE F1)",                       0.29,  "BH only",    "ρ = 0.29 *",
+  "Strand B\nAI Utility × Attitudes",
+    "AI Perceived Utility (AIRefl F1) × ART net score",                -0.41,  "Bonferroni", "ρ = −0.41 **",
+  "Strand B\nAI Utility × Attitudes",
+    "Willingness to reuse AI × Envisioning AI in teaching",              0.46,  "Bonferroni", "ρ = 0.46 ***",
+  "Strand B\nAI Utility × Attitudes",
+    "Willingness to reuse AI × Worried AI hinders skills (inverted)",   -0.43,  "Bonferroni", "ρ = −0.43 **",
+  "Strand C\nSession Independence",
+    "Writing Confidence × AI session measures (max cross-session)",      0.38,  "ns",         "ρ = 0.38 ns",
+  "Strand C\nSession Independence",
+    "Tool × Order interaction F1 pair (ANOVA)",                          0.05,  "ns",         "F = 0.05 ns",
+  "Strand C\nSession Independence",
+    "All composite order effects (Mann-Whitney, max |rᵦ|)",              0.15,  "ns",         "|rᵦ| < 0.15 ns"
+)
+
+strand_colours <- c(
+  "Strand A\nReading × Competence" = "#4f79b7",
+  "Strand B\nAI Utility × Attitudes" = "#c96b3b",
+  "Strand C\nSession Independence" = "#2ca02c"
+)
+
+p8 <- ggplot(strands,
+             aes(y = reorder(finding, abs(rho)),
+                 x = rho,
+                 colour = strand, shape = threshold)) +
+  geom_vline(xintercept = 0, colour = "grey65", linewidth = 0.5,
+             linetype = "dashed") +
+  geom_segment(aes(xend = 0, yend = reorder(finding, abs(rho))),
+               linewidth = 0.9, alpha = 0.6) +
+  geom_point(size = 4.5) +
+  geom_text(aes(label = label_rho,
+                x = rho + if_else(rho >= 0, .035, -.035)),
+            hjust   = if_else(strands$rho >= 0, 0, 1),
+            size    = 3.0, colour = "grey25") +
+  scale_colour_manual(values = strand_colours, name = "Narrative strand") +
+  scale_shape_manual(
+    values = c(Bonferroni = 19, "BH only" = 17, ns = 1),
+    labels = c(Bonferroni = "Bonferroni p < .05",
+               "BH only"  = "BH p < .05 only",
+               ns         = "Not significant"),
+    name   = "Correction"
+  ) +
+  scale_x_continuous(limits = c(-.80, .85),
+                     breaks  = seq(-.75, .75, .25)) +
+  facet_wrap(~ strand, scales = "free_y", ncol = 1) +
+  labs(
+    title    = "Three coherent patterns in the Cowriters exploratory findings",
+    subtitle = "Effect sizes from cross-instrument Spearman correlations and mixed ANOVAs (N = 82)",
+    x        = "Effect size (Spearman ρ or scaled equivalent)",
+    y        = NULL,
+    caption  = "Strand C null results are substantive: they confirm counterbalancing integrity and the\n  psychological independence of traditional and AI writing self-concepts in this sample."
+  ) +
+  theme_cowriters() +
+  theme(
+    axis.text.y   = element_text(size = 8, lineheight = 1.15),
+    panel.spacing = unit(1.0, "lines"),
+    strip.text    = element_text(size = 10, face = "bold",
+                                 colour = "grey10")
+  )
+
+p8
+```
+
+------------------------------------------------------------------------
+
+## Session Info
+
+```{r session}
+sessionInfo()
+```

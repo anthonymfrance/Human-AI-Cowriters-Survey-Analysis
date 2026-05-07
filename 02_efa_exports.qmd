@@ -1,0 +1,671 @@
+---
+title: "Cowriters Survey EFA and Analysis Exports"
+format: html
+output-dir: "02_efa_exports"
+editor: visual
+---
+
+# EFA and Paired Analysis Exports
+
+This script starts from the cleaned long-format exports and the verified triage ledger. It creates:
+
+- primary EFA datasets with instrument-specific salvage cases
+- sensitivity EFA datasets on the strict paired sample only
+- the strict paired wide-format master dataset for downstream inferential models
+
+------------------------------------------------------------------------
+
+## Section 1: Setup
+
+```{r setup}
+
+#| message: false
+library(tidyverse)
+library(knitr)
+source("scoring_helpers.R", local = knitr::knit_global())
+script_dir <- "02_efa_exports"
+audit_dir <- file.path(script_dir, "audit")
+efa_dir <- file.path(script_dir, "efa")
+efa_diagnostics_dir <- file.path(script_dir, "efa_diagnostics")
+cleaned_dir <- file.path("01_audit_cleaning", "cleaned")
+triage_dir <- file.path("01_audit_cleaning", "audit")
+dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(efa_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(efa_diagnostics_dir, recursive = TRUE, showWarnings = FALSE)
+set.seed(42L)
+```
+
+------------------------------------------------------------------------
+
+## Section 2: Load Cleaned, Raw, and Triage Data
+
+```{r load-data}
+rw_col_names <- c(
+  "participant number order", "pid", "item_code", "score_raw",
+  "qualtrics_qid", "item_subnum", "question_stem",
+  "input_type", "input_subtype", "answer_type",
+  "question_block", "item_subnum2", "item_text",
+  "item_text_full", "submission_status"
+)
+
+llm_col_names <- c(
+  "participant number order", "pid", "topic", "item_code", "score_raw",
+  "qualtrics_qid", "item_subnum", "question_stem",
+  "input_type", "input_subtype", "answer_type",
+  "question_block", "item_num", "item_text",
+  "item_text_full", "response_labeled", "response_label_short",
+  "score_numeric", "response_label2", "response_html",
+  "question_stem2", "item_text2", "submission_status"
+)
+
+instrument_expected <- tribble(
+  ~question_block, ~instrument,       ~expected, ~source,
+  "Q1",            "IMI",             18L,        "rw",
+  "Q7",            "WritingEfficacy", 20L,        "rw",
+  "Q25",           "AIReflection",    12L,        "llm",
+  "Q2-23",         "BeliefsAboutAI",  22L,        "llm"
+)
+
+submission_resolution_expected <- tribble(
+  ~source, ~question_block, ~expected, ~straight_line_sensitive,
+  "rw",    "Q1",            18L,       TRUE,
+  "rw",    "Q7",            20L,       TRUE,
+  "rw",    "Q9",             1L,       FALSE,
+  "llm",   "Q25",           12L,       TRUE,
+  "llm",   "Q2-23",         22L,       TRUE
+)
+
+imi_clean <- read_csv(file.path(cleaned_dir, "IMI_cleaned.csv"), show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+efficacy_clean <- read_csv(file.path(cleaned_dir, "WritingEfficacy_cleaned.csv"), show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+refl_clean <- read_csv(file.path(cleaned_dir, "AI_Reflection_cleaned.csv"), show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+beliefs_clean <- read_csv(file.path(cleaned_dir, "BeliefsAboutAI_cleaned.csv"), show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+verified_triage_path <- file.path(triage_dir, "Triage_Rap_Sheet_Verified.csv")
+legacy_verified_triage_path <- file.path("inputs", "audit", "Triage_Rap_Sheet_Verified.csv")
+if (!file.exists(verified_triage_path) && file.exists(legacy_verified_triage_path)) {
+  verified_triage_path <- legacy_verified_triage_path
+}
+
+verified_triage <- read_csv(verified_triage_path, show_col_types = FALSE) |>
+  mutate(pid = as.character(pid))
+
+rw_raw <- read_csv(
+  "rw-survey-long-040726.csv",
+  skip = 9, col_names = rw_col_names, show_col_types = FALSE,
+  col_types = cols(
+    pid = col_character(),
+    question_block = col_character(),
+    item_subnum2 = col_character(),
+    score_raw = col_character(),
+    submission_status = col_character()
+  )
+)
+
+llm_raw <- read_csv(
+  "llm-survey-long-040726.csv",
+  skip = 9, col_names = llm_col_names, show_col_types = FALSE,
+  col_types = cols(
+    pid = col_character(),
+    question_block = col_character(),
+    item_num = col_character(),
+    score_raw = col_character(),
+    submission_status = col_character()
+  )
+)
+
+tracking_clean <- read_csv(
+  "Participant Tracking - IDs and Conditions Table.csv",
+  show_col_types = FALSE,
+  col_types = cols(
+    ParticipantID = col_character(),
+    `Condition 1` = col_character(),
+    `Condition 2` = col_character()
+  )
+) |>
+  select(ParticipantID, `Condition 1`, `Condition 2`) |>
+  rename(
+    pid         = ParticipantID,
+    condition_1 = `Condition 1`,
+    condition_2 = `Condition 2`
+  ) |>
+  filter(!is.na(pid))
+
+assert_unique_pid_rows(tracking_clean, pid_col = "pid", context_label = "tracking_clean")
+assert_no_missing_values(tracking_clean, c("pid", "condition_1", "condition_2"), "tracking_clean")
+assert_allowed_values(tracking_clean$condition_1, c("Alone", "LLM"), "tracking_clean condition_1")
+assert_allowed_values(tracking_clean$condition_2, c("Alone", "LLM"), "tracking_clean condition_2")
+assert_nonempty_df(imi_clean, "imi_clean")
+assert_nonempty_df(efficacy_clean, "efficacy_clean")
+assert_nonempty_df(refl_clean, "refl_clean")
+assert_nonempty_df(beliefs_clean, "beliefs_clean")
+```
+
+------------------------------------------------------------------------
+
+## Section 3: Paired Sample and Best-Submission Sources
+
+This section starts from the same duplicate-resolution rule used in the audit file. In other words, if a participant has multiple submissions in the same source file, we keep the single best whole-survey attempt rather than counting all of them. Raw target-block quality decides the winner first; Qualtrics labels are only a last-resort fallback.
+
+```{r paired-and-dedup}
+
+paired_imis  <- sort(unique(imi_clean$participant_id))
+paired_wse   <- sort(unique(efficacy_clean$participant_id))
+paired_refl  <- sort(unique(refl_clean$participant_id))
+paired_bel   <- sort(unique(beliefs_clean$participant_id))
+
+assert_identical_pid_sets(
+  list(
+    IMI = paired_imis,
+    WritingEfficacy = paired_wse,
+    AIReflection = paired_refl,
+    BeliefsAboutAI = paired_bel
+  ),
+  context_label = "Paired cleaned PID consistency"
+)
+
+paired_analysis_pids <- paired_imis
+assert_expected_count(length(paired_analysis_pids), 82L, "Strict paired analysis PID count")
+
+rw_best  <- resolve_best_submission(rw_raw,  "rw", submission_resolution_expected)$best_data
+llm_best <- resolve_best_submission(llm_raw, "llm", submission_resolution_expected)$best_data
+```
+
+------------------------------------------------------------------------
+
+## Section 4: Locked EFA Inclusion Rules
+
+```{r efa-inclusion}
+efa_global_exclusions <- c(
+  "N/A (RA practice)",
+  "Sania Jain test",
+  "y5lblN",
+  "2192994",
+  "hKpFTX"
+)
+
+rw_efa_override_pids <- verified_triage |>
+  filter(verified_recommendation ==
+           "Salvage RW-only with manual override to first-dup submission") |>
+  pull(pid)
+
+rw_efa_salvage_pids <- verified_triage |>
+  filter(
+    verified_recommendation %in% c(
+      "Salvage RW-only",
+      "Salvage RW-only with manual override to first-dup submission"
+    ),
+    !pid %in% efa_global_exclusions
+  ) |>
+  pull(pid)
+
+llm_efa_salvage_pids <- verified_triage |>
+  filter(
+    verified_recommendation == "Salvage LLM-only",
+    !pid %in% efa_global_exclusions
+  ) |>
+  pull(pid)
+
+rw_efa_primary_pids  <- union(paired_analysis_pids, rw_efa_salvage_pids)
+llm_efa_primary_pids <- union(paired_analysis_pids, llm_efa_salvage_pids)
+
+# The improved raw-data resolver already catches the known RW straight-line
+# tie cases, but the explicit first-dup override remains as a locked safeguard.
+rw_efa_source <- rw_best |>
+  filter(!pid %in% rw_efa_override_pids) |>
+  bind_rows(
+    rw_raw |>
+      filter(
+        pid %in% rw_efa_override_pids,
+        submission_status == "first-dup"
+      )
+  )
+
+missing_rw_override_pids <- setdiff(
+  rw_efa_override_pids,
+  unique(rw_efa_source$pid)
+)
+
+if (length(missing_rw_override_pids) > 0) {
+  stop(
+    paste0(
+      "RW EFA override participants are missing after first-dup splice: ",
+      paste(missing_rw_override_pids, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+llm_efa_source <- llm_best
+
+efa_inclusion_summary <- tribble(
+  ~instrument,         ~primary_n, ~sensitivity_n,
+  "IMI",               length(rw_efa_primary_pids),  length(paired_analysis_pids),
+  "WritingEfficacy",   length(rw_efa_primary_pids),  length(paired_analysis_pids),
+  "AIReflection",      length(llm_efa_primary_pids), length(paired_analysis_pids),
+  "BeliefsAboutAI",    length(llm_efa_primary_pids), length(paired_analysis_pids)
+)
+
+cat("=== Locked EFA Inclusion Summary ===\n")
+print(efa_inclusion_summary)
+cat("\nRW first-dup overrides:", paste(rw_efa_override_pids, collapse = ", "), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 5: EFA Dataset Exports
+
+**Sensitivity-check note:** the `primary` EFA files are the main measurement-structure datasets because they maximize usable `N` instrument-by-instrument. The matching `sensitivity` EFA files are a robustness check only: they rerun the same instrument on the strict paired `N = 82` sample to test whether adding salvage cases materially changes the factor structure.
+
+In practice, the sensitivity check asks:
+
+- does the number of retained factors stay the same?
+- do the same items cluster together in roughly the same way?
+- do any major cross-loadings or interpretation problems appear only after salvage cases are added?
+
+If the `primary` and `sensitivity` solutions are substantively similar, use the larger `primary` solution as the working EFA result. If they differ meaningfully, treat that instrument as unstable and prefer the stricter paired solution when interpreting the factor structure.
+
+This sensitivity check is about **factor robustness**, not about expanding the inferential sample. Tool × Order models and the final paired wide dataset still stay on the strict paired sample only.
+
+```{r export-efa}
+imi_efa_primary <- rw_efa_source |>
+  filter(
+    question_block == "Q1",
+    pid %in% rw_efa_primary_pids
+  ) |>
+  transmute(
+    participant_id  = pid,
+    item_code       = parse_integer_item_field(item_subnum2, "item_subnum2", "IMI EFA export"),
+    item_text,
+    score_raw_num   = as.numeric(score_raw),
+    score           = score_imi_items(item_code, score_raw_num),
+    inclusion_source = case_when(
+      pid %in% paired_analysis_pids ~ "paired_clean",
+      pid %in% rw_efa_override_pids ~ "rw_salvage_first_dup_override",
+      TRUE                          ~ "rw_salvage"
+    )
+  ) |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    efa_sample = "primary",
+    order = derive_order_from_conditions(condition_1, condition_2, "IMI EFA tracking join")
+  ) |>
+  select(
+    participant_id, item_code, item_text, score, order,
+    condition_1, condition_2, efa_sample, inclusion_source
+  )
+
+efficacy_efa_primary <- rw_efa_source |>
+  filter(
+    question_block == "Q7",
+    pid %in% rw_efa_primary_pids
+  ) |>
+  transmute(
+    participant_id  = pid,
+    item_code       = parse_integer_item_field(item_subnum2, "item_subnum2", "WritingEfficacy EFA export"),
+    item_text,
+    score           = as.numeric(score_raw),
+    inclusion_source = case_when(
+      pid %in% paired_analysis_pids ~ "paired_clean",
+      pid %in% rw_efa_override_pids ~ "rw_salvage_first_dup_override",
+      TRUE                          ~ "rw_salvage"
+    )
+  ) |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    efa_sample = "primary",
+    order = derive_order_from_conditions(condition_1, condition_2, "WritingEfficacy EFA tracking join")
+  ) |>
+  select(
+    participant_id, item_code, item_text, score, order,
+    condition_1, condition_2, efa_sample, inclusion_source
+  )
+
+refl_efa_primary <- llm_efa_source |>
+  filter(
+    question_block == "Q25",
+    pid %in% llm_efa_primary_pids
+  ) |>
+  transmute(
+    participant_id  = pid,
+    item_num        = parse_integer_item_field(item_num, "item_num", "AIReflection EFA export"),
+    item_text,
+    score           = parse_number(score_raw),
+    inclusion_source = case_when(
+      pid %in% paired_analysis_pids ~ "paired_clean",
+      TRUE                          ~ "llm_salvage"
+    )
+  ) |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    efa_sample = "primary",
+    order = derive_order_from_conditions(condition_1, condition_2, "AIReflection EFA tracking join")
+  ) |>
+  select(
+    participant_id, item_num, item_text, score, order,
+    condition_1, condition_2, efa_sample, inclusion_source
+  )
+
+beliefs_efa_primary <- llm_efa_source |>
+  filter(
+    question_block == "Q2-23",
+    pid %in% llm_efa_primary_pids
+  ) |>
+  transmute(
+    participant_id  = pid,
+    item_num        = parse_integer_item_field(item_num, "item_num", "Beliefs EFA export"),
+    item_text,
+    score_raw_num   = parse_number(score_raw),
+    score           = score_beliefs_items(item_num, score_raw_num),
+    inclusion_source = case_when(
+      pid %in% paired_analysis_pids ~ "paired_clean",
+      TRUE                          ~ "llm_salvage"
+    )
+  ) |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    efa_sample = "primary",
+    order = derive_order_from_conditions(condition_1, condition_2, "Beliefs EFA tracking join")
+  ) |>
+  select(
+    participant_id, item_num, item_text, score, order,
+    condition_1, condition_2, efa_sample, inclusion_source
+  )
+
+imi_efa_sensitivity <- imi_clean |>
+  mutate(
+    efa_sample = "sensitivity",
+    inclusion_source = "paired_clean"
+  )
+
+efficacy_efa_sensitivity <- efficacy_clean |>
+  mutate(
+    efa_sample = "sensitivity",
+    inclusion_source = "paired_clean"
+  )
+
+refl_efa_sensitivity <- refl_clean |>
+  mutate(
+    efa_sample = "sensitivity",
+    inclusion_source = "paired_clean"
+  )
+
+beliefs_efa_sensitivity <- beliefs_clean |>
+  mutate(
+    efa_sample = "sensitivity",
+    inclusion_source = "paired_clean"
+  )
+
+if (anyNA(imi_efa_primary$item_code) || !all(imi_efa_primary$item_code %in% 1:18)) {
+  stop("IMI EFA primary item_code values are invalid; expected integers 1-18.", call. = FALSE)
+}
+if (anyNA(efficacy_efa_primary$item_code) || !all(efficacy_efa_primary$item_code %in% 1:20)) {
+  stop("WritingEfficacy EFA primary item_code values are invalid; expected integers 1-20.", call. = FALSE)
+}
+if (anyNA(refl_efa_primary$item_num) || !all(refl_efa_primary$item_num %in% 1:12)) {
+  stop("AIReflection EFA primary item_num values are invalid; expected integers 1-12.", call. = FALSE)
+}
+if (anyNA(beliefs_efa_primary$item_num) || !all(beliefs_efa_primary$item_num %in% 1:22)) {
+  stop("Beliefs EFA primary item_num values are invalid; expected integers 1-22.", call. = FALSE)
+}
+
+efa_export_summary <- tribble(
+  ~instrument,       ~primary_n,                                 ~sensitivity_n,
+  "IMI",             n_distinct(imi_efa_primary$participant_id), n_distinct(imi_efa_sensitivity$participant_id),
+  "WritingEfficacy", n_distinct(efficacy_efa_primary$participant_id), n_distinct(efficacy_efa_sensitivity$participant_id),
+  "AIReflection",    n_distinct(refl_efa_primary$participant_id), n_distinct(refl_efa_sensitivity$participant_id),
+  "BeliefsAboutAI",  n_distinct(beliefs_efa_primary$participant_id), n_distinct(beliefs_efa_sensitivity$participant_id)
+)
+
+expected_efa_counts <- tribble(
+  ~instrument,       ~primary_n, ~sensitivity_n,
+  "IMI",             88L,        82L,
+  "WritingEfficacy", 88L,        82L,
+  "AIReflection",    91L,        82L,
+  "BeliefsAboutAI",  91L,        82L
+)
+
+assert_expected_counts(
+  observed_tbl = efa_export_summary,
+  expected_tbl = expected_efa_counts,
+  key_col = "instrument",
+  context_label = "EFA export counts do not match the locked inclusion plan"
+)
+
+excluded_pid_checks <- tribble(
+  ~dataset,                  ~pids,
+  "IMI_EFA_Primary",         list(unique(imi_efa_primary$participant_id)),
+  "WritingEfficacy_EFA_Primary", list(unique(efficacy_efa_primary$participant_id)),
+  "AI_Reflection_EFA_Primary",   list(unique(refl_efa_primary$participant_id)),
+  "BeliefsAboutAI_EFA_Primary",  list(unique(beliefs_efa_primary$participant_id))
+)
+
+unexpected_excluded_hits <- excluded_pid_checks |>
+  rowwise() |>
+  mutate(
+    forbidden_found = list(intersect(efa_global_exclusions, pids))
+  ) |>
+  ungroup() |>
+  filter(lengths(forbidden_found) > 0L) |>
+  transmute(dataset, forbidden_found = map_chr(forbidden_found, ~ paste(.x, collapse = ", ")))
+
+if (nrow(unexpected_excluded_hits) > 0) {
+  stop(
+    paste0(
+      "Global exclusions check failed in primary EFA exports:\n",
+      paste(capture.output(print(unexpected_excluded_hits)), collapse = "\n")
+    ),
+    call. = FALSE
+  )
+}
+
+write_csv(efa_export_summary,       file.path(efa_diagnostics_dir, "EFA_Export_Summary.csv"))
+write_csv(imi_efa_primary,          file.path(efa_dir, "IMI_EFA_Primary.csv"))
+write_csv(efficacy_efa_primary,     file.path(efa_dir, "WritingEfficacy_EFA_Primary.csv"))
+write_csv(refl_efa_primary,         file.path(efa_dir, "AI_Reflection_EFA_Primary.csv"))
+write_csv(beliefs_efa_primary,      file.path(efa_dir, "BeliefsAboutAI_EFA_Primary.csv"))
+write_csv(imi_efa_sensitivity,      file.path(efa_dir, "IMI_EFA_Sensitivity.csv"))
+write_csv(efficacy_efa_sensitivity, file.path(efa_dir, "WritingEfficacy_EFA_Sensitivity.csv"))
+write_csv(refl_efa_sensitivity,     file.path(efa_dir, "AI_Reflection_EFA_Sensitivity.csv"))
+write_csv(beliefs_efa_sensitivity,  file.path(efa_dir, "BeliefsAboutAI_EFA_Sensitivity.csv"))
+
+cat("=== EFA Export Counts ===\n")
+print(efa_export_summary)
+cat("\nExported:", file.path(efa_diagnostics_dir, "EFA_Export_Summary.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "IMI_EFA_Primary.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "WritingEfficacy_EFA_Primary.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "AI_Reflection_EFA_Primary.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "BeliefsAboutAI_EFA_Primary.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "IMI_EFA_Sensitivity.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "WritingEfficacy_EFA_Sensitivity.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "AI_Reflection_EFA_Sensitivity.csv"), "\n")
+cat("Exported:", file.path(efa_dir, "BeliefsAboutAI_EFA_Sensitivity.csv"), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 6: Strict Paired Wide Dataset
+
+This wide master dataset stays on the strict paired `N = 82` sample only. It is the dataset intended for Tool × Order and other crossover analyses.
+
+```{r phase3-wide}
+imi_wide <- imi_clean |>
+  mutate(item_col = paste0("IMI_", item_code)) |>
+  select(participant_id, item_col, score, order, condition_1, condition_2) |>
+  pivot_wider(
+    id_cols     = c(participant_id, order, condition_1, condition_2),
+    names_from  = item_col,
+    values_from = score
+  )
+
+efficacy_wide <- efficacy_clean |>
+  mutate(item_col = paste0("Efficacy_", item_code)) |>
+  select(participant_id, item_col, score) |>
+  pivot_wider(
+    names_from  = item_col,
+    values_from = score
+  )
+
+refl_wide <- refl_clean |>
+  mutate(item_col = paste0("Refl_", item_num)) |>
+  select(participant_id, item_col, score) |>
+  pivot_wider(
+    names_from  = item_col,
+    values_from = score
+  )
+
+beliefs_wide <- beliefs_clean |>
+  mutate(item_col = paste0("Beliefs_", item_num)) |>
+  select(participant_id, item_col, score) |>
+  pivot_wider(
+    names_from  = item_col,
+    values_from = score
+  )
+
+assert_unique_pid_rows(imi_wide, "participant_id", "imi_wide")
+assert_unique_pid_rows(efficacy_wide, "participant_id", "efficacy_wide")
+assert_unique_pid_rows(refl_wide, "participant_id", "refl_wide")
+assert_unique_pid_rows(beliefs_wide, "participant_id", "beliefs_wide")
+assert_identical_pid_sets(
+  list(
+    IMI = imi_wide$participant_id,
+    WritingEfficacy = efficacy_wide$participant_id,
+    AIReflection = refl_wide$participant_id,
+    BeliefsAboutAI = beliefs_wide$participant_id
+  ),
+  context_label = "Strict paired wide PID consistency"
+)
+
+master_wide_df <- imi_wide |>
+  inner_join(efficacy_wide, by = "participant_id") |>
+  inner_join(refl_wide,     by = "participant_id") |>
+  inner_join(beliefs_wide,  by = "participant_id")
+
+cat("=== Master Wide Dataset ===\n")
+cat("Rows (should equal N clean participants):", nrow(master_wide_df), "\n")
+cat("Columns:", ncol(master_wide_df), "\n")
+
+duplicate_master_ids <- master_wide_df |>
+  count(participant_id, name = "n") |>
+  filter(n > 1L)
+
+if (nrow(duplicate_master_ids) > 0) {
+  stop(
+    paste0(
+      "Final_Master_Wide has duplicate participant_id rows: ",
+      paste(duplicate_master_ids$participant_id, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+cat("Any duplicate participant_id: FALSE\n")
+
+assert_expected_count(nrow(master_wide_df), 82L, "Final_Master_Wide row count")
+assert_unique_pid_rows(master_wide_df, "participant_id", "Final_Master_Wide participant_id")
+assert_allowed_values(master_wide_df$order, c("Traditional_First", "AI_First"), "Final_Master_Wide order")
+assert_allowed_values(master_wide_df$condition_1, c("Alone", "LLM"), "Final_Master_Wide condition_1")
+assert_allowed_values(master_wide_df$condition_2, c("Alone", "LLM"), "Final_Master_Wide condition_2")
+
+required_master_item_cols <- c(
+  paste0("IMI_", 1:18),
+  paste0("Efficacy_", 1:20),
+  paste0("Refl_", 1:12),
+  paste0("Beliefs_", 1:22)
+)
+assert_required_columns(
+  master_wide_df,
+  c("participant_id", "order", "condition_1", "condition_2", required_master_item_cols),
+  "Final_Master_Wide contract"
+)
+assert_no_missing_values(
+  master_wide_df,
+  c("participant_id", "order", "condition_1", "condition_2", required_master_item_cols),
+  "Final_Master_Wide contract"
+)
+
+cat("\nNAs per instrument group:\n")
+master_wide_df |>
+  summarise(
+    IMI_NAs      = sum(is.na(pick(starts_with("IMI_")))),
+    Efficacy_NAs = sum(is.na(pick(starts_with("Efficacy_")))),
+    Refl_NAs     = sum(is.na(pick(starts_with("Refl_")))),
+    Beliefs_NAs  = sum(is.na(pick(starts_with("Beliefs_"))))
+  ) |>
+  print()
+
+write_csv(master_wide_df, file.path(script_dir, "Final_Master_Wide.csv"))
+cat("\nExported:", file.path(script_dir, "Final_Master_Wide.csv"), "\n")
+
+participant_count_reconciliation <- tribble(
+  ~stage, ~count,
+  "raw_rw_unique_pid", n_distinct(rw_raw$pid),
+  "raw_llm_unique_pid", n_distinct(llm_raw$pid),
+  "raw_union_unique_pid", n_distinct(c(rw_raw$pid, llm_raw$pid)),
+  "rw_best_unique_pid", n_distinct(rw_best$pid),
+  "llm_best_unique_pid", n_distinct(llm_best$pid),
+  "strict_paired_clean_pid", length(paired_analysis_pids),
+  "rw_primary_efa_pid", n_distinct(imi_efa_primary$participant_id),
+  "llm_primary_efa_pid", n_distinct(refl_efa_primary$participant_id),
+  "rw_sensitivity_pid", n_distinct(imi_efa_sensitivity$participant_id),
+  "llm_sensitivity_pid", n_distinct(refl_efa_sensitivity$participant_id),
+  "final_master_wide_pid", n_distinct(master_wide_df$participant_id)
+)
+
+write_csv(participant_count_reconciliation, file.path(audit_dir, "Participant_Count_Reconciliation.csv"))
+cat("Exported:", file.path(audit_dir, "Participant_Count_Reconciliation.csv"), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 7: Output Manifest
+
+```{r output-manifest}
+efa_exports_manifest <- tibble(
+  output_type = c(
+    "efa_export_summary",
+    "imi_efa_primary",
+    "wse_efa_primary",
+    "refl_efa_primary",
+    "beliefs_efa_primary",
+    "imi_efa_sensitivity",
+    "wse_efa_sensitivity",
+    "refl_efa_sensitivity",
+    "beliefs_efa_sensitivity",
+    "final_master_wide",
+    "participant_count_reconciliation"
+  ),
+  path = c(
+    file.path(efa_diagnostics_dir, "EFA_Export_Summary.csv"),
+    file.path(efa_dir, "IMI_EFA_Primary.csv"),
+    file.path(efa_dir, "WritingEfficacy_EFA_Primary.csv"),
+    file.path(efa_dir, "AI_Reflection_EFA_Primary.csv"),
+    file.path(efa_dir, "BeliefsAboutAI_EFA_Primary.csv"),
+    file.path(efa_dir, "IMI_EFA_Sensitivity.csv"),
+    file.path(efa_dir, "WritingEfficacy_EFA_Sensitivity.csv"),
+    file.path(efa_dir, "AI_Reflection_EFA_Sensitivity.csv"),
+    file.path(efa_dir, "BeliefsAboutAI_EFA_Sensitivity.csv"),
+    file.path(script_dir, "Final_Master_Wide.csv"),
+    file.path(audit_dir, "Participant_Count_Reconciliation.csv")
+  ),
+  description = c(
+    "EFA primary/sensitivity participant counts per instrument",
+    "IMI long-format scores, primary EFA sample (N = 88)",
+    "WritingEfficacy long-format scores, primary EFA sample (N = 88)",
+    "AIReflection long-format scores, primary EFA sample (N = 91)",
+    "BeliefsAboutAI long-format scores, primary EFA sample (N = 91)",
+    "IMI long-format scores, sensitivity EFA sample (paired N = 82)",
+    "WritingEfficacy long-format scores, sensitivity EFA sample (paired N = 82)",
+    "AIReflection long-format scores, sensitivity EFA sample (paired N = 82)",
+    "BeliefsAboutAI long-format scores, sensitivity EFA sample (paired N = 82)",
+    "Strict-paired wide dataset (N = 82); all item columns; consumed by 04, 06, 07, 08",
+    "Participant count reconciliation from raw through final master wide"
+  )
+)
+
+write_csv(efa_exports_manifest, file.path(audit_dir, "EFA_Exports_Manifest.csv"))
+kable(efa_exports_manifest, caption = "02_efa_exports.qmd — Output Manifest")
+```

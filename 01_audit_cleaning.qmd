@@ -1,0 +1,1191 @@
+---
+format: html
+output-dir: "01_audit_cleaning"
+---
+
+| \# Data Cleaning \|
+| Raw Qualtrics exports are cleaned, filtered to target instruments, joined with participant condition data, and exported as five separate CSVs. Scales differ across instruments — they are never combined. \|
+| The pipeline runs in two phases: \|
+| 1. **Diagnostic Audit** — runs on raw data before any submission selection. Flags duplicates (`valid > expected`) and incomplete cases (`valid < expected`). Nothing is dropped here. 2. **Extraction** — runs after **duplicate resolution**. Here, "dedup" simply means: if the same participant has multiple submissions for the same survey block, choose the single best submission to keep for analysis. \|
+
+## Section 1: Setup
+
+```{r setup}
+#| message: false
+library(tidyverse)
+source("scoring_helpers.R", local = knitr::knit_global())
+script_dir <- "01_audit_cleaning"
+audit_dir <- file.path(script_dir, "audit")
+cleaned_dir <- file.path(script_dir, "cleaned")
+dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(cleaned_dir, recursive = TRUE, showWarnings = FALSE)
+set.seed(42L)
+
+if (!file.exists("01_audit_cleaning.qmd")) {
+  stop("Run 01_audit_cleaning.qmd from the project root.", call. = FALSE)
+}
+```
+
+------------------------------------------------------------------------
+
+## Section 2: Load Raw Data
+
+Qualtrics exports have garbage header rows, so we skip the first 9 and assign column names manually. Three files: the real-world (RW) survey, the LLM survey, and the participant tracking table that maps IDs to conditions. `score_raw` is forced to character on read to prevent numeric coercion eating string values (e.g. ART author names).
+
+```{r load-data}
+rw_col_names <- c(
+  "participant number order", "pid", "item_code", "score_raw",
+  "qualtrics_qid", "item_subnum", "question_stem",
+  "input_type", "input_subtype", "answer_type",
+  "question_block", "item_subnum2", "item_text",
+  "item_text_full", "submission_status"
+)
+
+
+
+llm_col_names <- c(
+  "participant number order", "pid", "topic", "item_code", "score_raw",
+  "qualtrics_qid", "item_subnum", "question_stem",
+  "input_type", "input_subtype", "answer_type",
+  "question_block", "item_num", "item_text",
+  "item_text_full", "response_labeled", "response_label_short",
+  "score_numeric", "response_label2", "response_html",
+  "question_stem2", "item_text2", "submission_status"
+)
+
+
+rw_raw <- read_csv(
+  "rw-survey-long-040726.csv",
+  skip = 9, col_names = rw_col_names, show_col_types = FALSE,
+  col_types = cols(
+    pid = col_character(),
+    question_block = col_character(),
+    item_subnum2 = col_character(),
+    score_raw = col_character(),
+    submission_status = col_character()
+  )
+)
+
+llm_raw <- read_csv(
+  "llm-survey-long-040726.csv",
+  skip = 9, col_names = llm_col_names, show_col_types = FALSE,
+  col_types = cols(
+    pid = col_character(),
+    question_block = col_character(),
+    item_num = col_character(),
+    score_raw = col_character(),
+    submission_status = col_character()
+  )
+)
+
+llm_raw <- backfill_missing_pid(
+  llm_raw,
+  respondent_col = "participant number order",
+  pid_col = "pid",
+  question_block_col = "question_block",
+  score_col = "score_raw",
+  primary_pid_block = "Q2",
+  fallback_pid_block = "Q3",
+  context_label = "llm_raw"
+)
+
+tracking <- read_csv(
+  "Participant Tracking - IDs and Conditions Table.csv",
+  show_col_types = FALSE,
+  col_types = cols(
+    ParticipantID = col_character(),
+    `Condition 1` = col_character(),
+    `Condition 2` = col_character()
+  )
+)
+
+assert_required_columns(
+  rw_raw,
+  c("pid", "question_block", "item_subnum2", "score_raw", "submission_status"),
+  context_label = "rw_raw"
+)
+assert_required_columns(
+  llm_raw,
+  c("pid", "question_block", "item_num", "score_raw", "submission_status"),
+  context_label = "llm_raw"
+)
+assert_required_columns(
+  tracking,
+  c("ParticipantID", "Condition 1", "Condition 2"),
+  context_label = "tracking"
+)
+assert_no_missing_values(rw_raw, c("pid", "submission_status"), "rw_raw")
+assert_no_missing_values(llm_raw, c("pid", "submission_status"), "llm_raw")
+assert_nonempty_df(rw_raw, "rw_raw")
+assert_nonempty_df(llm_raw, "llm_raw")
+assert_nonempty_df(tracking, "tracking")
+```
+
+------------------------------------------------------------------------
+
+## Section 3: Inspect LLM File Structure
+
+Kept as a permanent reference — confirms column positions without re-reading the raw file.
+
+```{r inspect-llm}
+# Confirm 23 columns
+ncol(llm_raw)
+
+# View first 3 rows with all columns visible
+llm_raw |> slice(1:11) |> print(width = Inf)
+
+# Confirm question_block codes
+# Q2-23 = Beliefs About AI, Q25 = AI Reflection
+llm_raw |> count(question_block) |> print(n = 30)
+```
+
+------------------------------------------------------------------------
+
+## Section 4: Clean Participant Tracking Table
+
+```{r clean-tracking}
+tracking_clean <- tracking |>
+  select(ParticipantID, `Condition 1`, `Condition 2`) |>
+  rename(
+    pid         = ParticipantID,
+    condition_1 = `Condition 1`,
+    condition_2 = `Condition 2`
+  ) |>
+  mutate(
+    pid = as.character(pid),
+    condition_1 = as.character(condition_1),
+    condition_2 = as.character(condition_2)
+  ) |>
+  filter(!is.na(pid))
+
+assert_unique_pid_rows(tracking_clean, pid_col = "pid", context_label = "tracking_clean")
+
+# Sanity check: flag any participants with unexpected condition combos
+bad_conditions <- tracking_clean |>
+  filter(
+    !(condition_1 == "Alone" & condition_2 == "LLM") &
+    !(condition_1 == "LLM"  & condition_2 == "Alone")
+  )
+
+cat("Participants with unexpected condition combos (should be 0):",
+    nrow(bad_conditions), "\n")
+
+if (nrow(bad_conditions) > 0) {
+  cat("Flagged participants:\n")
+  print(bad_conditions)
+  stop("Unexpected condition_1/condition_2 combinations detected in tracking_clean.", call. = FALSE)
+}
+
+assert_no_missing_values(tracking_clean, c("pid", "condition_1", "condition_2"), "tracking_clean")
+assert_allowed_values(tracking_clean$condition_1, c("Alone", "LLM"), "tracking_clean condition_1")
+assert_allowed_values(tracking_clean$condition_2, c("Alone", "LLM"), "tracking_clean condition_2")
+```
+
+------------------------------------------------------------------------
+
+## Section 5: Participant Data Audit
+
+Qualtrics `submission_status` tags are unreliable — some participants have complete valid data under an `incomplete` tag due to browser issues. The audit runs on **raw data** before any submission selection, so we can distinguish true answered duplicates from empty duplicate shells before duplicate resolution chooses a winner.
+
+### 5a — Instrument Expected Counts
+
+```{r audit-config}
+
+# Ground truth: how many non-NA score_raw rows each instrument should have
+# per participant (one clean submission).
+# Q9 (ART) is excluded — it is a free-text checklist with no fixed item count
+# and cannot be meaningfully audited by row count.
+# Each instrument is mapped to its source file to prevent cross-file phantom
+# duplicates when the audit runs per-source rather than on the combined stack.
+# Concrete example: RW Q1 is the 18-item IMI, but the LLM file also contains
+# a Q1 block that is just a welcome prompt. If we audit only by question_block
+# on the combined stack, those LLM Q1 rows can be miscounted as extra RW IMI
+# rows and create fake "19/18" duplicate flags.
+instrument_expected <- tribble(
+  ~question_block, ~instrument,       ~expected, ~source,
+  "Q1",            "IMI",             18L,        "rw",
+  "Q7",            "WritingEfficacy", 20L,        "rw",
+  "Q25",           "AIReflection",    12L,        "llm",
+  "Q2-23",         "BeliefsAboutAI",  22L,        "llm"
+)
+
+# Manual exclusions for obvious practice / test IDs that should never enter
+# scored analyses even if they look structurally clean on one source.
+manual_exclusions <- tribble(
+  ~pid,                ~manual_exclusion_reason,
+  "N/A (RA practice)", "Practice / RA test PID",
+  "Sania Jain test",   "Practice / test PID",
+  "TEST REMOVE",       "Practice / test PID",
+  "testNOTREAL",       "Practice / test PID"
+)
+
+
+#flag this for something to work on I emailed myself 2 pid exceptions that are exceptions to the best fit submission algo so add at end
+
+
+# Best-submission selection checks target-block quality from the raw data rather
+# than trusting Qualtrics status labels as truth. Q9 (ART) is included as a
+# completeness block for RW, but it is not straight-line sensitive.
+submission_resolution_expected <- tribble(
+  ~source, ~question_block, ~expected, ~straight_line_sensitive,
+  "rw",    "Q1",            18L,       TRUE,
+  "rw",    "Q7",            20L,       TRUE,
+  "rw",    "Q9",             1L,       FALSE,
+  "llm",   "Q25",           12L,       TRUE,
+  "llm",   "Q2-23",         22L,       TRUE
+)
+
+```
+
+### 5b — Diagnostic Audit
+
+Audit runs **per source file** (not on the combined stack) to prevent cross-file phantom duplicates. In practice, this means we do not trust `question_block` by itself across both long files. The clearest example is `Q1`: in the RW file, `Q1` is the 18-item `IMI`, but the LLM file also has a `Q1` block that is only a welcome/post-activity prompt. If both files are stacked and audited only by `Q1`, those LLM rows can be mistakenly counted as extra RW IMI rows and create fake duplicate patterns such as `19/18`. Q1 and Q7 are RW-only; Q25 and Q2-23 are LLM-only. Q9 (ART) is excluded — it is a free-text checklist with no fixed item count and no meaningful completion ratio.
+
+Two exports are produced:
+
+1.  **`01_audit_cleaning/audit/Diagnostic_Audit_Full.csv`** — master ledger, every pid × instrument row, clean or not. Use this for data provenance documentation.
+2.  **`01_audit_cleaning/audit/Sus_Participants_Rap_Sheet.csv`** — one row per flagged participant, one column per instrument, showing completion ratio + flag at a glance. Perfectly clean participants are excluded. Use this for manual triage.
+
+`clean_pids` is extracted from the full audit and used as the Phase 2 gate.
+
+**Duplicate detection note:** both `total_rows` and `valid_responses` are retained. This lets us separate:
+
+- answered duplicates (`valid_responses > expected`)
+- empty duplicate shells (`total_rows > expected` but `valid_responses == expected`)
+- fragmented duplicate submissions (`total_rows > expected` and `0 < valid_responses < expected`)
+
+**Duplicate handling note:** These raw-data anomalies are flagged for the record but are NOT automatically excluded from Phase 2. Section 6a resolves them to the best single submission; Section 6c then decides whether a participant is worth keeping for full analysis, single-source salvage, or dropping.
+
+**Rap Sheet `NA` cell note:** A `NA` cell means the participant never appeared in the data for that instrument — distinct from `"0/N [All NA]"`, which means they appeared but gave no valid responses.
+
+Flags:
+
+- `Answered duplicate` → `valid_responses > expected` (more answered items than the instrument contains)
+- `Empty duplicate shell` → `total_rows > expected` and `valid_responses == expected` (one real submission plus a blank/empty shell)
+- `Fragmented duplicate` → `total_rows > expected` and `0 < valid_responses < expected` (multiple submissions, but still incomplete overall)
+- `All NA` → `valid_responses == 0`
+- `Incomplete` → `valid_responses < expected` and \> 0 (single submission, missing items)
+- `Straight-line` → `valid_responses == expected`, all responses identical
+- `NA` → clean; re-evaluated after duplicate resolution in Section 6
+
+```{r diagnostic-audit}
+
+# Tag each source file — audit runs per-source to prevent cross-file phantom duplicates
+# such as the LLM welcome-prompt Q1 rows being accidentally counted as RW IMI rows.
+rw_tagged  <- rw_raw  |> select(pid, question_block, score_raw, submission_status) |> mutate(source = "rw")
+llm_tagged <- llm_raw |> select(pid, question_block, score_raw, submission_status) |> mutate(source = "llm")
+
+combined_sourced <- bind_rows(rw_tagged, llm_tagged)
+
+# inner_join on (question_block, source) simultaneously:
+#   - filters to target instruments only
+#   - enforces source matching (rw rows only join rw instruments, etc.)
+#   - prevents same-code/different-meaning collisions like RW Q1 (IMI) versus
+#     LLM Q1 (welcome prompt)
+#   - excludes Q9 (ART) which is no longer in instrument_expected
+diagnostic_audit_full <- combined_sourced |>
+  inner_join(instrument_expected, by = c("question_block", "source")) |>
+  filter(!is.na(pid)) |>
+  group_by(pid, question_block, instrument, expected) |>
+  summarise(
+    total_rows        = n(),
+    valid_responses = sum(!is.na(score_raw)),
+    n_distinct_vals = n_distinct(score_raw, na.rm = TRUE),
+    submission_statuses = str_c(sort(unique(submission_status)), collapse = "; "),
+    .groups = "drop"
+  ) |>
+  mutate(
+    completion_ratio = paste0(valid_responses, "/", expected),
+    straight_line    = valid_responses == expected &
+                       n_distinct_vals == 1,
+    flag = case_when(
+      valid_responses >  expected                      ~ "Answered duplicate",
+      total_rows      >  expected &
+        valid_responses == expected                    ~ "Empty duplicate shell",
+      total_rows      >  expected &
+        valid_responses > 0 &
+        valid_responses < expected                     ~ "Fragmented duplicate",
+      valid_responses == 0                             ~ "All NA",
+      valid_responses <  expected                      ~ "Incomplete",
+      straight_line                                    ~ "Straight-line",
+      TRUE                                             ~ NA_character_
+    )
+  ) |>
+  select(pid, instrument, question_block, total_rows, valid_responses,
+         expected, completion_ratio, submission_statuses, flag) |>
+  arrange(flag, instrument, pid)
+
+# Console summary — for reference before duplicate resolution
+cat("=== Raw Audit Summary (before duplicate resolution, per-source) ===\n")
+diagnostic_audit_full |>
+  group_by(instrument) |>
+  summarise(
+    n_total              = n(),
+    clean                = sum(is.na(flag)),
+    answered_duplicate   = sum(flag == "Answered duplicate",   na.rm = TRUE),
+    empty_duplicate      = sum(flag == "Empty duplicate shell", na.rm = TRUE),
+    fragmented_duplicate = sum(flag == "Fragmented duplicate", na.rm = TRUE),
+    incomplete           = sum(flag == "Incomplete",           na.rm = TRUE),
+    all_na               = sum(flag == "All NA",               na.rm = TRUE),
+    straight_line        = sum(flag == "Straight-line",        na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  print()
+
+# Export 1: master ledger — every participant, raw-data flags preserved before duplicate resolution
+write_csv(
+  diagnostic_audit_full |> select(-question_block),
+  file.path(audit_dir, "Diagnostic_Audit_Full.csv")
+)
+cat("\nExported:", file.path(audit_dir, "Diagnostic_Audit_Full.csv"), "(", nrow(diagnostic_audit_full), "rows)\n")
+
+# ---------------------------------------------------------------------------
+# Export 2a: All PID Rap Sheet — same format as sus sheet, but every PID
+# ---------------------------------------------------------------------------
+
+rap_sheet_long <- diagnostic_audit_full |>
+  mutate(
+    status_summary = if_else(
+      is.na(flag),
+      paste0(completion_ratio, " [Clean]"),
+      paste0(completion_ratio, " [", flag, "]")
+    )
+  ) |>
+  select(pid, instrument, status_summary)
+
+rap_sheet_wide <- rap_sheet_long |>
+  pivot_wider(
+    names_from  = instrument,
+    values_from = status_summary
+  )
+
+all_pid_frame <- tibble(
+  pid = sort(unique(c(
+    tracking_clean$pid,
+    diagnostic_audit_full$pid,
+    manual_exclusions$pid
+  )))
+) |>
+  filter(!is.na(pid))
+
+# NA cells (instrument never appeared for that pid) are not counted as flags
+instrument_cols <- sort(unique(diagnostic_audit_full$instrument))
+
+all_pid_rap_sheet <- all_pid_frame |>
+  left_join(rap_sheet_wide, by = "pid") |>
+  mutate(
+    total_flags = rowSums(
+      across(
+        all_of(instrument_cols),
+        \(x) !is.na(x) & !str_detect(x, fixed("[Clean]"))
+      ),
+      na.rm = TRUE
+    )
+  ) |>
+  arrange(desc(total_flags), pid) |>
+  relocate(total_flags, .after = pid) |>
+  select(pid, total_flags, all_of(instrument_cols))
+
+write_csv(all_pid_rap_sheet, file.path(audit_dir, "All_PIDs_Rap_Sheet.csv"))
+cat("Exported:", file.path(audit_dir, "All_PIDs_Rap_Sheet.csv"), "(",
+    nrow(all_pid_rap_sheet), "participants,",
+    ncol(all_pid_rap_sheet) - 2, "instrument columns)\n")
+
+# ---------------------------------------------------------------------------
+# Export 2b: Sus Participants Rap Sheet — same format, flagged pids only
+# ---------------------------------------------------------------------------
+
+rap_sheet_wide <- all_pid_rap_sheet |>
+  filter(total_flags > 0) |>
+  arrange(desc(total_flags), pid) |>
+  select(pid, total_flags, all_of(instrument_cols))
+
+write_csv(rap_sheet_wide, file.path(audit_dir, "Sus_Participants_Rap_Sheet.csv"))
+cat("Exported:", file.path(audit_dir, "Sus_Participants_Rap_Sheet.csv"), "(",
+    nrow(rap_sheet_wide), "flagged participants,",
+    ncol(rap_sheet_wide) - 2, "instrument columns)\n")
+
+# NOTE: clean_pids derived AFTER duplicate resolution in Section 6b — do not gate here
+```
+
+------------------------------------------------------------------------
+
+## Section 6: Duplicate Resolution + Clean PID Gate
+
+### 6a — Pick Best Submission Attempt Per Participant
+
+For each participant, keep one whole-survey submission attempt per source file. The winner is chosen from the raw data quality first, not from the Qualtrics label:
+
+- more clean target blocks
+- more valid target responses
+- fewer straight-lined target blocks
+- more total valid responses across the full survey
+
+Only if the raw data are otherwise tied do we use the Qualtrics labels as a deterministic fallback: `unique` \> `second-dup` \> `first-dup` \> `incomplete`.
+
+This is what `dedup` means in this file: **duplicate resolution** or **best-submission selection**, not deleting identical rows blindly. We do **not** assume that Qualtrics `unique` proves a participant truly has only one submission in the export. Instead, observed uniqueness is checked from the raw data itself by counting how many submission-status candidates appear for that participant.
+
+This resolves the Qualtrics phantom-row duplicates flagged in Section 5b.
+
+```{r pick-best-submission}
+
+rw_resolution  <- resolve_best_submission(rw_raw,  "rw",  submission_resolution_expected)
+llm_resolution <- resolve_best_submission(llm_raw, "llm", submission_resolution_expected)
+
+rw_best  <- rw_resolution$best_data
+llm_best <- llm_resolution$best_data
+
+submission_resolution_audit <- bind_rows(
+  rw_resolution$resolution_audit,
+  llm_resolution$resolution_audit
+)
+
+rw_multi_status_n <- submission_resolution_audit |>
+  filter(source == "rw", observed_submission_count > 1L) |>
+  distinct(pid) |>
+  nrow()
+
+llm_multi_status_n <- submission_resolution_audit |>
+  filter(source == "llm", observed_submission_count > 1L) |>
+  distinct(pid) |>
+  nrow()
+
+write_csv(submission_resolution_audit, file.path(audit_dir, "Submission_Resolution_Audit.csv"))
+cat("Exported:", file.path(audit_dir, "Submission_Resolution_Audit.csv"), "\n")
+cat("RW participants with >1 observed submission status:", rw_multi_status_n, "\n")
+cat("LLM participants with >1 observed submission status:", llm_multi_status_n, "\n")
+
+cat("rw_best rows: ",  nrow(rw_best),  "\n")
+cat("llm_best rows:", nrow(llm_best), "\n")
+```
+
+### 6b — Derive clean_pids After Duplicate Resolution
+
+Re-evaluate completeness on `rw_best` / `llm_best` after duplicate resolution. First, each instrument is checked for completeness and straight-lining. Then source-level clean flags are built for RW and LLM separately. A participant enters `clean_pids` only if both sides are present and clean after duplicate resolution. Duplicate cases rescued by Section 6a will pass this check; true incompletes, straight-liners, and single-source participants will not.
+
+```{r clean-pids}
+
+# Rebuild combined from best-submission sources after duplicate resolution
+combined_dedup <- bind_rows(
+  rw_best  |> select(pid, question_block, score_raw) |> mutate(source = "rw"),
+  llm_best |> select(pid, question_block, score_raw) |> mutate(source = "llm")
+)
+
+post_dedup_audit <- combined_dedup |>
+  filter(
+    !is.na(pid)
+  ) |>
+  inner_join(instrument_expected, by = c("question_block", "source")) |>
+  group_by(pid, source, instrument, question_block, expected) |>
+  summarise(
+    valid_responses = sum(!is.na(score_raw)),
+    n_distinct_vals = n_distinct(score_raw, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    straight_line = valid_responses == expected &
+                    n_distinct_vals == 1,
+    post_dedup_flag = case_when(
+      valid_responses == 0        ~ "All NA",
+      valid_responses <  expected ~ "Incomplete",
+      straight_line               ~ "Straight-line",
+      TRUE                        ~ NA_character_   # clean
+    )
+  )
+
+# A source is clean only if every instrument present for that source is clean.
+# clean_pids is stricter: both RW and LLM must be present and clean.
+# values_fill = FALSE intentionally treats source-absent participants as not clean
+# for that source, so only fully paired clean participants enter clean_pids.
+source_clean_status <- post_dedup_audit |>
+  mutate(is_clean = is.na(post_dedup_flag)) |>
+  group_by(pid, source) |>
+  summarise(source_clean = all(is_clean), .groups = "drop") |>
+  pivot_wider(
+    names_from   = source,
+    values_from  = source_clean,
+    names_prefix = "clean_",
+    values_fill  = FALSE
+  )
+
+clean_pids <- source_clean_status |>
+  filter(
+    clean_rw,
+    clean_llm,
+    !pid %in% manual_exclusions$pid
+  ) |>
+  pull(pid)
+
+assert_expected_count(length(clean_pids), 82L, "clean_pids expected count")
+
+cat("=== Clean Summary After Duplicate Resolution ===\n")
+post_dedup_audit |>
+  group_by(instrument) |>
+  summarise(
+    n_total       = n(),
+    clean         = sum(is.na(post_dedup_flag)),
+    incomplete    = sum(post_dedup_flag == "Incomplete",    na.rm = TRUE),
+    all_na        = sum(post_dedup_flag == "All NA",        na.rm = TRUE),
+    straight_line = sum(post_dedup_flag == "Straight-line", na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  print()
+
+cat("\nFinal clean_pids (pass all instruments after duplicate resolution):", length(clean_pids), "\n")
+cat("Excluded after duplicate resolution:",
+    n_distinct(post_dedup_audit$pid) - length(clean_pids), "\n")
+```
+
+### 6c — Participant Triage For Keep / Salvage / Drop
+
+The raw audit tells us *why* a participant looked suspicious. The after-duplicate-resolution audit tells us whether a usable best submission remains. This section converts that into a participant-level recommendation:
+
+- `Keep for full analysis` → clean on both RW and LLM instruments after duplicate resolution
+- `Salvage for RW-only analysis` → clean on RW instruments, not clean or absent on LLM
+- `Salvage for LLM-only analysis` → clean on LLM instruments, not clean or absent on RW
+- `Drop from scored analyses` → not clean on either side after duplicate resolution
+
+Three exports are produced:
+
+1.  **`01_audit_cleaning/audit/Participant_Triage.csv`** — full participant-level decision ledger with raw-data notes and after-duplicate-resolution notes
+2.  **`01_audit_cleaning/audit/Salvage_Candidates.csv`** — subset worth keeping for RW-only or LLM-only analyses
+3.  **`01_audit_cleaning/audit/Triage_Rap_Sheet.csv`** — same wide, per-instrument scan style as the old rap sheet, plus the final recommendation
+
+```{r participant-triage}
+pre_dedup_notes <- diagnostic_audit_full |>
+  group_by(pid) |>
+  summarise(
+    pre_dedup_issues = str_c(unique(flag[!is.na(flag)]), collapse = "; "),
+    .groups = "drop"
+  ) |>
+  mutate(
+    pre_dedup_issues = na_if(pre_dedup_issues, "")
+  )
+
+post_dedup_notes <- post_dedup_audit |>
+  filter(!is.na(post_dedup_flag)) |>
+  group_by(pid) |>
+  summarise(
+    post_dedup_issues = str_c(
+      paste0(instrument, ": ", post_dedup_flag),
+      collapse = "; "
+    ),
+    .groups = "drop"
+  )
+
+assert_unique_key_rows(source_clean_status, "pid", "source_clean_status")
+assert_unique_key_rows(manual_exclusions, "pid", "manual_exclusions")
+assert_unique_key_rows(pre_dedup_notes, "pid", "pre_dedup_notes")
+assert_unique_key_rows(post_dedup_notes, "pid", "post_dedup_notes")
+assert_unique_key_rows(tracking_clean, "pid", "tracking_clean")
+
+participant_triage <- full_join(
+  post_dedup_audit |>
+    distinct(pid),
+  source_clean_status,
+  by = "pid"
+) |>
+  mutate(
+    clean_rw  = coalesce(clean_rw, FALSE),
+    clean_llm = coalesce(clean_llm, FALSE)
+  ) |>
+  left_join(manual_exclusions, by = "pid") |>
+  left_join(pre_dedup_notes, by = "pid") |>
+  left_join(post_dedup_notes, by = "pid") |>
+  left_join(tracking_clean, by = "pid") |>
+  mutate(
+    analysis_recommendation = case_when(
+      !is.na(manual_exclusion_reason) ~ "Drop from scored analyses",
+      clean_rw & clean_llm   ~ "Keep for full analysis",
+      clean_rw & !clean_llm  ~ "Salvage for RW-only analysis",
+      !clean_rw & clean_llm  ~ "Salvage for LLM-only analysis",
+      TRUE                   ~ "Drop from scored analyses"
+    )
+  ) |>
+  arrange(analysis_recommendation, pid)
+
+assert_unique_key_rows(participant_triage, "pid", "participant_triage")
+
+salvage_candidates <- participant_triage |>
+  filter(str_detect(analysis_recommendation, "^Salvage"))
+
+triage_rap_long <- post_dedup_audit |>
+  mutate(
+    status_summary = if_else(
+      is.na(post_dedup_flag),
+      paste0(valid_responses, "/", expected, " [Clean]"),
+      paste0(valid_responses, "/", expected, " [", post_dedup_flag, "]")
+    )
+  ) |>
+  select(pid, instrument, status_summary)
+
+triage_rap_base <- participant_triage
+
+# Join instrument status summaries — assert row count BEFORE the filter
+# so the assertion checks the join itself, not the post-filter result.
+triage_rap_joined <- triage_rap_base |>
+  left_join(
+    triage_rap_long |>
+      pivot_wider(
+        names_from  = instrument,
+        values_from = status_summary
+      ),
+    by = "pid"
+  ) |>
+  mutate(
+    total_flags = rowSums(
+      across(
+        all_of(instrument_cols),
+        \(x) !is.na(x) & !str_detect(x, fixed("[Clean]"))
+      ),
+      na.rm = TRUE
+    )
+  )
+
+assert_row_count_unchanged(nrow(triage_rap_base), nrow(triage_rap_joined), "triage_rap_sheet join")
+
+triage_rap_sheet <- triage_rap_joined |>
+  filter(analysis_recommendation != "Keep for full analysis") |>
+  arrange(desc(total_flags), analysis_recommendation, pid) |>
+  select(
+    pid, analysis_recommendation, manual_exclusion_reason, total_flags,
+    AIReflection, BeliefsAboutAI, IMI, WritingEfficacy,
+    pre_dedup_issues, post_dedup_issues, condition_1, condition_2
+  )
+
+cat("=== Participant Triage Summary ===\n")
+participant_triage |>
+  count(analysis_recommendation) |>
+  print()
+
+cat("\n=== Participants To Review (not full-keep) ===\n")
+participant_triage |>
+  filter(analysis_recommendation != "Keep for full analysis") |>
+  select(
+    pid, analysis_recommendation, manual_exclusion_reason,
+    pre_dedup_issues, post_dedup_issues,
+    condition_1, condition_2
+  ) |>
+  print(n = 50)
+
+write_csv(participant_triage, file.path(audit_dir, "Participant_Triage.csv"))
+write_csv(salvage_candidates, file.path(audit_dir, "Salvage_Candidates.csv"))
+write_csv(triage_rap_sheet, file.path(audit_dir, "Triage_Rap_Sheet.csv"))
+
+cat("\nExported:", file.path(audit_dir, "Participant_Triage.csv"), "\n")
+cat("Exported:", file.path(audit_dir, "Salvage_Candidates.csv"), "\n")
+cat("Exported:", file.path(audit_dir, "Triage_Rap_Sheet.csv"), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 6d: EFA Inclusion Rules
+
+Primary EFA datasets are built instrument-by-instrument. They start from the strict paired `clean_pids` sample and then add only the raw-verified salvage cases approved in `01_audit_cleaning/audit/Triage_Rap_Sheet_Verified.csv`.
+
+Tool x Order models remain stricter: they continue to use `clean_pids` only.
+
+```{r efa-inclusion-config}
+
+verified_triage_path <- file.path(audit_dir, "Triage_Rap_Sheet_Verified.csv")
+legacy_verified_triage_path <- file.path("inputs", "audit", "Triage_Rap_Sheet_Verified.csv")
+if (!file.exists(verified_triage_path) && file.exists(legacy_verified_triage_path)) {
+  verified_triage_path <- legacy_verified_triage_path
+}
+
+if (!file.exists(verified_triage_path)) {
+  stop("01_audit_cleaning/audit/Triage_Rap_Sheet_Verified.csv is required for the EFA inclusion rules.")
+}
+
+verified_triage <- read_csv(
+  verified_triage_path,
+  show_col_types = FALSE
+)
+
+assert_required_columns(verified_triage, c("pid", "verified_recommendation"), "verified_triage")
+assert_no_missing_values(verified_triage, c("pid", "verified_recommendation"), "verified_triage")
+assert_unique_key_rows(verified_triage, "pid", "verified_triage")
+
+paired_analysis_pids <- clean_pids
+
+efa_global_exclusions <- c(
+  "N/A (RA practice)",
+  "Sania Jain test",
+  "y5lblN",
+  "2192994",
+  "hKpFTX"
+)
+
+rw_efa_override_pids <- verified_triage |>
+  filter(verified_recommendation ==
+           "Salvage RW-only with manual override to first-dup submission") |>
+  pull(pid)
+
+rw_efa_salvage_pids <- verified_triage |>
+  filter(
+    verified_recommendation %in% c(
+      "Salvage RW-only",
+      "Salvage RW-only with manual override to first-dup submission"
+    ),
+    !pid %in% efa_global_exclusions
+  ) |>
+  pull(pid)
+
+llm_efa_salvage_pids <- verified_triage |>
+  filter(
+    verified_recommendation == "Salvage LLM-only",
+    !pid %in% efa_global_exclusions
+  ) |>
+  pull(pid)
+
+rw_efa_primary_pids  <- union(paired_analysis_pids, rw_efa_salvage_pids)
+llm_efa_primary_pids <- union(paired_analysis_pids, llm_efa_salvage_pids)
+
+# Replace the auto-selected second-dup rows for the approved manual-override
+# cases with the first-dup submission across the RW survey.
+rw_efa_source <- rw_best |>
+  filter(!pid %in% rw_efa_override_pids) |>
+  bind_rows(
+    rw_raw |>
+      filter(
+        pid %in% rw_efa_override_pids,
+        submission_status == "first-dup"
+      )
+  )
+
+missing_rw_override_pids <- setdiff(
+  rw_efa_override_pids,
+  unique(rw_efa_source$pid)
+)
+
+if (length(missing_rw_override_pids) > 0) {
+  stop(
+    paste0(
+      "RW EFA override participants are missing after first-dup splice: ",
+      paste(missing_rw_override_pids, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+llm_efa_source <- llm_best
+
+efa_inclusion_summary <- tribble(
+  ~instrument,         ~primary_n, ~sensitivity_n,
+  "IMI",               length(rw_efa_primary_pids),  length(paired_analysis_pids),
+  "WritingEfficacy",   length(rw_efa_primary_pids),  length(paired_analysis_pids),
+  "AIReflection",      length(llm_efa_primary_pids), length(paired_analysis_pids),
+  "BeliefsAboutAI",    length(llm_efa_primary_pids), length(paired_analysis_pids)
+)
+
+cat("=== EFA Inclusion Summary ===\n")
+print(efa_inclusion_summary)
+cat("\nRW manual overrides:", paste(rw_efa_override_pids, collapse = ", "), "\n")
+cat("RW primary EFA additions:", paste(setdiff(rw_efa_primary_pids, paired_analysis_pids), collapse = ", "), "\n")
+cat("LLM primary EFA additions:", paste(setdiff(llm_efa_primary_pids, paired_analysis_pids), collapse = ", "), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 7: Instrument Completion Audit (After Duplicate Resolution)
+
+Each instrument has a hardcoded minimum valid item requirement based on its scale length. A participant also fails if all responses are identical (straight-line pattern) AND they have enough items to meet the requirement. Every participant is audited per instrument — nothing is silently dropped.
+
+Required valid items per instrument:
+
+- Q1 IMI: 18
+- Q7 Writing Efficacy: 20
+- Q9 ART: 1 (checklist — just needs at least one response)
+- Q25 AI Reflection: 12
+- Q2-23 Beliefs About AI: 22 (first item is non-Likert, excluded from count)
+
+```{r instrument-audit}
+
+
+audit_instrument <- function(df, block, required_n, file_label) {
+  df |>
+    filter(question_block == block, !is.na(pid)) |>
+    group_by(pid) |>
+    summarise(
+      n_valid           = sum(!is.na(score_raw)),
+      straight_line     = n_distinct(score_raw, na.rm = TRUE) == 1 &
+                            n_valid >= required_n,
+      meets_requirement = n_valid >= required_n & !straight_line,
+      .groups = "drop"
+    ) |>
+    mutate(
+      instrument = file_label,
+      required_n = required_n,
+      flag = case_when(
+        straight_line      ~ "Straight-line response",
+        n_valid == 0       ~ "All NA",
+        !meets_requirement ~ paste0("Only ", n_valid, " of ",
+                                    required_n, " valid items"),
+        TRUE               ~ NA_character_
+      )
+    )
+}
+
+instrument_audit <- bind_rows(
+  audit_instrument(rw_best,  "Q1",    18, "IMI"),
+  audit_instrument(rw_best,  "Q7",    20, "WritingEfficacy"),
+  audit_instrument(rw_best,  "Q9",     1, "ART"),
+  audit_instrument(llm_best, "Q25",   12, "AIReflection"),
+  audit_instrument(llm_best, "Q2-23", 22, "BeliefsAboutAI")
+) |>
+  left_join(tracking_clean, by = "pid") |>
+  arrange(instrument, meets_requirement, pid)
+
+# Summary table
+cat("=== Instrument Completion Audit ===\n")
+instrument_audit |>
+  group_by(instrument) |>
+  summarise(
+    total   = n(),
+    meets   = sum(meets_requirement),
+    flagged = sum(!meets_requirement),
+    .groups = "drop"
+  ) |>
+  print()
+
+cat("\n=== Flagged Participants by Instrument ===\n")
+instrument_audit |>
+  filter(!meets_requirement) |>
+  select(pid, instrument, n_valid, required_n, flag, condition_1, condition_2) |>
+  print(n = 50)
+
+write_csv(instrument_audit, file.path(audit_dir, "InstrumentAudit.csv"))
+cat("\nExported:", file.path(audit_dir, "InstrumentAudit.csv"), "\n")
+
+# Note: Phase 2 gate is clean_pids from Section 6b (after-duplicate-resolution audit).
+# instrument_audit here is a secondary cross-check only.
+# If they disagree on a pid, investigate manually.
+cat("\nPhase 2 gate: clean_pids (N =", length(clean_pids), ") from the after-duplicate-resolution audit.\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 8: Clean RW Instruments
+
+Within-subjects design: if `condition_1 == "Alone"` the participant did the traditional writing session first; if `condition_1 == "LLM"` they did AI first. All chunks use `rw_best` (best submission per participant) and are filtered to `clean_pids` — participants with clean RW and clean LLM data after the stricter gate in Section 6b.
+
+### 8a — Intrinsic Motivation Inventory (Q1, scale 1–7)
+
+```{r clean-imi}
+
+imi_base <- rw_best |>
+  filter(
+    question_block == "Q1",
+    pid %in% clean_pids
+  ) |>
+  transmute(
+    participant_id = as.character(pid),
+    item_code      = parse_integer_item_field(item_subnum2, "item_subnum2", "IMI clean export"),
+    item_text,
+    score_raw_num  = as.numeric(score_raw),
+    score          = score_imi_items(item_code, score_raw_num)
+  )
+
+assert_no_missing_values(imi_base, c("participant_id", "item_code", "score"), "IMI clean export")
+assert_unique_key_rows(imi_base, c("participant_id", "item_code"), "IMI clean export")
+
+imi_clean <- imi_base |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    order = derive_order_from_conditions(condition_1, condition_2, "IMI tracking join")
+  )
+
+assert_row_count_unchanged(nrow(imi_base), nrow(imi_clean), "IMI tracking join")
+assert_no_missing_values(imi_clean, c("condition_1", "condition_2"), "IMI tracking join")
+assert_allowed_values(imi_clean$order, c("Traditional_First", "AI_First"), "IMI order")
+
+imi_clean <- imi_clean |>
+  select(participant_id, item_code, item_text, score, order,
+         condition_1, condition_2)
+
+glimpse(imi_clean)
+```
+
+### 8b — Post-Secondary Writerly Self-Efficacy (Q7, scale 0–100)
+
+```{r clean-efficacy}
+
+# WritingEfficacy: no reverse-scored items. All items positively worded,
+# 0-100 slider scale. No reversal applied — scores used as-is.
+efficacy_base <- rw_best |>
+  filter(
+    question_block == "Q7",
+    pid %in% clean_pids
+  ) |>
+  transmute(
+    participant_id = as.character(pid),
+    item_code      = parse_integer_item_field(item_subnum2, "item_subnum2", "WritingEfficacy clean export"),
+    item_text,
+    score = as.numeric(score_raw)
+  )
+
+assert_no_missing_values(efficacy_base, c("participant_id", "item_code", "score"), "WritingEfficacy clean export")
+assert_unique_key_rows(efficacy_base, c("participant_id", "item_code"), "WritingEfficacy clean export")
+
+efficacy_clean <- efficacy_base |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    order = derive_order_from_conditions(condition_1, condition_2, "WritingEfficacy tracking join")
+  )
+
+assert_row_count_unchanged(nrow(efficacy_base), nrow(efficacy_clean), "WritingEfficacy tracking join")
+assert_no_missing_values(efficacy_clean, c("condition_1", "condition_2"), "WritingEfficacy tracking join")
+assert_allowed_values(efficacy_clean$order, c("Traditional_First", "AI_First"), "WritingEfficacy order")
+
+efficacy_clean <- efficacy_clean |>
+  select(participant_id, item_code, item_text, score, order,
+         condition_1, condition_2)
+
+glimpse(efficacy_clean)
+```
+
+### 8c — Author Recognition Test (Q9, checklist — no numeric scoring)
+
+`score_raw` kept as raw string. Some rows contain numeric scores, others contain comma-separated author name strings. ART scoring (hits vs. false alarms) happens downstream once foil/target membership is established.
+
+```{r clean-art}
+
+
+art_base <- rw_best |>
+  filter(
+    question_block == "Q9",
+    pid %in% clean_pids
+  ) |>
+  transmute(
+    participant_id = as.character(pid),
+    response_raw   = score_raw
+  )
+
+assert_no_missing_values(art_base, c("participant_id"), "ART clean export")
+assert_unique_key_rows(art_base, c("participant_id"), "ART clean export")
+
+art_clean <- art_base |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    order = derive_order_from_conditions(condition_1, condition_2, "ART tracking join")
+  )
+
+assert_row_count_unchanged(nrow(art_base), nrow(art_clean), "ART tracking join")
+assert_no_missing_values(art_clean, c("condition_1", "condition_2"), "ART tracking join")
+assert_allowed_values(art_clean$order, c("Traditional_First", "AI_First"), "ART order")
+
+art_clean <- art_clean |>
+  select(participant_id, response_raw, order)
+
+glimpse(art_clean)
+```
+
+------------------------------------------------------------------------
+
+## Section 9: Clean LLM Instruments
+
+`score_raw` contains labeled strings like `"5\nStrongly agree\n"`. `parse_number()` extracts the leading integer reliably; `as.numeric()` would return all NAs on these strings. All chunks use `llm_best` and are filtered to `clean_pids` only, so partial single-source cases are excluded from the full-analysis exports.
+
+### 9a — AI Reflection (Q25, scale 1–5)
+
+```{r clean-reflection}
+
+# AIReflection: no reverse-scored items identified in the source instrument.
+# Scores are used as-is. Current cleaned exports contain only 1-5 responses,
+# so no reverse-scoring or rescaling is applied here.
+refl_base <- llm_best |>
+  filter(
+    question_block == "Q25",
+    pid %in% clean_pids
+  ) |>
+  transmute(
+    participant_id = as.character(pid),
+    item_num       = parse_integer_item_field(item_num, "item_num", "AIReflection clean export"),
+    item_text,
+    score          = parse_number(score_raw)
+  )
+
+assert_no_missing_values(refl_base, c("participant_id", "item_num", "score"), "AIReflection clean export")
+assert_unique_key_rows(refl_base, c("participant_id", "item_num"), "AIReflection clean export")
+
+refl_clean <- refl_base |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    order = derive_order_from_conditions(condition_1, condition_2, "AIReflection tracking join")
+  )
+
+assert_row_count_unchanged(nrow(refl_base), nrow(refl_clean), "AIReflection tracking join")
+assert_no_missing_values(refl_clean, c("condition_1", "condition_2"), "AIReflection tracking join")
+assert_allowed_values(refl_clean$order, c("Traditional_First", "AI_First"), "AIReflection order")
+
+refl_clean <- refl_clean |>
+  select(participant_id, item_num, item_text, score, order,
+         condition_1, condition_2)
+
+glimpse(refl_clean)
+```
+
+### 9b — Beliefs About Generative AI (Q2-23, scale 1–5)
+
+```{r clean-beliefs}
+
+beliefs_base <- llm_best |>
+  filter(
+    question_block == "Q2-23",
+    pid %in% clean_pids
+  ) |>
+  transmute(
+    participant_id = as.character(pid),
+    item_num       = parse_integer_item_field(item_num, "item_num", "Beliefs clean export"),
+    item_text,
+    score_raw_num  = parse_number(score_raw),
+    score          = score_beliefs_items(item_num, score_raw_num)
+  )
+
+assert_no_missing_values(beliefs_base, c("participant_id", "item_num", "score"), "Beliefs clean export")
+assert_unique_key_rows(beliefs_base, c("participant_id", "item_num"), "Beliefs clean export")
+
+beliefs_clean <- beliefs_base |>
+  inner_join(tracking_clean, by = c("participant_id" = "pid")) |>
+  mutate(
+    order = derive_order_from_conditions(condition_1, condition_2, "Beliefs tracking join")
+  )
+
+assert_row_count_unchanged(nrow(beliefs_base), nrow(beliefs_clean), "Beliefs tracking join")
+assert_no_missing_values(beliefs_clean, c("condition_1", "condition_2"), "Beliefs tracking join")
+assert_allowed_values(beliefs_clean$order, c("Traditional_First", "AI_First"), "Beliefs order")
+
+beliefs_clean <- beliefs_clean |>
+  select(participant_id, item_num, item_text, score, order,
+         condition_1, condition_2)
+
+glimpse(beliefs_clean)
+```
+
+------------------------------------------------------------------------
+
+## Section 10: Sanity Checks
+
+```{r sanity-checks}
+
+cat("=== Distinct participants per instrument ===\n")
+cat("  IMI:              ", n_distinct(imi_clean$participant_id),      "\n")
+cat("  Writing Efficacy: ", n_distinct(efficacy_clean$participant_id), "\n")
+cat("  ART:              ", n_distinct(art_clean$participant_id),      "\n")
+cat("  AI Reflection:    ", n_distinct(refl_clean$participant_id),     "\n")
+cat("  Beliefs About AI: ", n_distinct(beliefs_clean$participant_id),  "\n")
+
+assert_expected_count(n_distinct(imi_clean$participant_id), 82L, "IMI clean participant count")
+assert_expected_count(n_distinct(efficacy_clean$participant_id), 82L, "WritingEfficacy clean participant count")
+assert_expected_count(n_distinct(art_clean$participant_id), 82L, "ART clean participant count")
+assert_expected_count(n_distinct(refl_clean$participant_id), 82L, "AIReflection clean participant count")
+assert_expected_count(n_distinct(beliefs_clean$participant_id), 82L, "Beliefs clean participant count")
+
+assert_identical_pid_sets(
+  list(
+    IMI = imi_clean$participant_id,
+    WritingEfficacy = efficacy_clean$participant_id,
+    ART = art_clean$participant_id,
+    AIReflection = refl_clean$participant_id,
+    BeliefsAboutAI = beliefs_clean$participant_id
+  ),
+  context_label = "01 clean export participant sets"
+)
+
+cat("\n=== Score ranges ===\n")
+cat("  IMI (expect 1-7):                ",
+    range(imi_clean$score,      na.rm = TRUE), "\n")
+cat("  Writing Efficacy (expect 0-100): ",
+    range(efficacy_clean$score, na.rm = TRUE), "\n")
+cat("  AI Reflection (expect 1-5):      ",
+    range(refl_clean$score,     na.rm = TRUE), "\n")
+cat("  Beliefs About AI (expect 1-5):   ",
+    range(beliefs_clean$score,  na.rm = TRUE), "\n")
+
+if (anyNA(imi_clean$item_code) || !all(imi_clean$item_code %in% 1:18)) {
+  stop("IMI item_code values are invalid; expected integers 1-18.", call. = FALSE)
+}
+if (anyNA(efficacy_clean$item_code) || !all(efficacy_clean$item_code %in% 1:20)) {
+  stop("WritingEfficacy item_code values are invalid; expected integers 1-20.", call. = FALSE)
+}
+if (anyNA(refl_clean$item_num) || !all(refl_clean$item_num %in% 1:12)) {
+  stop("AIReflection item_num values are invalid; expected integers 1-12.", call. = FALSE)
+}
+if (anyNA(beliefs_clean$item_num) || !all(beliefs_clean$item_num %in% 1:22)) {
+  stop("Beliefs item_num values are invalid; expected integers 1-22.", call. = FALSE)
+}
+
+cat("\n=== Order distribution ===\n")
+cat("IMI:\n");              print(table(imi_clean$order))
+cat("Writing Efficacy:\n"); print(table(efficacy_clean$order))
+cat("AI Reflection:\n");    print(table(refl_clean$order))
+cat("Beliefs About AI:\n"); print(table(beliefs_clean$order))
+
+cat("\n=== Rows with no order assigned (should be 0) ===\n")
+cat("  IMI:              ", imi_clean      |> filter(is.na(order)) |> nrow(), "\n")
+cat("  Writing Efficacy: ", efficacy_clean |> filter(is.na(order)) |> nrow(), "\n")
+cat("  ART:              ", art_clean      |> filter(is.na(order)) |> nrow(), "\n")
+cat("  AI Reflection:    ", refl_clean     |> filter(is.na(order)) |> nrow(), "\n")
+cat("  Beliefs About AI: ", beliefs_clean  |> filter(is.na(order)) |> nrow(), "\n")
+```
+
+------------------------------------------------------------------------
+
+## Section 11: Export Long-Format Instrument CSVs
+
+```{r export-long}
+
+write_csv(imi_clean,      file.path(cleaned_dir, "IMI_cleaned.csv"))
+write_csv(efficacy_clean, file.path(cleaned_dir, "WritingEfficacy_cleaned.csv"))
+write_csv(refl_clean,     file.path(cleaned_dir, "AI_Reflection_cleaned.csv"))
+write_csv(beliefs_clean,  file.path(cleaned_dir, "BeliefsAboutAI_cleaned.csv"))
+write_csv(art_clean,      file.path(cleaned_dir, "AuthorRecognition_cleaned.csv"))
+
+cat("Exported 5 long-format instrument CSVs to:", getwd(), "\n")
+
+output_manifest <- tibble(
+  file = c(
+    file.path(audit_dir, "Diagnostic_Audit_Full.csv"),
+    file.path(audit_dir, "All_PIDs_Rap_Sheet.csv"),
+    file.path(audit_dir, "Sus_Participants_Rap_Sheet.csv"),
+    file.path(audit_dir, "Submission_Resolution_Audit.csv"),
+    file.path(audit_dir, "Participant_Triage.csv"),
+    file.path(audit_dir, "Salvage_Candidates.csv"),
+    file.path(audit_dir, "Triage_Rap_Sheet.csv"),
+    file.path(audit_dir, "Triage_Rap_Sheet_Verified.csv"),
+    file.path(audit_dir, "InstrumentAudit.csv"),
+    file.path(cleaned_dir, "IMI_cleaned.csv"),
+    file.path(cleaned_dir, "WritingEfficacy_cleaned.csv"),
+    file.path(cleaned_dir, "AI_Reflection_cleaned.csv"),
+    file.path(cleaned_dir, "BeliefsAboutAI_cleaned.csv"),
+    file.path(cleaned_dir, "AuthorRecognition_cleaned.csv")
+  ),
+  description = c(
+    "Row-level audit ledger for all participants and instruments.",
+    "Per-participant completion audit across instruments.",
+    "Flagged participants by instrument for manual review.",
+    "Duplicate-resolution audit across submissions.",
+    "Participant-level triage decisions with notes.",
+    "Subset of participants eligible for single-source salvage.",
+    "Wide triage report with instrument status summaries.",
+    "Manual verification decisions for EFA inclusion (input).",
+    "Instrument-level completion audit after filtering.",
+    "Clean IMI long-format responses with order metadata.",
+    "Clean WritingEfficacy long-format responses with order metadata.",
+    "Clean AIReflection long-format responses with order metadata.",
+    "Clean BeliefsAboutAI long-format responses with order metadata.",
+    "Clean AuthorRecognition raw responses with order metadata."
+  )
+)
+
+write_csv(
+  output_manifest,
+  file.path(script_dir, "output_manifest.csv")
+)
+```
+
+------------------------------------------------------------------------
+
+## Section 12: Downstream Analysis Script
+
+The EFA-specific exports and the strict paired wide-format master dataset now live in [02_efa_exports.qmd](02_efa_exports.qmd). Run that script after this audit/cleaning file so it can consume the cleaned long-format CSVs and the verified triage decisions generated above.

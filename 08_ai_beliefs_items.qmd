@@ -1,0 +1,687 @@
+---
+title: "AI Beliefs Item-Level Order Effects Analysis"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+output-dir: "08_ai_beliefs_items"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+# AI Beliefs Item-Level Analysis
+
+This script performs exploratory item-level analysis on the
+BeliefsAboutAI instrument (22 items, 1–5 Likert scale). The instrument
+had a KMO of \~0.26 and was not factorable as a whole. Rather than
+forcing a composite score, this script analyzes each item individually,
+organized by thematic grouping, and compares Traditional-First vs
+AI-First participants.
+
+Note: Item 1 ("I have used generative AI technologies like ChatGPT") is
+a screening/categorical item and is excluded from inferential tests but
+retained for descriptive reference.
+
+```{r setup}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+source("scoring_helpers.R", local = knitr::knit_global())
+
+# ── Output directories ────────────────────────────────────────────────────────
+script_dir <- "08_ai_beliefs_items"
+csv_dir    <- file.path(script_dir, "csv")
+plot_dir   <- file.path(script_dir, "plots")
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
+dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+order_levels   <- c("Traditional_First", "AI_First")
+likert_levels  <- 1:5
+likert_labels  <- c(
+  "1" = "Strongly Disagree",
+  "2" = "Disagree",
+  "3" = "Neutral",
+  "4" = "Agree",
+  "5" = "Strongly Agree"
+)
+
+# Analysis-column indices of reverse-scored items (Beliefs_16 through Beliefs_19).
+# These correspond to Qualtrics items 17-20; the screening item was excluded
+# upstream, shifting the numbering by one. Reverse-scoring is already applied
+# by score_beliefs_items() in scoring_helpers.R (which uses original Qualtrics
+# numbers 17-20). Do NOT call score_beliefs_items() with these column indices.
+beliefs_reversed_analysis_cols <- c(16L, 17L, 18L, 19L)
+
+# Screening item ("I have used generative AI...") was excluded upstream by
+# score_beliefs_items() — it does not appear in master_wide. All 22 Beliefs_
+# columns are inferential. No screening_item exclusion needed here.
+
+# Total number of Beliefs items
+n_beliefs_items <- 22L
+```
+
+## Section 1: Item Metadata and Thematic Groupings
+
+```{r item-metadata}
+# ── Item text ─────────────────────────────────────────────────────────────────
+# Beliefs_1 = Qualtrics Q2: screening item ("I have used generative AI...")
+# was excluded upstream by score_beliefs_items(). item_text starts at Q3 = Beliefs_1.
+item_text <- c(
+  "I understand generative AI technologies like ChatGPT have limitations in their ability to handle complex tasks",
+  "I understand generative AI technologies like ChatGPT can generate output that is factually inaccurate",
+  "I understand generative AI technologies like ChatGPT can generate output that is out of context or inappropriate",
+  "I understand generative AI technologies like ChatGPT can exhibit biases and unfairness in their output",
+  "I understand generative AI technologies like ChatGPT have limited emotional intelligence and empathy, which can lead to output that is insensitive or inappropriate",
+  "Students must learn how to use generative AI technologies well for their career",
+  "I believe generative AI technologies such as ChatGPT can improve my digital competence",
+  "I believe generative AI technologies such as ChatGPT can improve my overall academic performance",
+  "I think generative AI technologies such as ChatGPT can help me become a better writer",
+  "I can ask questions to generative AI technologies such as ChatGPT that I would otherwise not voice out to my teacher",
+  "Generative AI technologies such as ChatGPT will not judge me, so I feel comfortable with it",
+  "I think AI technologies such as ChatGPT is a great tool for student support services due to anonymity",
+  "I believe generative AI technologies such as ChatGPT can help me save time",
+  "I believe AI technologies such as ChatGPT can provide me with unique insights and perspectives that I may not have thought of myself",
+  "I think AI technologies such as ChatGPT can provide me with personalized and immediate feedback and suggestions for my assignments",
+  "I think AI technologies such as ChatGPT is a great tool as it is available 24/7",
+  "Using generative AI technologies such as ChatGPT to complete assignments undermines the value of a university education",
+  "Generative AI technologies such as ChatGPT will limit my opportunities to interact with others and socialize while completing coursework",
+  "Generative AI technologies such as ChatGPT will hinder my development of generic or transferable skills such as teamwork, problem-solving, and leadership skills",
+  "I can become over-reliant on generative AI technologies",
+  "The integration of generative AI technologies like ChatGPT in higher education will have a positive impact on teaching and learning in the long run",
+  "I envision integrating generative AI technologies like ChatGPT into my teaching and learning practices in the future"
+)
+
+stopifnot(
+  "item_text length must equal n_beliefs_items" = length(item_text) == n_beliefs_items
+)
+
+# ── Thematic groupings ────────────────────────────────────────────────────────
+# item_num = Beliefs_ column index (1–22). No screening item — excluded upstream.
+# item_num here = Beliefs_ column index (1-22), not Qualtrics question number.
+# Screening item excluded upstream; themes shifted accordingly.
+item_themes <- tribble(
+  ~item_num, ~theme,
+  1L,  "AI Literacy and Limitations",
+  2L,  "AI Literacy and Limitations",
+  3L,  "AI Literacy and Limitations",
+  4L,  "AI Literacy and Limitations",
+  5L,  "AI Literacy and Limitations",
+  6L,  "Academic Utility",
+  7L,  "Academic Utility",
+  8L,  "Academic Utility",
+  9L,  "Academic Utility",
+  10L, "Psychological Comfort and Anonymity",
+  11L, "Psychological Comfort and Anonymity",
+  12L, "Psychological Comfort and Anonymity",
+  13L, "Practical Convenience",
+  14L, "Practical Convenience",
+  15L, "Practical Convenience",
+  16L, "Practical Convenience",
+  17L, "Risks and Concerns",
+  18L, "Risks and Concerns",
+  19L, "Risks and Concerns",
+  20L, "Risks and Concerns",
+  21L, "Future Integration",
+  22L, "Future Integration"
+)
+
+# Build full item metadata table
+item_metadata <- tibble(
+  item_num  = seq_len(n_beliefs_items),
+  item_col  = paste0("Beliefs_", seq_len(n_beliefs_items)),
+  item_text = item_text,
+  reversed  = item_num %in% beliefs_reversed_analysis_cols,
+  inferential = TRUE  # screening item excluded upstream; all 22 cols are inferential
+) |>
+  left_join(item_themes, by = "item_num") |>
+  mutate(
+    theme = factor(theme, levels = c(
+      "AI Literacy and Limitations",
+      "Academic Utility",
+      "Psychological Comfort and Anonymity",
+      "Practical Convenience",
+      "Risks and Concerns",
+      "Future Integration"
+    )),
+    item_label = paste0("Item ", item_num, ": ", item_text)
+  )
+
+write_csv(item_metadata, file.path(csv_dir, "AIBeliefs_Item_Metadata.csv"))
+kable(item_metadata |> select(item_num, theme, reversed, inferential, item_text),
+      caption = "AIBeliefs Item Metadata")
+```
+
+## Section 2: Load and Prepare Data
+
+```{r load-data}
+master_wide <- read_csv(master_wide_file, show_col_types = FALSE)
+
+# ── Validate required columns ─────────────────────────────────────────────────
+# master_wide carries order, condition_1, condition_2 from the imi_wide pivot
+# in 02_efa_exports.qmd — no need to re-derive from the tracking file.
+required_master <- c("participant_id", "order", "condition_1", "condition_2")
+missing_master  <- setdiff(required_master, names(master_wide))
+if (length(missing_master) > 0) {
+  stop(paste0(master_wide_file, " missing columns: ",
+              paste(missing_master, collapse = ", ")), call. = FALSE)
+}
+
+beliefs_cols <- paste0("Beliefs_", seq_len(n_beliefs_items))
+missing_beliefs <- setdiff(beliefs_cols, names(master_wide))
+if (length(missing_beliefs) > 0) {
+  stop(paste0(master_wide_file, " missing Beliefs item columns: ",
+              paste(missing_beliefs, collapse = ", ")), call. = FALSE)
+}
+
+# ── Filter to participants with a valid order assignment ─────────────────────
+# Reverse scoring for items 17-20 is already applied by score_beliefs_items()
+# in scoring_helpers.R upstream. Do NOT re-reverse here.
+analysis_data <- master_wide |>
+  mutate(
+    participant_id = as.character(participant_id),
+    order          = factor(order, levels = order_levels)
+  ) |>
+  filter(!is.na(order))
+
+assert_expected_count(nrow(analysis_data), 82L, "AIBeliefs analysis participant count")
+assert_unique_pid_rows(analysis_data, "participant_id", "AIBeliefs analysis_data")
+assert_allowed_values(analysis_data$order, order_levels, "AIBeliefs order")
+
+n_participants <- nrow(analysis_data)
+n_trad_first   <- sum(analysis_data$order == "Traditional_First", na.rm = TRUE)
+n_ai_first     <- sum(analysis_data$order == "AI_First",          na.rm = TRUE)
+
+cat(glue::glue(
+  "Participants retained: {n_participants}  ",
+  "(Traditional-First: {n_trad_first}, AI-First: {n_ai_first})\n"
+))
+```
+
+## Section 3: Long Format for Item-Level Analysis
+
+```{r pivot-long}
+beliefs_long <- analysis_data |>
+  select(participant_id, order, all_of(beliefs_cols)) |>
+  pivot_longer(
+    cols      = all_of(beliefs_cols),
+    names_to  = "item_col",
+    values_to = "response"
+  ) |>
+  mutate(
+    item_num  = as.integer(str_remove(item_col, "Beliefs_")),
+    response  = as.integer(response)
+  ) |>
+  left_join(item_metadata |> select(item_num, item_text, theme, reversed,
+                                     inferential, item_label),
+            by = "item_num") |>
+  filter(!is.na(response))
+
+write_csv(beliefs_long, file.path(csv_dir, "AIBeliefs_Long.csv"))
+```
+
+## Section 4: Descriptives by Order Group
+
+```{r descriptives}
+
+item_descriptives <- beliefs_long |>
+  filter(inferential) |>
+  group_by(theme, item_num, item_col, item_text, order) |>
+  summarise(
+    n      = sum(!is.na(response)),
+    mean   = round(mean(response, na.rm = TRUE), 2),
+    sd     = round(sd(response,   na.rm = TRUE), 2),
+    median = median(response,     na.rm = TRUE),
+    iqr    = IQR(response,        na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(theme, item_num, order)
+
+write_csv(item_descriptives, file.path(csv_dir, "AIBeliefs_Item_Descriptives.csv"))
+kable(item_descriptives, caption = "Item-Level Descriptives by Order Group")
+```
+
+## Section 5: Diverging Stacked Bar Charts by Theme
+
+```{r diverging-bar-charts, fig.width=12, fig.height=7}
+
+# ── Helper: build diverging stacked bar data ──────────────────────────────────
+make_diverging_data <- function(long_data) {
+  long_data |>
+    filter(!is.na(response)) |>
+    mutate(
+      response_label = factor(
+        likert_labels[as.character(response)],
+        levels = rev(unname(likert_labels))
+      ),
+      # Disagree responses are negative, Agree responses are positive
+      direction = case_when(
+        response %in% c(1, 2) ~ "disagree",
+        response == 3         ~ "neutral",
+        response %in% c(4, 5) ~ "agree"
+      )
+    ) |>
+    count(item_num, item_label, order, response, response_label, direction) |>
+    group_by(item_num, order) |>
+    mutate(pct = n / sum(n) * 100) |>
+    ungroup() |>
+    mutate(
+      pct_diverging = case_when(
+        response %in% c(1, 2) ~ -pct,
+        response == 3         ~ pct * 0.5,  # neutrals split at center
+        response %in% c(4, 5) ~ pct
+      )
+    )
+}
+
+diverging_colors <- c(
+  "Strongly Disagree" = "#d73027",
+  "Disagree"          = "#f46d43",
+  "Neutral"           = "#ffffbf",
+  "Agree"             = "#74add1",
+  "Strongly Agree"    = "#313695"
+)
+
+theme_list <- item_metadata |>
+  filter(inferential) |>
+  pull(theme) |>
+  unique() |>
+  as.character()
+
+# Build all theme plots and collect them, then write a single combined PDF.
+# str_wrap on item_label keeps long Likert statements readable on the y-axis.
+all_theme_plots <- list()
+
+for (thm in theme_list) {
+  theme_items <- item_metadata |>
+    filter(theme == thm, inferential) |>
+    pull(item_num)
+
+  plot_data <- beliefs_long |>
+    filter(item_num %in% theme_items, inferential) |>
+    make_diverging_data() |>
+    mutate(item_label = str_wrap(item_label, width = 55))
+
+  if (nrow(plot_data) == 0) next
+
+  # item_label factor levels must be rebuilt after str_wrap so reorder() works
+  label_order <- plot_data |>
+    distinct(item_num, item_label) |>
+    arrange(item_num) |>
+    pull(item_label)
+
+  plot_data <- plot_data |>
+    mutate(item_label = factor(item_label, levels = rev(label_order)))
+
+  p <- ggplot(plot_data, aes(
+      x    = item_label,
+      y    = pct_diverging,
+      fill = response_label
+    )) +
+    geom_col(position = "stack", width = 0.7) +
+    geom_hline(yintercept = 0, color = "grey30", linewidth = 0.4) +
+    coord_flip() +
+    facet_wrap(~ order, ncol = 2) +
+    scale_fill_manual(
+      values = diverging_colors,
+      breaks = names(diverging_colors),
+      name   = NULL
+    ) +
+    scale_y_continuous(
+      labels = function(x) paste0(abs(x), "%"),
+      limits = c(-100, 100)
+    ) +
+    labs(
+      title    = paste0("AI Beliefs — ", thm),
+      subtitle = "Traditional-First vs AI-First  |  Reversed items rescored",
+      x        = NULL,
+      y        = "← Disagree   |   Agree →",
+      caption  = "Note: Neutral responses (3) split at center"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.position  = "bottom",
+      strip.text       = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      plot.title       = element_text(face = "bold"),
+      axis.text.y      = element_text(lineheight = 0.85)
+    )
+
+  all_theme_plots[[thm]] <- list(plot = p, n_items = length(theme_items))
+  print(p)
+}
+
+# Single combined PDF — one page per theme.
+# cairo_pdf supports Unicode and embeds fonts cleanly.
+# Height is fixed at 9in which comfortably fits up to 6 items with wrapped labels.
+pdf_path <- file.path(plot_dir, "AIBeliefs_Diverging_Bar_All_Themes.pdf")
+grDevices::cairo_pdf(pdf_path, width = 14, height = 9, onefile = TRUE)
+for (obj in all_theme_plots) {
+  print(obj$plot)
+}
+dev.off()
+cat("Exported: AIBeliefs_Diverging_Bar_All_Themes.pdf\n")
+```
+
+Secret section:
+
+```{r}
+if (requireNamespace("ggridges", quietly = TRUE)) {
+  library(ggridges)
+
+  all_theme_plots <- list()
+
+  for (thm in theme_list) {
+    theme_items <- item_metadata |>
+      filter(theme == thm, inferential) |>
+      pull(item_num)
+
+    plot_data <- beliefs_long |>
+      filter(item_num %in% theme_items, inferential, !is.na(response)) |>
+      mutate(
+        item_label = str_wrap(item_label, width = 55),
+        item_label = factor(item_label,
+          levels = rev(
+            beliefs_long |>
+              filter(item_num %in% theme_items) |>
+              distinct(item_num, item_label) |>
+              mutate(item_label = str_wrap(item_label, width = 55)) |>
+              arrange(item_num) |>
+              pull(item_label)
+          )
+        ),
+        response = as.numeric(response)
+      )
+
+    if (nrow(plot_data) == 0) next
+
+    n_items <- length(theme_items)
+
+    p <- ggplot(plot_data, aes(
+        x     = response,
+        y     = item_label,
+        fill  = order,
+        color = order
+      )) +
+      geom_density_ridges(
+        aes(height = after_stat(density)),
+        stat           = "density",
+        alpha          = 0.45,
+        scale          = min(0.85, 0.5 + 0.07 * n_items),
+        bandwidth      = 0.6,
+        rel_min_height = 0.01
+      ) +
+      scale_x_continuous(
+        breaks = 1:5,
+        labels = unname(likert_labels[as.character(1:5)]),
+        limits = c(0.5, 5.5)
+      ) +
+      scale_fill_manual(values  = c("Traditional_First" = "#4f7c5f", "AI_First" = "#c96b3b")) +
+      scale_color_manual(values = c("Traditional_First" = "#4f7c5f", "AI_First" = "#c96b3b")) +
+      labs(
+        title    = paste0("AI Beliefs — ", thm),
+        subtitle = "Response distributions by condition  |  Reversed items rescored",
+        x        = NULL,
+        y        = NULL,
+        fill     = NULL,
+        color    = NULL,
+        caption  = "Bandwidth = 0.6 on 1–5 ordinal scale. Bimodal ridges = polarized item."
+      ) +
+      theme_minimal(base_size = 11) +
+      theme(
+        legend.position  = "bottom",
+        panel.grid.minor = element_blank(),
+        plot.title       = element_text(face = "bold"),
+        axis.text.y      = element_text(lineheight = 0.85),
+        axis.text.x      = element_text(size = 8)
+      )
+
+    all_theme_plots[[thm]] <- list(plot = p, n_items = n_items)
+    print(p)
+  }
+
+  pdf_path <- file.path(plot_dir, "AIBeliefs_Ridgeline_All_Themes.pdf")
+  grDevices::cairo_pdf(pdf_path, width = 12, height = 11, onefile = TRUE)
+  for (obj in all_theme_plots) print(obj$plot)
+  dev.off()
+  cat("Exported: AIBeliefs_Ridgeline_All_Themes.pdf\n")
+} else {
+  cat("Skipping AIBeliefs ridgeline export because ggridges is not installed.\n")
+}
+```
+
+## Section 6: Mann-Whitney U Tests Per Item
+
+**Multiple-comparison correction strategy:** All 22 inferential Beliefs
+items form a single correction family. BH controls the false discovery
+rate across items; Bonferroni controls the family-wise error rate. Both
+are reported to let the reader choose the appropriate threshold for
+their interpretive goals.
+
+```{r mann-whitney}
+
+# Sign convention: positive rb -> group 1 (Traditional-First) tends higher.
+# wilcox.test(response ~ order) returns W for the first factor level of
+# order, which is "Traditional_First" (set by order_levels on line 43).
+# If order_levels changes, this convention flips silently.
+rank_biserial_from_w <- function(w_stat, n1, n2) {
+  u_stat <- as.numeric(w_stat) - (n1 * (n1 + 1) / 2)
+  (2 * u_stat / (n1 * n2)) - 1
+}
+
+mw_results <- map_dfr(
+  item_metadata |> filter(inferential) |> pull(item_num),
+  function(inum) {
+    col <- paste0("Beliefs_", inum)
+
+    dat <- beliefs_long |>
+      filter(item_num == inum, !is.na(response), !is.na(order)) |>
+      mutate(order = factor(order, levels = order_levels))
+
+    grp_counts <- dat |> count(order, name = "n")
+    n_trad <- grp_counts |> filter(order == "Traditional_First") |> pull(n)
+    n_ai   <- grp_counts |> filter(order == "AI_First")          |> pull(n)
+    n_trad <- if (length(n_trad) == 0) 0L else n_trad
+    n_ai   <- if (length(n_ai)   == 0) 0L else n_ai
+
+    med_trad <- dat |> filter(order == "Traditional_First") |>
+      summarise(v = median(response, na.rm = TRUE)) |> pull(v)
+    med_ai <- dat |> filter(order == "AI_First") |>
+      summarise(v = median(response, na.rm = TRUE)) |> pull(v)
+
+    theme_val <- item_metadata |>
+      filter(item_num == inum) |>
+      pull(theme) |>
+      as.character()
+
+    if (n_trad < 2 || n_ai < 2) {
+      return(tibble(
+        item_num                 = inum,
+        item_col                 = col,
+        theme                    = theme_val,
+        n_traditional_first      = n_trad,
+        n_ai_first               = n_ai,
+        median_traditional_first = med_trad,
+        median_ai_first          = med_ai,
+        w_stat                   = NA_real_,
+        u_stat                   = NA_real_,
+        p_value                  = NA_real_,
+        rank_biserial            = NA_real_,
+        note                     = "insufficient sample size"
+      ))
+    }
+
+    test <- suppressWarnings(
+      wilcox.test(
+        response ~ order,
+        data      = dat,
+        exact     = FALSE,
+        conf.int  = FALSE
+      )
+    )
+
+    w  <- unname(test$statistic)
+    u  <- as.numeric(w) - (n_trad * (n_trad + 1) / 2)
+    rb <- rank_biserial_from_w(w, n_trad, n_ai)
+
+    tibble(
+      item_num                 = inum,
+      item_col                 = col,
+      theme                    = theme_val,
+      n_traditional_first      = n_trad,
+      n_ai_first               = n_ai,
+      median_traditional_first = med_trad,
+      median_ai_first          = med_ai,
+      w_stat                   = as.numeric(w),
+      u_stat                   = as.numeric(u),
+      p_value                  = test$p.value,
+      rank_biserial            = rb,
+      note                     = NA_character_
+    )
+  }
+) |>
+  mutate(
+    p_bh         = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni")
+  ) |>
+  left_join(
+    item_metadata |> select(item_num, item_text, reversed),
+    by = "item_num"
+  ) |>
+  arrange(theme, p_bh, p_value)
+
+write_csv(mw_results, file.path(csv_dir, "AIBeliefs_MannWhitney_Results.csv"))
+
+kable(
+  mw_results |>
+    select(item_num, theme, item_text, median_traditional_first,
+           median_ai_first, w_stat, p_value, p_bh, rank_biserial, note),
+  digits  = 3,
+  caption = "Mann-Whitney U Results by Item (BH-corrected), organized by theme"
+)
+```
+
+## Section 7: Effect Size Summary
+
+```{r effect-size-summary}
+
+# Flag items with meaningful effect sizes regardless of p-value
+# At small N, rank-biserial |r| >= 0.3 is worth noting
+effect_summary <- mw_results |>
+  filter(!is.na(rank_biserial)) |>
+  mutate(
+    effect_magnitude = case_when(
+      abs(rank_biserial) >= 0.5 ~ "Large",
+      abs(rank_biserial) >= 0.3 ~ "Medium",
+      abs(rank_biserial) >= 0.1 ~ "Small",
+      TRUE                      ~ "Negligible"
+    ),
+    direction = case_when(
+      rank_biserial > 0  ~ "Traditional-First scored higher",
+      rank_biserial < 0  ~ "AI-First scored higher",
+      rank_biserial == 0 ~ "No difference"
+    ),
+    contrast_hypothesis_relevant = item_num %in% c(8L, 9L, 10L, 16L, 18L, 19L, 21L)
+  ) |>
+  select(theme, item_num, item_text, rank_biserial,
+         effect_magnitude, direction,
+         p_bh, contrast_hypothesis_relevant) |>
+  arrange(desc(abs(rank_biserial)))
+
+write_csv(effect_summary, file.path(csv_dir, "AIBeliefs_Effect_Size_Summary.csv"))
+
+kable(
+  effect_summary,
+  digits  = 3,
+  caption = "Effect Size Summary — items flagged for contrast hypothesis relevance"
+)
+```
+
+## Section 8: Consolidated Item Summary Table
+
+```{r consolidated-summary}
+
+
+# One-stop table: every item, all key stats, sorted by theme then effect size.
+# median_diff = median_traditional_first - median_ai_first (positive = Trad higher)
+# mw_results already carries theme from its own left_join in Section 6.
+# A second join here would collide into theme.x/theme.y — drop it.
+consolidated_summary <- mw_results |>
+  mutate(
+    median_diff      = median_traditional_first - median_ai_first,
+    effect_magnitude = case_when(
+      is.na(rank_biserial)           ~ NA_character_,
+      abs(rank_biserial) >= 0.5      ~ "Large",
+      abs(rank_biserial) >= 0.3      ~ "Medium",
+      abs(rank_biserial) >= 0.1      ~ "Small",
+      TRUE                           ~ "Negligible"
+    ),
+    sig_bh = case_when(
+      is.na(p_bh)  ~ "",
+      p_bh < 0.001 ~ "***",
+      p_bh < 0.01  ~ "**",
+      p_bh < 0.05  ~ "*",
+      TRUE         ~ ""
+    )
+  ) |>
+  select(
+    theme, item_num, item_text,
+    median_traditional_first, median_ai_first, median_diff,
+    rank_biserial, effect_magnitude,
+    p_value, p_bh, sig_bh
+  ) |>
+  arrange(theme, item_num)
+
+write_csv(consolidated_summary, file.path(csv_dir, "AIBeliefs_Consolidated_Summary.csv"))
+
+kable(
+  consolidated_summary |>
+    transmute(
+      Theme    = theme,
+      Item     = item_num,
+      Text     = str_trunc(item_text, 70),
+      `Mdn Trad` = median_traditional_first,
+      `Mdn AI`   = median_ai_first,
+      `Δ Mdn`    = median_diff,
+      `r_rb`     = round(rank_biserial, 3),
+      Magnitude  = effect_magnitude,
+      `p (raw)`  = round(p_value, 3),
+      `p (BH)`   = round(p_bh, 3),
+      Sig        = sig_bh
+    ),
+  caption = "Consolidated Item Summary — sorted by theme and item number"
+)
+```
+
+## Section 9: Export Manifest
+
+```{r manifest}
+
+manifest <- tibble(
+  output_type = c(
+    "item_metadata",
+    "long_format",
+    "descriptives",
+    "mann_whitney",
+    "effect_summary",
+    "consolidated_summary"
+  ),
+  file = c(
+    "AIBeliefs_Item_Metadata.csv",
+    "AIBeliefs_Long.csv",
+    "AIBeliefs_Item_Descriptives.csv",
+    "AIBeliefs_MannWhitney_Results.csv",
+    "AIBeliefs_Effect_Size_Summary.csv",
+    "AIBeliefs_Consolidated_Summary.csv"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "AIBeliefs_Export_Manifest.csv"))
+kable(manifest)
+```
