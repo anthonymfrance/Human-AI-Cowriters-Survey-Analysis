@@ -54,12 +54,19 @@ recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 factor_score_method <- "tenBerge"
 traditional_session_instruments <- c("IMI", "WritingEfficacy")
 ai_session_instruments <- c("AIReflection", "BeliefsAboutAI")
+efa_global_exclusions <- c(
+  "N/A (RA practice)",
+  "Sania Jain test",
+  "y5lblN",
+  "2192994",
+  "hKpFTX"
+)
 
 instrument_specs <- tribble(
   ~instrument,         ~file,                               ~item_id_col, ~score_transform, ~prefix,
   "IMI",               file.path("02_efa_exports", "efa", "IMI_EFA_Primary.csv"),              "item_code",  "identity",       "IMI",
-  "WritingEfficacy",   file.path("02_efa_exports", "efa", "WritingEfficacy_EFA_Primary.csv"),  "item_code",  "wse_to_5",       "WritingEfficacy",
-  "AIReflection",      file.path("02_efa_exports", "efa", "AI_Reflection_EFA_Primary.csv"),    "item_num",   "identity",       "AIReflection"
+  "WritingEfficacy",   file.path("02_efa_exports", "efa", "WritingEfficacy_EFA_Primary.csv"),  "item_code",  "wse_to_5",       "WSE",
+  "AIReflection",      file.path("02_efa_exports", "efa", "AI_Reflection_EFA_Primary.csv"),    "item_num",   "identity",       "AIRefl"
 )
 
 recommended_k_raw <- read_csv(recommended_k_file, show_col_types = FALSE)
@@ -179,11 +186,12 @@ safe_spearman_pair <- function(data, col_x, col_y) {
 build_factor_scores <- function(instrument, file, item_id_col, score_transform, prefix, recommended_k) {
   long <- read_csv(file, show_col_types = FALSE) |>
     transmute(
-      participant_id,
+      participant_id = as.character(participant_id),
       item_id = as.integer(.data[[item_id_col]]),
       item_text,
       score = transform_scores(score, score_transform)
-    )
+    ) |>
+    filter(!participant_id %in% efa_global_exclusions)
 
   item_lookup <- long |>
     distinct(item_id, item_text) |>
@@ -592,11 +600,12 @@ factor_map_plot
 ```{r}
 beliefs_long <- read_csv(beliefs_file, show_col_types = FALSE) |>
   transmute(
-    participant_id,
+    participant_id = as.character(participant_id),
     item_id = as.integer(item_num),
     item_text,
     score = as.integer(round(as.numeric(score)))
-  )
+  ) |>
+  filter(!participant_id %in% efa_global_exclusions)
 
 belief_item_lookup <- beliefs_long |>
   distinct(item_id, item_text) |>
