@@ -1,5 +1,5 @@
-﻿---
-title: "Interesting Findings Finder"
+---
+title: "Interesting Findings Finder — FIXED"
 format:
   html:
     toc: true
@@ -19,11 +19,11 @@ This report is the 4th step after EFA analysis. It creates:
 1.  A human-readable cross-instrument factor heatmap for the 3
     factorable instruments (`IMI`, `WritingEfficacy`, `AIReflection`)
 2.  Pairwise item-level exploratory correlations for each instrument
-    pair (`IMI â†” WritingEfficacy`, `IMI â†” AIReflection`,
-    `WritingEfficacy â†” AIReflection`, `IMI â†” BeliefsAboutAI`,
-    `WritingEfficacy â†” BeliefsAboutAI`, `AIReflection â†” BeliefsAboutAI`)
+    pair (`IMI ↔ WritingEfficacy`, `IMI ↔ AIReflection`,
+    `WritingEfficacy ↔ AIReflection`, `IMI ↔ BeliefsAboutAI`,
+    `WritingEfficacy ↔ BeliefsAboutAI`, `AIReflection ↔ BeliefsAboutAI`)
 
-`BeliefsAboutAI` is excluded from factor mapping (KMO \< 0.50 â†’ not
+`BeliefsAboutAI` is excluded from factor mapping (KMO \< 0.50 → not
 factorable) but is included in all item-level pairwise correlations.
 
 ```{r setup}
@@ -33,7 +33,7 @@ library(glue)
 library(knitr)
 source("scoring_helpers.R", local = knitr::knit_global())
 
-# Set global seed for reproducibility â€” psych::fa() (minres + oblimin) and
+# Set global seed for reproducibility — psych::fa() (minres + oblimin) and
 # psych::factor.scores() (tenBerge) are affected by random starting values.
 set.seed(42L)
 ```
@@ -157,7 +157,7 @@ safe_spearman_pair <- function(data, col_x, col_y) {
                   n = nrow(dat), note = "insufficient sample size"))
   }
 
-  # FIX: removed dplyr:: prefix â€” inconsistent with all other calls in this
+  # FIX: removed dplyr:: prefix — inconsistent with all other calls in this
   # file which use bare tidyverse functions throughout.
   if (n_distinct(dat[[col_x]]) < 2L) {
     return(tibble(x = col_x, y = col_y, rho = NA_real_, p = NA_real_,
@@ -224,7 +224,7 @@ build_instrument_long <- function(file, item_id_col, score_transform, prefix) {
 # extract_final_solution(). In Script 3, F1 = highest variance explained,
 # F2 = second highest, etc. Without this reordering, the MR1/MR2 labels from
 # psych::fa() are used raw, and MR2 here may correspond to what Script 3
-# called F1 â€” silently attaching the wrong factor_name_map labels.
+# called F1 — silently attaching the wrong factor_name_map labels.
 
 build_factor_scores <- function(instrument, file, item_id_col,
                                 score_transform, prefix, recommended_k) {
@@ -247,7 +247,7 @@ build_factor_scores <- function(instrument, file, item_id_col,
       nfactors = recommended_k,
       n.obs    = nrow(matrix_df),
       fm       = "minres",
-      # FIX 1: conditional rotation â€” no rotation for single-factor solutions
+      # FIX 1: conditional rotation — no rotation for single-factor solutions
       rotate   = if (recommended_k == 1L) "none" else "oblimin"
     )
   )
@@ -267,7 +267,7 @@ build_factor_scores <- function(instrument, file, item_id_col,
   colnames(L_ordered) <- paste0("MR", seq_len(recommended_k))
 
   # Build a minimal fa object with reordered loadings for factor.scores().
-  # We only need $loadings and $weights â€” psych::factor.scores() uses both.
+  # We only need $loadings and $weights — psych::factor.scores() uses both.
   fa_fit_ordered           <- fa_fit
   fa_fit_ordered$loadings  <- L_ordered
   class(fa_fit_ordered$loadings) <- c("loadings")
@@ -323,7 +323,7 @@ build_factor_scores <- function(instrument, file, item_id_col,
 # --- Item-only instrument builder ---
 # Produces the same list structure as build_factor_scores() so downstream
 # pmap in the pairwise correlations section works identically for both types.
-# factor_scores and factor_lookup are NULL â€” never accessed for item-only
+# factor_scores and factor_lookup are NULL — never accessed for item-only
 # instruments.
 
 build_item_only <- function(instrument, file, item_id_col,
@@ -479,7 +479,7 @@ factor_corr_diag <- tibble(
     by = "factor_y"
   )
 
-# Verify the fix worked â€” all diagonal label columns must be non-NA
+# Verify the fix worked — all diagonal label columns must be non-NA
 if (any(is.na(factor_corr_diag$factor_label_x)) || any(is.na(factor_corr_diag$factor_label_y))) {
   stop(
     "Diagonal factor-correlation labels contain NA after factor-lookup join; heatmap label join failed.",
@@ -522,7 +522,7 @@ factor_heat_df <- factor_corr_heat |>
       survives_bh           ~ "*",
       TRUE                  ~ ""
     ),
-    # FIX: suppress cell label on diagonal â€” 1.00 is self-evident and
+    # FIX: suppress cell label on diagonal — 1.00 is self-evident and
     # the dark fill makes it illegible anyway
     cell_label = case_when(
       factor_x == factor_y ~ "",
@@ -579,7 +579,7 @@ factor_heatmap_plot
 
 # Merge factorable + item-only objects into single named list.
 # Both share identical list structure (instrument, wide, item_lookup).
-# factor_scores / factor_lookup are NULL for item-only â€” never accessed here.
+# factor_scores / factor_lookup are NULL for item-only — never accessed here.
 instrument_objects <- c(factor_objects, item_only_objects) |>
   set_names(map_chr(c(factor_objects, item_only_objects), "instrument"))
 
@@ -602,8 +602,8 @@ pair_results <- pmap(
 
     # Compute all pairwise correlations for this pair.
     # FIX: p_bonferroni and p_bh are adjusted within each pair separately
-    # (not globally across all pairs). This is intentional â€” each pair has
-    # a different number of tests (n_items_a Ã— n_items_b), and a pair-local
+    # (not globally across all pairs). This is intentional — each pair has
+    # a different number of tests (n_items_a × n_items_b), and a pair-local
     # correction controls the FDR/FWER within that specific comparison set.
     # Consequence: p_bh values from different pairs are NOT directly
     # comparable in the combined top-hits table. Use abs_r for ranking across
@@ -727,7 +727,7 @@ top_hits_all_pairs <- map_dfr(pair_results, "top_hits") |>
 
 # All pairwise item correlations across every instrument pair, ranked by
 # effect size. abs_r sorts by magnitude so strong negative correlations
-# surface alongside positive ones. p values here are pair-local â€” do not
+# surface alongside positive ones. p values here are pair-local — do not
 # compare them directly across pairs.
 all_corr_ranked <- map_dfr(pair_results, "all_corrs") |>
   filter(is.na(note)) |>
@@ -746,7 +746,7 @@ kable(pair_summary)
 ## Top Cross-Instrument Item Associations
 
 Ranked by effect size (`abs_r`). P-values shown are pair-local multiple
-comparison corrections â€” they are not directly comparable across
+comparison corrections — they are not directly comparable across
 instrument pairs with different numbers of tests.
 
 ```{r top-hits-table}
@@ -794,10 +794,10 @@ findings_manifest <- tibble(
 )
 
 write_csv(findings_manifest, file.path(csv_dir, "Interesting_Findings_Export_Manifest.csv"))
-kable(findings_manifest, caption = "06_interesting_findings.qmd â€” Output Manifest")
+kable(findings_manifest, caption = "06_interesting_findings.qmd — Output Manifest")
 ```
 
-## Section: Order-Stratified Item Ã— Item Correlations
+## Section: Order-Stratified Item × Item Correlations
 
 This section takes the strongest item-level cross-instrument pairs
 already identified in the pairwise correlations above and asks whether
@@ -805,14 +805,14 @@ each correlation differs between Traditional-First and AI-First
 participants. Fisher's z-test formally tests whether the two subgroup
 rhos are significantly different.
 
-Strategy: rather than running every item Ã— item pair (which would be
+Strategy: rather than running every item × item pair (which would be
 thousands of tests), this focuses on pairs that already survived
-Bonferroni correction in the full-sample analysis â€” the signal-rich
+Bonferroni correction in the full-sample analysis — the signal-rich
 subset where order moderation is most theoretically meaningful.
 
 **Same power caveat as Script 04 Section 8:** n=45 and n=37 per subgroup
 reduces power. A subgroup rho going null alone is not evidence of
-moderation â€” use Fisher z p-value as the decision criterion.
+moderation — use Fisher z p-value as the decision criterion.
 
 ```{r item-strat-setup}
 # --- Load order labels ---
@@ -839,7 +839,7 @@ all_corr_ranked_loaded <- read_csv(
 )
 
 # --- Pull Bonferroni-surviving pairs as target set ---
-# These are the pairs worth stratifying â€” already demonstrated full-sample
+# These are the pairs worth stratifying — already demonstrated full-sample
 # signal, so order moderation question is meaningful.
 bonf_pairs <- all_corr_ranked_loaded |>
   filter(p_bonferroni < 0.05) |>
@@ -1012,7 +1012,7 @@ item_strat_wide |>
     across(where(is.numeric), ~ round(.x, 3))
   ) |>
   kable(caption = paste0(
-    "Item Ã— item correlations stratified by order group. ",
+    "Item × item correlations stratified by order group. ",
     "Only Bonferroni-surviving full-sample pairs shown. ",
     "fisher_p tests whether Traditional-First rho differs significantly from AI-First rho. ",
     "rho_diff = Traditional_First_rho minus AI_First_rho."
@@ -1025,7 +1025,7 @@ item_strat_manifest_row <- tibble(
   output_type = "item_item_order_stratified",
   file        = "Item_Item_Order_Stratified_Correlations.csv",
   description = paste0(
-    "Item Ã— item Spearman correlations (Bonferroni-surviving pairs only) ",
+    "Item × item Spearman correlations (Bonferroni-surviving pairs only) ",
     "stratified by order group with Fisher z-test for subgroup rho difference"
   )
 )
@@ -1037,4 +1037,3 @@ write_csv(
 
 kable(item_strat_manifest_row)
 ```
-

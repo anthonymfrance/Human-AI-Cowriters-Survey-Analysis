@@ -51,9 +51,18 @@ dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 beliefs_file <- file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv")
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
+master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
 factor_score_method <- "tenBerge"
 traditional_session_instruments <- c("IMI", "WritingEfficacy")
 ai_session_instruments <- c("AIReflection", "BeliefsAboutAI")
+
+efa_global_exclusions <- c(
+  "N/A (RA practice)",
+  "Sania Jain test",
+  "y5lblN",
+  "2192994",
+  "hKpFTX"
+)
 
 instrument_specs <- tribble(
   ~instrument,         ~file,                               ~item_id_col, ~score_transform, ~prefix,
@@ -183,7 +192,9 @@ build_factor_scores <- function(instrument, file, item_id_col, score_transform, 
       item_id = as.integer(.data[[item_id_col]]),
       item_text,
       score = transform_scores(score, score_transform)
-    )
+    ) |>
+    filter(!participant_id %in% efa_global_exclusions) |>
+    mutate(score = as.integer(round(score)))
 
   item_lookup <- long |>
     distinct(item_id, item_text) |>
@@ -197,7 +208,7 @@ build_factor_scores <- function(instrument, file, item_id_col, score_transform, 
 
   matrix_df <- wide |>
     select(-participant_id) |>
-    mutate(across(everything(), ~ as.integer(round(.x)))) |>
+    mutate(across(everything(), as.integer)) |>
     as.data.frame()
 
   poly_out <- compute_polychoric_safe(matrix_df)
@@ -218,17 +229,12 @@ build_factor_scores <- function(instrument, file, item_id_col, score_transform, 
     )
   )
 
-  # Reorder factors by variance explained (descending) so F1 is always the
-
-  # largest factor, matching Script 03's extract_final_solution() and
-  # Script 06's build_factor_scores() convention. Without this, MR1/MR2
-  # ordering from psych is arbitrary after oblimin rotation.
-  if (!is.null(fa_fit$Vaccounted) && recommended_k > 1L) {
-    prop_var     <- fa_fit$Vaccounted["Proportion Var", ]
-    factor_order <- order(prop_var, decreasing = TRUE)
-  } else {
-    factor_order <- seq_len(recommended_k)
-  }
+  # Reorder factors with the same helper Script 03 uses for locked solutions:
+  # F1 = largest variance contribution, F2 = next largest, etc.
+  factor_order <- factor_order_by_variance(
+    fa_fit$loadings,
+    context_label = paste0(instrument, " factor-score rebuild")
+  )
 
   L_ordered <- unclass(fa_fit$loadings)[, factor_order, drop = FALSE]
   colnames(L_ordered) <- paste0("MR", seq_len(recommended_k))
@@ -616,6 +622,19 @@ write_csv(beliefs_wide, file.path(csv_dir, "BeliefsAboutAI_Wide.csv"))
 ```{r}
 combined <- beliefs_wide |>
   left_join(all_factor_scores, by = "participant_id")
+
+# Restrict to the 82 participants present in Final_Master_Wide — i.e., those
+# who completed all instruments. Without this filter, AIReflection factor scores
+# are available for ~91 participants while IMI/WritingEfficacy scores are only
+# available for 82, making AIReflection rhos non-comparable to the others in
+# the same table. Filtering here ensures all factor correlations use a
+# consistent participant base and Full_rho values match Script 04's strat output.
+valid_pids <- read_csv(master_wide_file, show_col_types = FALSE) |>
+  pull(participant_id) |>
+  as.character()
+
+combined <- combined |>
+  filter(participant_id %in% valid_pids)
 
 belief_items <- names(beliefs_wide) |> setdiff("participant_id")
 

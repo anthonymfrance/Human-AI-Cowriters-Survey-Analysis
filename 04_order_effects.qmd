@@ -1079,6 +1079,12 @@ factor_name_map_loaded <- read_csv(
   show_col_types = FALSE
 )
 
+assert_lookup_covers_factor_columns(
+  factor_lookup = factor_name_map_loaded,
+  factor_cols = factor_cols_strat,
+  context_label = "Script 04 factor-name-map handoff"
+)
+
 factor_label_lookup_strat <- factor_name_map_loaded |>
   transmute(factor = factor, display_label)
 
@@ -1175,6 +1181,137 @@ belief_strat_wide <- belief_strat_results |>
     rho_diff = round(Traditional_First_rho - AI_First_rho, 3)
   ) |>
   arrange(fisher_p, desc(abs(rho_diff)))
+
+belief_factor_levels <- factor_label_lookup_strat$display_label[
+  match(factor_cols_strat, factor_label_lookup_strat$factor)
+]
+
+if (any(is.na(belief_factor_levels))) {
+  stop("Belief-item order plots: missing factor display labels for one or more factor columns.", call. = FALSE)
+}
+
+belief_plot_long <- belief_strat_results |>
+  left_join(
+    beliefs_long_text |>
+      select(belief_col, item_text) |>
+      rename(col_x = belief_col),
+    by = "col_x"
+  ) |>
+  left_join(
+    factor_label_lookup_strat |>
+      rename(col_y = factor, label_y = display_label),
+    by = "col_y"
+  ) |>
+  mutate(
+    label_y = factor(label_y, levels = belief_factor_levels),
+    group = factor(group, levels = c("Full", "Traditional_First", "AI_First"))
+  )
+
+belief_plot_annotations <- belief_strat_wide |>
+  select(col_x, col_y, label_y, fisher_sig) |>
+  mutate(label_y = factor(label_y, levels = belief_factor_levels))
+
+for (belief_col in sig_belief_items) {
+  plot_df <- belief_plot_long |>
+    filter(col_x == belief_col)
+
+  ann_df <- belief_plot_annotations |>
+    filter(col_x == belief_col)
+
+  if (nrow(plot_df) == 0 || all(is.na(plot_df$rho))) {
+    next
+  }
+
+  item_title <- plot_df |>
+    distinct(item_text) |>
+    pull(item_text) |>
+    first()
+
+  belief_order_plot <- ggplot(
+    plot_df,
+    aes(x = label_y, y = rho, group = group, color = group, linetype = group, shape = group)
+  ) +
+    geom_hline(yintercept = 0, color = "#c7c7c7", linewidth = 0.8) +
+    geom_hline(yintercept = c(-0.30, 0.30), color = "#bdbdbd", linewidth = 0.7, linetype = "dotted") +
+    geom_line(linewidth = 1.2, alpha = 0.95) +
+    geom_point(size = 3.7, alpha = 0.95) +
+    geom_text(
+      data = ann_df,
+      aes(x = label_y, y = -1.07, label = fisher_sig),
+      inherit.aes = FALSE,
+      color = "#5a5a5a",
+      size = 4.0
+    ) +
+    scale_color_manual(
+      values = c(
+        "Full" = "#7a7a7a",
+        "Traditional_First" = "#c93e2c",
+        "AI_First" = "#3a88bf"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "Full" = "22",
+        "Traditional_First" = "solid",
+        "AI_First" = "solid"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Full" = 16,
+        "Traditional_First" = 17,
+        "AI_First" = 15
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_y_continuous(
+      limits = c(-1.1, 1.0),
+      breaks = seq(-1, 1, by = 0.25),
+      labels = scales::number_format(accuracy = 0.01)
+    ) +
+    labs(
+      title = item_title,
+      subtitle = "Spearman rho with each factor — Full sample (gray dashed), Traditional-First (red), AI-First (blue)",
+      x = NULL,
+      y = "Spearman rho",
+      caption = "Fisher's z p-value shown below each factor label. Dotted lines at rho = +/-0.30."
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "none",
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1, size = 10),
+      axis.text.y = element_text(size = 11),
+      plot.title = element_text(face = "bold", size = 17),
+      plot.subtitle = element_text(size = 11, color = "#666666"),
+      plot.caption = element_text(size = 10, color = "#7a7a7a"),
+      plot.margin = margin(15, 20, 20, 15)
+    )
+
+  ggsave(
+    filename = file.path(plot_dir, paste0("belief_", belief_col, "_order_corr.png")),
+    plot = belief_order_plot,
+    width = 16,
+    height = 10,
+    units = "in",
+    dpi = 160,
+    bg = "white"
+  )
+}
 
 write_csv(
   belief_strat_wide,

@@ -530,3 +530,130 @@ assert_factor_id_format <- function(x, context_label = "factor_id check") {
 
   invisible(TRUE)
 }
+
+factor_order_by_variance <- function(loadings_matrix, context_label = "Factor ordering") {
+  L <- as.matrix(loadings_matrix)
+
+  if (is.null(dim(L))) {
+    L <- matrix(L, ncol = 1L)
+  }
+
+  if (!is.numeric(L) || ncol(L) == 0L) {
+    stop(sprintf("%s: loadings matrix must have at least one numeric factor column", context_label), call. = FALSE)
+  }
+
+  order(colSums(L^2, na.rm = TRUE), decreasing = TRUE)
+}
+
+assert_complete_factor_name_map <- function(factor_lookup, factor_name_map, context_label = "Factor name map") {
+  assert_required_columns(
+    factor_lookup,
+    c("instrument", "factor_num"),
+    paste0(context_label, " factor_lookup")
+  )
+  assert_required_columns(
+    factor_name_map,
+    c("instrument", "factor_num", "proposed_name"),
+    paste0(context_label, " factor_name_map")
+  )
+
+  dupes <- factor_name_map |>
+    dplyr::count(instrument, factor_num, name = "n") |>
+    dplyr::filter(n > 1L)
+
+  if (nrow(dupes) > 0L) {
+    stop(
+      sprintf(
+        "%s: duplicate instrument/factor_num rows found: %s",
+        context_label,
+        paste(sprintf("%s F%d", dupes$instrument, dupes$factor_num), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  bad_names <- factor_name_map |>
+    dplyr::filter(is.na(proposed_name) | trimws(proposed_name) == "")
+
+  if (nrow(bad_names) > 0L) {
+    stop(
+      sprintf(
+        "%s: blank proposed_name values found for %s",
+        context_label,
+        paste(sprintf("%s F%d", bad_names$instrument, bad_names$factor_num), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  missing_rows <- factor_lookup |>
+    dplyr::distinct(instrument, factor_num) |>
+    dplyr::anti_join(
+      factor_name_map |> dplyr::distinct(instrument, factor_num),
+      by = c("instrument", "factor_num")
+    )
+
+  if (nrow(missing_rows) > 0L) {
+    stop(
+      sprintf(
+        "%s: missing factor_name_map rows for %s",
+        context_label,
+        paste(sprintf("%s F%d", missing_rows$instrument, missing_rows$factor_num), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}
+
+assert_lookup_covers_factor_columns <- function(factor_lookup, factor_cols, context_label = "Factor lookup coverage") {
+  assert_required_columns(
+    factor_lookup,
+    c("factor", "display_label"),
+    context_label
+  )
+
+  dupes <- factor_lookup |>
+    dplyr::count(factor, name = "n") |>
+    dplyr::filter(n > 1L)
+
+  if (nrow(dupes) > 0L) {
+    stop(
+      sprintf(
+        "%s: duplicate factor rows found: %s",
+        context_label,
+        paste(dupes$factor, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  missing_cols <- setdiff(factor_cols, factor_lookup$factor)
+  if (length(missing_cols) > 0L) {
+    stop(
+      sprintf(
+        "%s: missing lookup rows for factor columns: %s",
+        context_label,
+        paste(missing_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  blank_labels <- factor_lookup |>
+    dplyr::filter(is.na(display_label) | trimws(display_label) == "")
+
+  if (nrow(blank_labels) > 0L) {
+    stop(
+      sprintf(
+        "%s: blank display_label values found for factors: %s",
+        context_label,
+        paste(blank_labels$factor, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}

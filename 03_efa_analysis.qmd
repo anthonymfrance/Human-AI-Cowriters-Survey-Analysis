@@ -730,7 +730,10 @@ extract_final_solution <- function(fa_fit, item_lookup, instrument, sample_label
   }
 
   if (is.null(factor_order)) {
-    factor_order <- order(colSums(L^2, na.rm = TRUE), decreasing = TRUE)
+    factor_order <- factor_order_by_variance(
+      L,
+      context_label = paste0(instrument, " ", sample_label, " locked solution")
+    )
   }
 
   L <- L[, factor_order, drop = FALSE]
