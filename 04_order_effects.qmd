@@ -600,6 +600,201 @@ if (nrow(sig_items) == 0) {
 }
 ```
 
+## Section 6a: Approved Two-Way ANOVA Order Effects (One-Time Surveys)
+
+```{r approved-lm-order-effects}
+
+# ── Helper: run lm, extract terms, compute partial eta-sq ──────────────────
+run_two_way_lm <- function(data, dv, formula_chr, survey_label) {
+  dat <- data |> filter(!is.na(.data[[dv]]))
+  
+  if (nrow(dat) < 10) {
+    warning(paste0("Skipping ", survey_label, "/", dv, ": n = ", nrow(dat)))
+    return(NULL)
+  }
+  
+  fit <- lm(as.formula(paste(dv, formula_chr)), data = dat)
+  av  <- anova(fit)
+  
+  tibble(
+    survey    = survey_label,
+    composite = dv,
+    term      = rownames(av),
+    df        = av$Df,
+    ss        = av$`Sum Sq`,
+    ms        = av$`Mean Sq`,
+    f_value   = av$`F value`,
+    p_value   = av$`Pr(>F)`,
+    partial_eta_sq = av$`Sum Sq` / (av$`Sum Sq` + av[nrow(av), "Sum Sq"])
+  ) |>
+    filter(term != "Residuals")
+}
+
+# ── Identify composites per survey ─────────────────────────────────────────
+imi_composites <- composite_specs |>
+  filter(instrument == "IMI") |>
+  pull(composite)
+
+wse_composites <- composite_specs |>
+  filter(instrument == "WritingEfficacy") |>
+  pull(composite)
+
+air_composites <- composite_specs |>
+  filter(instrument == "AIReflection") |>
+  pull(composite)
+
+beliefs_cols_present <- names(participant_with_composites)[
+  str_starts(names(participant_with_composites), "Beliefs_") &
+  !str_detect(names(participant_with_composites), "_F")
+]
+
+beliefs_efa_composites <- composite_specs |>
+  filter(instrument == "BeliefsAboutAI") |>
+  pull(composite)
+
+if (length(beliefs_efa_composites) > 0) {
+  beliefs_dvs <- beliefs_efa_composites
+} else if (length(beliefs_cols_present) > 0) {
+  participant_with_composites <- participant_with_composites |>
+    mutate(BeliefsAboutAI_mean = rowMeans(
+      pick(all_of(beliefs_cols_present)), na.rm = FALSE
+    ))
+  beliefs_dvs <- "BeliefsAboutAI_mean"
+  message("BeliefsAboutAI: no EFA composites found, using item mean.")
+} else {
+  beliefs_dvs <- character(0)
+  warning("BeliefsAboutAI: no item columns or composites found.")
+}
+
+# ── Run models ──────────────────────────────────────────────────────────────
+
+# Model 1: IMI — score ~ Order * traditional_topic (Traditional session instrument)
+imi_results <- map_dfr(
+  imi_composites,
+  ~ run_two_way_lm(
+      participant_with_composites,
+      dv = .x,
+      formula_chr = "~ order * traditional_topic",
+      survey_label = "IMI"
+    )
+)
+
+# Model 2: WritingEfficacy — score ~ Order * traditional_topic (Traditional session instrument)
+wse_results <- map_dfr(
+  wse_composites,
+  ~ run_two_way_lm(
+      participant_with_composites,
+      dv = .x,
+      formula_chr = "~ order * traditional_topic",
+      survey_label = "WritingEfficacy"
+    )
+)
+
+# Model 3: AIReflection — score ~ Order * ai_topic (AI session instrument)
+air_results <- map_dfr(
+  air_composites,
+  ~ run_two_way_lm(
+      participant_with_composites,
+      dv = .x,
+      formula_chr = "~ order * ai_topic",
+      survey_label = "AIReflection"
+    )
+)
+
+# Model 4: BeliefsAboutAI — score ~ Order * ai_topic (AI session instrument)
+beliefs_results <- map_dfr(
+  beliefs_dvs,
+  ~ run_two_way_lm(
+      participant_with_composites,
+      dv = .x,
+      formula_chr = "~ order * ai_topic",
+      survey_label = "BeliefsAboutAI"
+    )
+)
+
+all_lm_results <- bind_rows(imi_results, wse_results, air_results, beliefs_results)
+
+# ── BH correction — three separate families ─────────────────────────────────
+term_family <- function(term_chr) {
+  case_when(
+    str_detect(term_chr, ":") ~ "interaction",
+    str_detect(term_chr, "order") & !str_detect(term_chr, "topic") ~ "order_main",
+    str_detect(term_chr, "topic") & !str_detect(term_chr, "order") ~ "topic_main",
+    TRUE ~ "other"
+  )
+}
+
+all_lm_corrected <- all_lm_results |>
+  mutate(
+    term_clean  = str_trim(term),
+    term_family = term_family(term_clean)
+  ) |>
+  group_by(term_family) |>
+  mutate(p_bh = p.adjust(p_value, method = "BH")) |>
+  ungroup() |>
+  arrange(survey, composite, term_clean)
+
+write_csv(all_lm_corrected, file.path(csv_dir, "TwoWay_ANOVA_Order_Effects.csv"))
+
+all_lm_corrected |>
+  mutate(across(c(f_value, p_value, p_bh, partial_eta_sq), ~ round(.x, 4))) |>
+  kable(caption = "Two-way ANOVA order effects. p_bh = BH-corrected within term family.")
+```
+
+```{r cell-means-tables}
+
+make_cell_means <- function(data, dv, order_var, topic_var, label) {
+  data |>
+    filter(!is.na(.data[[dv]]), !is.na(.data[[order_var]]), !is.na(.data[[topic_var]])) |>
+    group_by(.data[[order_var]], .data[[topic_var]]) |>
+    summarise(
+      n    = n(),
+      mean = round(mean(.data[[dv]], na.rm = TRUE), 3),
+      sd   = round(sd(.data[[dv]], na.rm = TRUE), 3),
+      .groups = "drop"
+    ) |>
+    rename(Order = 1, Topic = 2) |>
+    mutate(composite = dv, survey = label)
+}
+
+# IMI + WSE: topic = traditional_topic
+trad_cell_means <- map_dfr(
+  c(imi_composites, wse_composites),
+  ~ make_cell_means(
+      participant_with_composites,
+      dv = .x,
+      order_var = "order",
+      topic_var = "traditional_topic",
+      label = if (.x %in% imi_composites) "IMI" else "WritingEfficacy"
+    )
+)
+
+# AIReflection + BeliefsAboutAI: topic = ai_topic
+ai_session_cell_means <- map_dfr(
+  c(air_composites, beliefs_dvs),
+  ~ make_cell_means(
+      participant_with_composites,
+      dv = .x,
+      order_var = "order",
+      topic_var = "ai_topic",
+      label = if (.x %in% air_composites) "AIReflection" else "BeliefsAboutAI"
+    )
+)
+
+all_cell_means <- bind_rows(trad_cell_means, ai_session_cell_means)
+
+write_csv(all_cell_means, file.path(csv_dir, "TwoWay_ANOVA_Cell_Means.csv"))
+
+for (comp in unique(all_cell_means$composite)) {
+  cat("\n\n###", comp, "\n")
+  all_cell_means |>
+    filter(composite == comp) |>
+    select(survey, Order, Topic, n, mean, sd) |>
+    kable(caption = paste("Cell means:", comp)) |>
+    print()
+}
+```
+
 ## Section 6: Predeclared Tool-Comparable Pairs and 2×2 Mixed ANOVAs
 
 ```{r mixed-anovas}

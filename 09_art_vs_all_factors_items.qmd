@@ -63,14 +63,14 @@ art_metric_lookup <- tribble(
 
 factor_name_map <- tribble(
   ~instrument, ~factor_num, ~proposed_name,
-  "IMI", 1L, "Effort/Importance",
-  "IMI", 2L, "Perceived Competence",
-  "IMI", 3L, "Interest/Enjoyment",
-  "WritingEfficacy", 1L, "Writing Confidence",
-  "WritingEfficacy", 2L, "Process & Strategy",
-  "WritingEfficacy", 3L, "Writing Self-Regulation",
-  "AIReflection", 1L, "Perceived Learning Utility",
-  "AIReflection", 2L, "Voice, Ownership, and Comfort"
+  "IMI", 1L, "Interest & Enjoyment",
+  "IMI", 2L, "Effort & Importance",
+  "IMI", 3L, "Perceived Competence",
+  "WritingEfficacy", 1L, "Writing Competence",
+  "WritingEfficacy", 2L, "Self-Regulation",
+  "WritingEfficacy", 3L, "Resource & Planning",
+  "AIReflection", 1L, "Ownership & Usefulness",
+  "AIReflection", 2L, "Enjoyment & Satisfaction"
 )
 
 factor_instrument_specs <- tribble(
