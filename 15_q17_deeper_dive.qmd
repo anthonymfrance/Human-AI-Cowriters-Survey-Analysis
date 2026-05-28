@@ -1,0 +1,1045 @@
+---
+title: "15 — Q17 Likert Buckets (Counts + Proportions) vs Factor Scores and Item Statements"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+output-dir: "15_q17likertbuckets"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+This report treats Q17 (AI tool familiarity/use) as a participant-level
+distribution across the five Likert response buckets:
+
+1. Never heard of this tool
+2. Heard of this tool but never used it
+3. Rarely use this tool
+4. Sometimes use this tool
+5. Often use this tool
+
+For each participant we compute both:
+
+- **Counts**: number of tools marked in each bucket (1–5)
+- **Proportions**: bucket count divided by the number of tools answered
+
+We then test whether these Q17 bucket metrics correlate with:
+
+1. **Factor scores** (IMI, WritingEfficacy, AIReflection) using existing
+   outputs from `09_art_vs_all_factors_items`.
+2. **All item-level statements** across the four instruments
+   (IMI, WritingEfficacy, AIReflection, BeliefsAboutAI) using existing
+   outputs from `09_art_vs_all_factors_items`.
+
+Multiple-comparisons control:
+- **BH correction is applied within each Q17 metric** separately for the
+  factors table and the items table (i.e., each metric defines a family
+  of tests).
+
+Outputs:
+- Full correlation tables for **proportions** and **counts** are written
+  as separate CSVs for both factors and items.
+- Heatmaps are provided for **proportions** (main) and **counts**
+  (appendix-style).
+
+---
+
+```{r setup}
+library(tidyverse)
+library(glue)
+library(knitr)
+library(forcats)
+library(scales)
+source("scoring_helpers.R", local = knitr::knit_global())
+
+set.seed(42L)
+```
+
+## Configuration
+
+```{r config}
+script_dir <- "15_q17likertbuckets"
+csv_dir    <- file.path(script_dir, "csv")
+plot_dir   <- file.path(script_dir, "plots")
+
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+min_corr_n <- 10L
+
+# Inputs from prior pipeline outputs
+q17_long_file <- file.path("07_q17_ai_usePART2", "csv", "Q17_Responses_Long.csv")
+
+factor_scores_file <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+
+all_items_file <- file.path("09_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
+item_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
+
+required_files <- c(
+  q17_long_file,
+  factor_scores_file,
+  factor_lookup_file,
+  all_items_file,
+  item_lookup_file
+)
+
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    glue(
+      "Missing required inputs:\n- {paste(missing_files, collapse = '\n- ')}\n\n",
+      "Run 07_q17_ai_usePART2 and 09_art_vs_all_factors_items first."
+    ),
+    call. = FALSE
+  )
+}
+```
+
+## Helper Functions
+
+```{r helpers}
+safe_spearman <- function(data, predictor, outcome) {
+  dat <- data |>
+    select(all_of(c(predictor, outcome))) |>
+    filter(if_all(everything(), ~ !is.na(.x)))
+
+  if (nrow(dat) < min_corr_n ||
+      dplyr::n_distinct(dat[[predictor]]) < 2L ||
+      dplyr::n_distinct(dat[[outcome]]) < 2L) {
+    return(tibble(
+      predictor = predictor,
+      outcome = outcome,
+      n = nrow(dat),
+      rho = NA_real_,
+      p_value = NA_real_,
+      note = "insufficient variation or sample size"
+    ))
+  }
+
+  test <- suppressWarnings(
+    cor.test(dat[[predictor]], dat[[outcome]], method = "spearman", exact = FALSE)
+  )
+
+  tibble(
+    predictor = predictor,
+    outcome = outcome,
+    n = nrow(dat),
+    rho = unname(test$estimate),
+    p_value = test$p.value,
+    note = NA_character_
+  )
+}
+
+# Apply BH/Bonferroni within each Q17 metric (family-wise per metric).
+adjust_p_within_metric <- function(df, metric_col = "q17_metric", p_col = "p_value") {
+  df |>
+    group_by(.data[[metric_col]]) |>
+    mutate(
+      p_bh = p.adjust(.data[[p_col]], method = "BH"),
+      p_bonferroni = p.adjust(.data[[p_col]], method = "bonferroni")
+    ) |>
+    ungroup()
+}
+
+# Format a bucket label used in tables/plots.
+bucket_label <- function(k) {
+  c(
+    "1" = "Never heard",
+    "2" = "Heard, never used",
+    "3" = "Rarely use",
+    "4" = "Sometimes use",
+    "5" = "Often use"
+  )[as.character(k)]
+}
+```
+
+## Load 09 Outputs (Factors + Items)
+
+```{r load-09}
+all_factor_scores <- readr::read_csv(factor_scores_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+factor_lookup <- readr::read_csv(factor_lookup_file, show_col_types = FALSE)
+
+all_item_wide <- readr::read_csv(all_items_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+item_lookup <- readr::read_csv(item_lookup_file, show_col_types = FALSE)
+
+if (!"participant_id" %in% names(all_factor_scores)) stop("Factor scores missing participant_id", call. = FALSE)
+if (!"participant_id" %in% names(all_item_wide)) stop("All items wide missing participant_id", call. = FALSE)
+
+factor_cols <- factor_lookup$factor
+item_cols <- item_lookup$item_col
+
+assert_nonempty_df(all_factor_scores, "all_factor_scores")
+assert_nonempty_df(all_item_wide, "all_item_wide")
+assert_nonempty_df(factor_lookup, "factor_lookup")
+assert_nonempty_df(item_lookup, "item_lookup")
+```
+
+## Load Q17 Long and Build Participant Bucket Metrics
+
+```{r load-q17}
+q17_long <- readr::read_csv(q17_long_file, show_col_types = FALSE)
+
+# Required minimal columns: participant_id and use_score
+required_q17_cols <- c("participant_id", "use_score")
+missing_q17_cols <- setdiff(required_q17_cols, names(q17_long))
+if (length(missing_q17_cols) > 0) {
+  stop(
+    glue("Q17 long file is missing required columns: {paste(missing_q17_cols, collapse = ', ')}"),
+    call. = FALSE
+  )
+}
+
+q17_long_clean <- q17_long |>
+  transmute(
+    participant_id = as.character(participant_id),
+    use_score = as.integer(use_score)
+  ) |>
+  filter(!is.na(participant_id), participant_id != "", !is.na(use_score)) |>
+  filter(use_score %in% 1:5)
+
+assert_nonempty_df(q17_long_clean, "q17_long_clean")
+
+q17_dist <- q17_long_clean |>
+  group_by(participant_id) |>
+  summarise(
+    q17_tools_answered = n(),
+    q17_n_1 = sum(use_score == 1L),
+    q17_n_2 = sum(use_score == 2L),
+    q17_n_3 = sum(use_score == 3L),
+    q17_n_4 = sum(use_score == 4L),
+    q17_n_5 = sum(use_score == 5L),
+    q17_mean_use = mean(use_score),
+    .groups = "drop"
+  ) |>
+  mutate(
+    q17_p_1 = q17_n_1 / q17_tools_answered,
+    q17_p_2 = q17_n_2 / q17_tools_answered,
+    q17_p_3 = q17_n_3 / q17_tools_answered,
+    q17_p_4 = q17_n_4 / q17_tools_answered,
+    q17_p_5 = q17_n_5 / q17_tools_answered
+  ) |>
+  arrange(participant_id)
+
+assert_unique_pid_rows(q17_dist, "participant_id", "q17_dist")
+
+write_csv(q17_dist, file.path(csv_dir, "Q17_Likert_Buckets_PerParticipant.csv"))
+```
+
+```{r q17-summary}
+q17_bucket_summary <- tibble(
+  metric = c(
+    "Participants",
+    "Tools answered (min)",
+    "Tools answered (median)",
+    "Tools answered (max)",
+    "Mean never heard (count)",
+    "Mean heard-only (count)",
+    "Mean rarely (count)",
+    "Mean sometimes (count)",
+    "Mean often (count)",
+    "Mean use score (1–5)"
+  ),
+  value = c(
+    nrow(q17_dist),
+    min(q17_dist$q17_tools_answered),
+    median(q17_dist$q17_tools_answered),
+    max(q17_dist$q17_tools_answered),
+    mean(q17_dist$q17_n_1),
+    mean(q17_dist$q17_n_2),
+    mean(q17_dist$q17_n_3),
+    mean(q17_dist$q17_n_4),
+    mean(q17_dist$q17_n_5),
+    mean(q17_dist$q17_mean_use)
+  )
+)
+
+kable(q17_bucket_summary, caption = "Q17 per-participant bucket summary")
+```
+
+## Q17 Metric Lookup
+
+```{r metric-lookup}
+q17_metric_lookup <- tribble(
+  ~q17_metric, ~q17_label, ~metric_type, ~bucket,
+  "q17_n_1", "Never heard (count)", "count", 1L,
+  "q17_n_2", "Heard, never used (count)", "count", 2L,
+  "q17_n_3", "Rarely use (count)", "count", 3L,
+  "q17_n_4", "Sometimes use (count)", "count", 4L,
+  "q17_n_5", "Often use (count)", "count", 5L,
+  "q17_p_1", "Never heard (prop)", "prop", 1L,
+  "q17_p_2", "Heard, never used (prop)", "prop", 2L,
+  "q17_p_3", "Rarely use (prop)", "prop", 3L,
+  "q17_p_4", "Sometimes use (prop)", "prop", 4L,
+  "q17_p_5", "Often use (prop)", "prop", 5L,
+  "q17_mean_use", "Mean use (1–5)", "summary", NA_integer_
+)
+
+q17_metrics_prop <- q17_metric_lookup |>
+  filter(metric_type %in% c("prop", "summary")) |>
+  pull(q17_metric)
+
+q17_metrics_count <- q17_metric_lookup |>
+  filter(metric_type == "count") |>
+  pull(q17_metric)
+```
+
+## Merge Datasets
+
+```{r merge}
+factor_df <- all_factor_scores |>
+  inner_join(q17_dist, by = "participant_id")
+
+item_df <- all_item_wide |>
+  inner_join(q17_dist, by = "participant_id")
+
+cat("Q17 x factor overlap N:", nrow(factor_df), "\n")
+cat("Q17 x item overlap N:", nrow(item_df), "\n")
+
+assert_unique_pid_rows(factor_df, "participant_id", "factor_df (merged)")
+assert_unique_pid_rows(item_df, "participant_id", "item_df (merged)")
+```
+
+---
+
+# Part A — Q17 Buckets vs Factor Scores
+
+## A1 — Proportions: Spearman correlations
+
+```{r q17-prop-vs-factors}
+q17_factor_corrs_prop <- crossing(
+  q17_metric = q17_metrics_prop,
+  factor = factor_cols
+) |>
+  mutate(
+    result = map2(factor, q17_metric, ~ safe_spearman(factor_df, .x, .y))
+  ) |>
+  pull(result) |>
+  bind_rows() |>
+  rename(
+    factor = predictor,
+    q17_metric = outcome
+  ) |>
+  mutate(abs_r = abs(rho)) |>
+  adjust_p_within_metric(metric_col = "q17_metric", p_col = "p_value") |>
+  left_join(factor_lookup, by = "factor") |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  mutate(
+    survives_bh = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  arrange(q17_metric, p_bh, p_bonferroni, desc(abs_r))
+
+write_csv(q17_factor_corrs_prop, file.path(csv_dir, "Q17_Proportions_vs_Factors_Correlations.csv"))
+```
+
+## A2 — Counts: Spearman correlations (robustness)
+
+```{r q17-count-vs-factors}
+q17_factor_corrs_count <- crossing(
+  q17_metric = q17_metrics_count,
+  factor = factor_cols
+) |>
+  mutate(
+    result = map2(factor, q17_metric, ~ safe_spearman(factor_df, .x, .y))
+  ) |>
+  pull(result) |>
+  bind_rows() |>
+  rename(
+    factor = predictor,
+    q17_metric = outcome
+  ) |>
+  mutate(abs_r = abs(rho)) |>
+  adjust_p_within_metric(metric_col = "q17_metric", p_col = "p_value") |>
+  left_join(factor_lookup, by = "factor") |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  mutate(
+    survives_bh = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  arrange(q17_metric, p_bh, p_bonferroni, desc(abs_r))
+
+write_csv(q17_factor_corrs_count, file.path(csv_dir, "Q17_Counts_vs_Factors_Correlations.csv"))
+```
+
+## A3 — Heatmap (Main): Proportions only (+ mean use)
+
+```{r factor-heatmap-prop-data}
+heat_q17_metrics_prop <- c("q17_p_1", "q17_p_2", "q17_p_3", "q17_p_4", "q17_p_5", "q17_mean_use")
+
+factor_heat_prop <- q17_factor_corrs_prop |>
+  filter(q17_metric %in% heat_q17_metrics_prop) |>
+  mutate(
+    sig_label = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh ~ "*",
+      TRUE ~ ""
+    ),
+    cell_label = if_else(
+      is.na(rho),
+      "",
+      paste0(formatC(rho, format = "f", digits = 2), sig_label)
+    ),
+    q17_label = factor(
+      q17_label,
+      levels = q17_metric_lookup |>
+        filter(q17_metric %in% heat_q17_metrics_prop) |>
+        pull(q17_label)
+    ),
+    display_label = factor(
+      display_label,
+      levels = factor_lookup |>
+        arrange(match(instrument, unique(factor_lookup$instrument)), factor_num) |>
+        pull(display_label)
+    )
+  )
+```
+
+```{r factor-heatmap-prop, fig.width=12, fig.height=7.5}
+p_factor_heat_prop <- ggplot(factor_heat_prop, aes(x = q17_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "Q17 Familiarity Buckets (Proportions) vs Factor Scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05  |  BH corrected within each Q17 metric",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_Proportions_vs_Factors_Heatmap.png"),
+  plot = p_factor_heat_prop,
+  width = 12,
+  height = 7.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+p_factor_heat_prop
+```
+
+## A4 — Heatmap (Appendix): Counts only
+
+```{r factor-heatmap-count-data}
+heat_q17_metrics_count <- c("q17_n_1", "q17_n_2", "q17_n_3", "q17_n_4", "q17_n_5")
+
+factor_heat_count <- q17_factor_corrs_count |>
+  filter(q17_metric %in% heat_q17_metrics_count) |>
+  mutate(
+    sig_label = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh ~ "*",
+      TRUE ~ ""
+    ),
+    cell_label = if_else(
+      is.na(rho),
+      "",
+      paste0(formatC(rho, format = "f", digits = 2), sig_label)
+    ),
+    q17_label = factor(
+      q17_label,
+      levels = q17_metric_lookup |>
+        filter(q17_metric %in% heat_q17_metrics_count) |>
+        pull(q17_label)
+    ),
+    display_label = factor(
+      display_label,
+      levels = factor_lookup |>
+        arrange(match(instrument, unique(factor_lookup$instrument)), factor_num) |>
+        pull(display_label)
+    )
+  )
+```
+
+```{r factor-heatmap-count, fig.width=11, fig.height=7.5}
+p_factor_heat_count <- ggplot(factor_heat_count, aes(x = q17_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "Q17 Familiarity Buckets (Counts) vs Factor Scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05  |  BH corrected within each Q17 metric",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_Counts_vs_Factors_Heatmap.png"),
+  plot = p_factor_heat_count,
+  width = 11,
+  height = 7.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+p_factor_heat_count
+```
+
+---
+
+# Part B — Q17 Buckets vs All Item Statements
+
+## B1 — Proportions: Spearman correlations
+
+```{r q17-prop-vs-items}
+q17_item_corrs_prop <- crossing(
+  q17_metric = q17_metrics_prop,
+  item_col = item_cols
+) |>
+  mutate(
+    result = map2(item_col, q17_metric, ~ safe_spearman(item_df, .x, .y))
+  ) |>
+  pull(result) |>
+  bind_rows() |>
+  rename(
+    item_col = predictor,
+    q17_metric = outcome
+  ) |>
+  mutate(abs_r = abs(rho)) |>
+  adjust_p_within_metric(metric_col = "q17_metric", p_col = "p_value") |>
+  left_join(item_lookup, by = "item_col") |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  mutate(
+    survives_bh = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  arrange(q17_metric, p_bh, p_bonferroni, desc(abs_r))
+
+write_csv(q17_item_corrs_prop, file.path(csv_dir, "Q17_Proportions_vs_All_Items_Correlations.csv"))
+```
+
+## B2 — Counts: Spearman correlations (robustness)
+
+```{r q17-count-vs-items}
+q17_item_corrs_count <- crossing(
+  q17_metric = q17_metrics_count,
+  item_col = item_cols
+) |>
+  mutate(
+    result = map2(item_col, q17_metric, ~ safe_spearman(item_df, .x, .y))
+  ) |>
+  pull(result) |>
+  bind_rows() |>
+  rename(
+    item_col = predictor,
+    q17_metric = outcome
+  ) |>
+  mutate(abs_r = abs(rho)) |>
+  adjust_p_within_metric(metric_col = "q17_metric", p_col = "p_value") |>
+  left_join(item_lookup, by = "item_col") |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  mutate(
+    survives_bh = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  arrange(q17_metric, p_bh, p_bonferroni, desc(abs_r))
+
+write_csv(q17_item_corrs_count, file.path(csv_dir, "Q17_Counts_vs_All_Items_Correlations.csv"))
+```
+
+## B3 — Top 30 item correlates (choose one primary Q17 metric)
+
+```{r primary-q17}
+# Pick the primary metric for the "Top 30 items" plot.
+# Recommended low-end choices:
+#   - "q17_p_1" (never heard proportion)
+#   - "q17_p_2" (heard-only proportion)
+primary_q17_metric <- "q17_p_2"
+
+primary_q17_label <- q17_metric_lookup$q17_label[q17_metric_lookup$q17_metric == primary_q17_metric][[1]]
+
+top_items_primary <- q17_item_corrs_prop |>
+  filter(q17_metric == primary_q17_metric, !is.na(rho)) |>
+  slice_max(order_by = abs_r, n = 30, with_ties = FALSE) |>
+  mutate(
+    plot_label = paste0(instrument, " ", item_id, ": ", str_trunc(item_text, 85)),
+    plot_label = fct_reorder(plot_label, rho)
+  )
+
+write_csv(top_items_primary, file.path(csv_dir, "Q17_PrimaryMetric_Top30_Items.csv"))
+```
+
+```{r primary-item-plot, fig.width=12, fig.height=10}
+p_top_items <- ggplot(top_items_primary, aes(x = rho, y = plot_label, fill = instrument)) +
+  geom_col(width = 0.75) +
+  geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "IMI" = "#4f79b7",
+    "WritingEfficacy" = "#c96b3b",
+    "AIReflection" = "#5a9367",
+    "BeliefsAboutAI" = "#8c6bb1"
+  )) +
+  labs(
+    title = glue("Top item correlates of {primary_q17_label}"),
+    subtitle = "Top 30 items by |Spearman rho| (BH correction computed within Q17 metric family)",
+    x = "Spearman rho",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 9, lineheight = 0.9),
+    legend.position = "bottom"
+  )
+
+# ------------------------------------------------------------
+# BeliefsAboutAI-only plot: top item correlates for primary Q17 metric
+# Paste this chunk AFTER the `primary-item-plot` chunk (after `p_top_items`)
+# and BEFORE the `top-by-q17-metric` chunk.
+# ------------------------------------------------------------
+
+# Top BeliefsAboutAI items for the chosen primary Q17 metric (from proportion table)
+top_beliefs_primary <- q17_item_corrs_prop |>
+  filter(
+    q17_metric == primary_q17_metric,
+    instrument == "BeliefsAboutAI",
+    !is.na(rho)
+  ) |>
+  mutate(abs_r = abs(rho)) |>
+  slice_max(order_by = abs_r, n = 20, with_ties = FALSE) |>
+  mutate(
+    plot_label = paste0("Beliefs ", item_id, ": ", str_trunc(item_text, 100)),
+    plot_label = fct_reorder(plot_label, rho)
+  )
+
+# Write CSV
+write_csv(
+  top_beliefs_primary,
+  file.path(csv_dir, glue("Q17_{primary_q17_metric}_Top_BeliefsAboutAI_Items.csv"))
+)
+
+# Plot
+p_beliefs <- ggplot(top_beliefs_primary, aes(x = rho, y = plot_label)) +
+  geom_col(width = 0.75, fill = "#8c6bb1") +
+  geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+  labs(
+    title = glue("Top BeliefsAboutAI item correlates of {primary_q17_label}"),
+    subtitle = "Top 20 items by |Spearman rho| (BH correction computed within Q17 metric family)",
+    x = "Spearman rho",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 9, lineheight = 0.9)
+  )
+
+# Save PNG
+ggsave(
+  filename = file.path(plot_dir, glue("Q17_{primary_q17_metric}_Top_BeliefsAboutAI_Items.png")),
+  plot = p_beliefs,
+  width = 12,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+p_beliefs
+
+
+
+
+
+ggsave(
+  filename = file.path(plot_dir, glue("Q17_{primary_q17_metric}_Top30_Items.png")),
+  plot = p_top_items,
+  width = 12,
+  height = 10.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+p_top_items
+
+## B3 — Top 30 item correlates per Q17 metric (all five buckets)
+
+# --- Loop: one plot per bucket metric ---
+walk(q17_metrics_prop[q17_metrics_prop != "q17_mean_use"], function(metric) {
+  label <- q17_metric_lookup$q17_label[q17_metric_lookup$q17_metric == metric][[1]]
+
+  top_items <- q17_item_corrs_prop |>
+    filter(q17_metric == metric, !is.na(rho)) |>
+    slice_max(order_by = abs_r, n = 30, with_ties = FALSE) |>
+    mutate(
+      plot_label = paste0(instrument, " ", item_id, ": ", str_trunc(item_text, 85)),
+      plot_label = fct_reorder(plot_label, rho)
+    )
+
+  p <- ggplot(top_items, aes(x = rho, y = plot_label, fill = instrument)) +
+    geom_col(width = 0.75) +
+    geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+    scale_fill_manual(values = c(
+      "IMI"            = "#4f79b7",
+      "WritingEfficacy" = "#c96b3b",
+      "AIReflection"   = "#5a9367",
+      "BeliefsAboutAI" = "#8c6bb1"
+    )) +
+    labs(
+      title    = glue("Top item correlates of: {label}"),
+      subtitle = "Top 30 items by |Spearman rho| (BH correction computed within Q17 metric family)",
+      x        = "Spearman rho",
+      y        = NULL,
+      fill     = NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      axis.text.y      = element_text(size = 9, lineheight = 0.9),
+      legend.position  = "bottom"
+    )
+
+  ggsave(
+    filename = file.path(plot_dir, glue("Q17_{metric}_Top30_Items.png")),
+    plot     = p,
+    width    = 12,
+    height   = 10.5,
+    units    = "in",
+    dpi      = 300,
+    bg       = "white"
+  )
+})
+
+# --- Combined CSV: all buckets x all items ranked by |rho| ---
+all_buckets_ranked <- q17_item_corrs_prop |>
+  filter(
+    q17_metric != "q17_mean_use",
+    !is.na(rho)
+  ) |>
+  arrange(desc(abs_r)) |>
+  select(
+    q17_label, instrument, item_id, item_text,
+    rho, abs_r, p_value, p_bh, p_bonferroni,
+    survives_bh, survives_bonferroni, n
+  )
+
+write_csv(all_buckets_ranked, file.path(csv_dir, "Q17_AllBuckets_AllItems_RankedByStrength.csv"))
+
+# --- Combined top-corr plot: best item per bucket, all buckets together ---
+top_per_bucket <- q17_item_corrs_prop |>
+  filter(
+    q17_metric != "q17_mean_use",
+    !is.na(rho)
+  ) |>
+  group_by(q17_metric) |>
+  slice_max(order_by = abs_r, n = 10, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(
+    plot_label = paste0(instrument, " ", item_id, ": ", str_trunc(item_text, 70)),
+    plot_label = fct_reorder(plot_label, rho),
+    q17_label  = factor(
+      q17_label,
+      levels = q17_metric_lookup |>
+        filter(metric_type == "prop") |>
+        pull(q17_label)
+    )
+  )
+
+p_combined <- ggplot(top_per_bucket, aes(x = rho, y = plot_label, fill = instrument)) +
+  geom_col(width = 0.75) +
+  geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "IMI"             = "#4f79b7",
+    "WritingEfficacy" = "#c96b3b",
+    "AIReflection"    = "#5a9367",
+    "BeliefsAboutAI"  = "#8c6bb1"
+  )) +
+  facet_wrap(~ q17_label, scales = "free_y", ncol = 1) +
+  labs(
+    title    = "Top 10 item correlates per Q17 familiarity bucket",
+    subtitle = "Ranked by |Spearman rho| within each bucket (BH correction within metric family)",
+    x        = "Spearman rho",
+    y        = NULL,
+    fill     = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor  = element_blank(),
+    axis.text.y       = element_text(size = 8, lineheight = 0.9),
+    legend.position   = "bottom",
+    strip.text        = element_text(face = "bold", size = 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_AllBuckets_Top10_Items_Combined.png"),
+  plot     = p_combined,
+  width    = 13,
+  height   = 22,
+  units    = "in",
+  dpi      = 300,
+  bg       = "white"
+)
+
+## B3 — Combined top correlates across all buckets (single ranked plot)
+
+top_combined <- q17_item_corrs_prop |>
+  filter(q17_metric != "q17_mean_use", !is.na(rho)) |>
+  slice_max(order_by = abs_r, n = 40, with_ties = FALSE) |>
+  mutate(
+    plot_label = paste0(instrument, " ", item_id, ": ", str_trunc(item_text, 80)),
+    # make each row unique in case the same item appears for multiple buckets
+    plot_label_unique = paste0(plot_label, "  [", q17_label, "]"),
+    plot_label_unique = fct_reorder(plot_label_unique, abs_r)
+  )
+
+p_combined <- ggplot(top_combined, aes(x = rho, y = plot_label_unique, fill = q17_label)) +
+  geom_col(width = 0.75) +
+  geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "Never heard (prop)"      = "#b0b0b0",
+    "Heard, never used (prop)" = "#4f79b7",
+    "Rarely use (prop)"       = "#c96b3b",
+    "Sometimes use (prop)"    = "#5a9367",
+    "Often use (prop)"        = "#8c6bb1"
+  )) +
+  labs(
+    title    = "Top 40 item correlates across all Q17 familiarity buckets",
+    subtitle = "Ranked by |Spearman rho| — color indicates which bucket",
+    x        = "Spearman rho",
+    y        = NULL,
+    fill     = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(size = 9, lineheight = 0.9),
+    legend.position  = "bottom"
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_AllBuckets_TopCorr_Unified_Ranked.png"),
+  plot     = p_combined,
+  width    = 13,
+  height   = 13,
+  units    = "in",
+  dpi      = 300,
+  bg       = "white"
+)
+
+## B5 — Flip scores: rho(often use) minus rho(never heard)
+
+# --- Items flip scores ---
+flip_items <- q17_item_corrs_prop |>
+  filter(q17_metric %in% c("q17_p_1", "q17_p_5"), !is.na(rho)) |>
+  select(item_col, q17_metric, rho, instrument, item_id, item_text) |>
+  pivot_wider(
+    names_from  = q17_metric,
+    values_from = rho,
+    names_prefix = "rho_"
+  ) |>
+  rename(rho_never = rho_q17_p_1, rho_often = rho_q17_p_5) |>
+  filter(!is.na(rho_never), !is.na(rho_often)) |>
+  mutate(
+    flip_score = rho_often - rho_never,
+    abs_flip   = abs(flip_score)
+  ) |>
+  arrange(desc(abs_flip))
+
+write_csv(flip_items, file.path(csv_dir, "Q17_FlipScores_Items.csv"))
+
+# Top 30 flip items plot
+top_flip_items <- flip_items |>
+  slice_max(order_by = abs_flip, n = 30, with_ties = FALSE) |>
+  arrange(abs_flip) |>
+  mutate(
+    plot_label = paste0(instrument, " ", item_id, ": ", str_trunc(item_text, 75)),
+    plot_label = factor(plot_label, levels = unique(plot_label))
+  ) |>
+  select(plot_label, instrument, rho_never, rho_often, flip_score, abs_flip) |>
+  pivot_longer(
+    cols      = c(rho_never, rho_often),
+    names_to  = "bucket",
+    values_to = "rho"
+  ) |>
+  mutate(
+    bucket = recode(bucket,
+      "rho_never" = "Never heard",
+      "rho_often" = "Often use"
+    )
+  )
+
+p_flip_items <- ggplot(top_flip_items, aes(x = rho, y = plot_label, color = bucket, group = plot_label)) +
+  geom_line(color = "gray70", linewidth = 0.8) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, color = "gray40", linewidth = 0.5) +
+  scale_color_manual(values = c(
+    "Never heard" = "#b0b0b0",
+    "Often use"   = "#8c6bb1"
+  )) +
+  labs(
+    title    = "Top 30 items by flip score (often use rho minus never heard rho)",
+    subtitle = "Each line shows the shift from Never heard (gray) to Often use (purple)",
+    x        = "Spearman rho",
+    y        = NULL,
+    color    = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(size = 9, lineheight = 0.9),
+    legend.position  = "bottom"
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_FlipScores_Items_DumbbellPlot.png"),
+  plot     = p_flip_items,
+  width    = 12,
+  height   = 11,
+  units    = "in",
+  dpi      = 300,
+  bg       = "white"
+)
+
+# --- Factor flip scores ---
+flip_factors <- q17_factor_corrs_prop |>
+  filter(q17_metric %in% c("q17_p_1", "q17_p_5"), !is.na(rho)) |>
+  select(factor, q17_metric, rho, instrument, display_label) |>
+  pivot_wider(
+    names_from  = q17_metric,
+    values_from = rho,
+    names_prefix = "rho_"
+  ) |>
+  rename(rho_never = rho_q17_p_1, rho_often = rho_q17_p_5) |>
+  filter(!is.na(rho_never), !is.na(rho_often)) |>
+  mutate(
+    flip_score = rho_often - rho_never,
+    abs_flip   = abs(flip_score)
+  ) |>
+  arrange(desc(abs_flip))
+
+write_csv(flip_factors, file.path(csv_dir, "Q17_FlipScores_Factors.csv"))
+
+# Factor flip heatmap
+flip_factors_heat <- flip_factors |>
+  mutate(
+    display_label = fct_reorder(display_label, flip_score)
+  ) |>
+  select(display_label, instrument, rho_never, rho_often, flip_score) |>
+  pivot_longer(
+    cols      = c(rho_never, rho_often, flip_score),
+    names_to  = "metric",
+    values_to = "value"
+  ) |>
+  mutate(
+    metric = recode(metric,
+      "rho_never" = "Never heard",
+      "rho_often" = "Often use",
+      "flip_score" = "Flip score\n(often − never)"
+    ),
+    metric = factor(metric, levels = c("Never heard", "Often use", "Flip score\n(often − never)"))
+  )
+
+p_flip_factors_heat <- ggplot(flip_factors_heat, aes(x = metric, y = display_label, fill = value)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = formatC(value, format = "f", digits = 2)), size = 3) +
+  scale_fill_gradient2(
+    low      = "#c73e3a",
+    mid      = "#f7f7f7",
+    high     = "#4f79b7",
+    midpoint = 0,
+    limits   = c(-1, 1),
+    name     = "rho / flip"
+  ) +
+  labs(
+    title    = "Factor flip scores: Never heard vs Often use",
+    subtitle = "Flip score = rho(often use) − rho(never heard)",
+    x        = NULL,
+    y        = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid   = element_blank(),
+    axis.text.x  = element_text(angle = 10, hjust = 0.5),
+    plot.margin  = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "Q17_FlipScores_Factors_Heatmap.png"),
+  plot     = p_flip_factors_heat,
+  width    = 9,
+  height   = 6,
+  units    = "in",
+  dpi      = 300,
+  bg       = "white"
+)
+
+```
+
+## B4 — Strongest item signals by Q17 metric (summary table; proportions)
+
+```{r top-by-q17-metric}
+top_by_q17_metric <- q17_item_corrs_prop |>
+  filter(!is.na(rho)) |>
+  group_by(q17_metric, q17_label) |>
+  slice_max(order_by = abs_r, n = 8, with_ties = FALSE) |>
+  ungroup() |>
+  select(q17_label, instrument, item_id, item_text, rho, p_bh, p_bonferroni, n) |>
+  mutate(
+    rho = round(rho, 3),
+    p_bh = round(p_bh, 4),
+    p_bonferroni = round(p_bonferroni, 4)
+  )
+
+write_csv(top_by_q17_metric, file.path(csv_dir, "Q17_Proportions_Top_Item_Signals_By_Q17_Metric.csv"))
+kable(top_by_q17_metric, caption = "Top item signals (8) by each Q17 proportion metric (ranked by |rho|)")
+```
+
+---
+
+## Output Manifest
+
+```{r manifest}
+manifest <- tribble(
+  ~file, ~description,
+  "Q17_Likert_Buckets_PerParticipant.csv", "Per-participant Q17 bucket counts + proportions + mean use",
+  "Q17_Proportions_vs_Factors_Correlations.csv", "Spearman rho: Q17 proportion metrics (and mean) vs factor scores (BH within metric)",
+  "Q17_Counts_vs_Factors_Correlations.csv", "Spearman rho: Q17 count metrics vs factor scores (BH within metric)",
+  "Q17_Proportions_vs_All_Items_Correlations.csv", "Spearman rho: Q17 proportion metrics (and mean) vs all items (BH within metric)",
+  "Q17_Counts_vs_All_Items_Correlations.csv", "Spearman rho: Q17 count metrics vs all items (BH within metric)",
+  "Q17_PrimaryMetric_Top30_Items.csv", "Top 30 item correlates for chosen primary Q17 metric (from proportion table)",
+  "Q17_Proportions_Top_Item_Signals_By_Q17_Metric.csv", "Top 8 item correlates per Q17 proportion metric"
+)
+
+write_csv(manifest, file.path(csv_dir, "Manifest.csv"))
+kable(manifest)
+```

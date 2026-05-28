@@ -9,9 +9,15 @@ execute:
   echo: false
   warning: false
   message: false
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
-This is a quick exploratory side analysis of `Q17` from the AI survey against `ART` (Author Recognition Test) as a proxy for reading exposure/reading ability. It is useful for pattern-finding, but it is not a direct comprehension or retention outcome.
+This is a quick exploratory side analysis of `Q17` from the AI survey
+against `ART` (Author Recognition Test) as a proxy for reading
+exposure/reading ability. It is useful for pattern-finding, but it is
+not a direct comprehension or retention outcome.
 
 ```{r}
 library(readr)
@@ -32,8 +38,11 @@ source("scoring_helpers.R", local = knitr::knit_global())
 ```{r}
 script_dir <- "07_q17_ai_usePART2"
 csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+factor_csv_dir <- file.path("09_art_vs_all_factors_items", "csv")
 art_clean_file <- file.path("01_audit_cleaning", "cleaned", "AuthorRecognition_cleaned.csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 normalize_text <- function(x) {
   x |>
@@ -387,6 +396,8 @@ q17_participant_indices <- q17_clean |>
   group_by(participant_id) |>
   summarise(
     ai_tools_answered = sum(!is.na(use_score)),
+    ai_tools_never_heard_n = sum(use_score == 1L, na.rm = TRUE),
+    ai_tools_heard_never_used_n = sum(use_score == 2L, na.rm = TRUE),
     ai_tools_heard_n = sum(use_score >= 2L, na.rm = TRUE),
     ai_tools_used_n = sum(use_score >= 3L, na.rm = TRUE),
     ai_tools_regular_n = sum(use_score >= 4L, na.rm = TRUE),
@@ -396,9 +407,112 @@ q17_participant_indices <- q17_clean |>
     .groups = "drop"
   )
 
+q17_participant_indices |>
+  summarise(
+    across(
+      c(ai_tools_never_heard_n, ai_tools_heard_never_used_n, 
+        ai_tools_used_n, ai_tools_regular_n),
+      list(mean = mean, median = median),
+      na.rm = TRUE
+    )
+  )
+
+# Distribution of never-heard-of counts across participants
+q17_participant_indices |>
+  summarise(
+    across(
+      c(ai_tools_never_heard_n, ai_tools_heard_never_used_n,
+        ai_tools_used_n, ai_tools_regular_n),
+      list(mean = mean, median = median),
+      na.rm = TRUE
+    )
+  ) |>
+  kable()
+
+q17_participant_indices |>
+  pivot_longer(
+    cols = c(ai_tools_never_heard_n, ai_tools_heard_never_used_n,
+             ai_tools_used_n, ai_tools_regular_n),
+    names_to = "category",
+    values_to = "n_tools"
+  ) |>
+  mutate(category = recode(category,
+    ai_tools_never_heard_n = "Never heard of",
+    ai_tools_heard_never_used_n = "Heard, never used",
+    ai_tools_used_n = "Ever used",
+    ai_tools_regular_n = "Regular use"
+  )) |>
+  ggplot(aes(x = n_tools, fill = category)) +
+  geom_histogram(binwidth = 1, color = "white") +
+  facet_wrap(~ category, scales = "free_x") +
+  labs(
+    title = "Per-Participant AI Tool Response Counts",
+    subtitle = "How many tools each participant marked in each category",
+    x = "Number of tools",
+    y = "Number of participants",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +   theme(legend.position = "none")
+
+q17_clean |>
+  filter(!is.na(use_score)) |>
+  count(use_score) |>
+  mutate(
+    response = names(q17_response_map)[use_score],
+    pct = n / sum(n)
+  )
+
 write_csv(q17_submission_audit, file.path(csv_dir, "Q17_Submission_Resolution.csv"))
 write_csv(q17_tool_popularity, file.path(csv_dir, "Q17_Tool_Popularity.csv"))
 write_csv(q17_participant_indices, file.path(csv_dir, "Q17_Participant_AI_Use_Index.csv"))
+
+```
+
+Most common answer
+
+```{r, fig.width=10, fig.height=5}
+q17_clean |>
+  filter(!is.na(use_score)) |>
+  count(use_score) |>
+  mutate(
+    response = factor(
+      names(q17_response_map)[use_score],
+      levels = names(q17_response_map)
+    ),
+    pct = n / sum(n)
+  ) |>
+  ggplot(aes(x = response, y = pct, fill = response)) +
+  geom_col() +
+  geom_text(aes(label = percent(pct, accuracy = 0.1)), vjust = -0.5, size = 3.5) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.1))) +
+  scale_x_discrete(labels = label_wrap_gen(width = 25)) +
+  scale_fill_manual(values = c(
+    "I have never heard of this tool." = "#c96b3b",
+    "I have heard of this tool but never used it." = "#d4a96a",
+    "I rarely use this tool." = "#a8b89a",
+    "I sometimes use this tool." = "#4f7c5f",
+    "I often use this tool." = "#2d5a3d"
+  )) +
+  labs(
+    title = "Overall Distribution of Q17 Responses",
+    subtitle = "Pooled across all participants and all tools",
+    x = NULL,
+    y = "Share of responses"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 0, hjust = 0.5)
+  )
+
+ggsave(
+  file.path(plot_dir, "Q17_Overall_Response_Distribution.png"),
+  plot = last_plot(),
+  width = 10,
+  height = 5,
+  dpi = 300,
+  bg = "white"
+)
 ```
 
 ```{r, fig.height=6, fig.width=10}
@@ -489,7 +603,8 @@ kable(summary_table)
 ```{r}
 correlation_predictors <- c(
   "ai_use_mean",
-  "ai_tools_heard_n",
+  "ai_tools_never_heard_n",
+  "ai_tools_heard_never_used_n",
   "ai_tools_used_n",
   "ai_tools_regular_n",
   "ai_tools_often_n"
@@ -544,7 +659,8 @@ q17_art_correlations |>
   kable()
 ```
 
-Participants with 20+ regular tools excluded (outlier; n_excluded = `r sum(analysis_df$ai_tools_regular_n > 10)`).
+Participants with more than 10 regular tools excluded (n_excluded =
+`r sum(analysis_df$ai_tools_regular_n > 10)`).
 
 ```{r, fig.height=5, fig.width=8}
 scatter_df <- analysis_df |> filter(ai_tools_regular_n <= 10)
@@ -569,6 +685,199 @@ ggplot(scatter_df, aes(x = ai_tools_regular_n, y = art_net_real_minus_fake)) +
     y = "ART net score"
   ) +
   theme_minimal(base_size = 12)
+```
+
+These two plots look directly at the lower end of the Q17 scale:
+participants who have never heard of tools, and participants who have
+heard of tools but not used them.
+
+We do **not** include a separate `heard_n` scatterplot because, in this
+dataset, everyone answered all 28 Q17 tool rows. That means
+`heard_n = 28 - never_heard_n`, so a `heard_n` plot would only be the
+`never_heard_n` plot flipped left-to-right. By contrast,
+`heard_but_never_used_n` captures something different: awareness without
+adoption.
+
+```{r, fig.height=5.5, fig.width=10}
+low_end_specs <- tribble(
+  ~predictor,                      ~facet_label,
+  "ai_tools_never_heard_n",        "Tools never heard of",
+  "ai_tools_heard_never_used_n",   "Tools heard of but never used"
+)
+
+low_end_stats <- low_end_specs |>
+  mutate(
+    result = map(
+      predictor,
+      ~ safe_spearman(analysis_df, .x, "art_net_real_minus_fake") |>
+        select(n, rho, p_value, note)
+    )
+  ) |>
+  unnest(result) |>
+  mutate(
+    stat_label = case_when(
+      is.na(rho) ~ glue("n = {n}; insufficient variation"),
+      TRUE ~ glue("\u03c1 = {round(rho, 2)}, p = {round(p_value, 3)} (n = {n})")
+    )
+  )
+
+low_end_plot_df <- low_end_specs |>
+  mutate(
+    data = map(
+      predictor,
+      function(pred) {
+        tibble(
+          x_value = analysis_df[[pred]],
+          art_net_real_minus_fake = analysis_df$art_net_real_minus_fake
+        ) |>
+          filter(!is.na(x_value), !is.na(art_net_real_minus_fake))
+      }
+    )
+  ) |>
+  unnest(data)
+
+ggplot(low_end_plot_df, aes(x = x_value, y = art_net_real_minus_fake)) +
+  geom_jitter(width = 0.2, height = 0.2, alpha = 0.7, color = "#3b6a8f") +
+  geom_smooth(method = "lm", se = FALSE, color = "#c96b3b", linewidth = 1) +
+  facet_wrap(~ facet_label, scales = "free_x") +
+  geom_text(
+    data = low_end_stats,
+    aes(x = Inf, y = Inf, label = stat_label),
+    inherit.aes = FALSE,
+    hjust = 1.05,
+    vjust = 1.5,
+    size = 3.5,
+    color = "gray30"
+  ) +
+  labs(
+    title = "Lower-End AI Familiarity vs ART Net Score",
+    subtitle = "Higher ART net means more real-author hits minus fake-author false alarms",
+    x = "Number of tools in that response category",
+    y = "ART net score"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## ART vs Factor Scores
+
+This section reuses the factor-scored ART outputs from `09` so the
+factor scatterplots here stay aligned with the main factor-analysis
+workflow.
+
+```{r}
+art_factor_file <- file.path(factor_csv_dir, "ART_Factor_Merged.csv")
+factor_lookup_file <- file.path(factor_csv_dir, "Factor_Lookup.csv")
+
+required_factor_files <- c(
+  art_factor_file,
+  factor_lookup_file
+)
+
+missing_factor_files <- required_factor_files[!file.exists(required_factor_files)]
+
+if (length(missing_factor_files) > 0) {
+  stop(
+    glue(
+      "Missing factor-analysis outputs: {paste(missing_factor_files, collapse = ', ')}.\n",
+      "Run 09_art_vs_all_factors_items first."
+    ),
+    call. = FALSE
+  )
+}
+
+art_factor_df <- read_csv(art_factor_file, show_col_types = FALSE)
+factor_lookup_q17 <- read_csv(factor_lookup_file, show_col_types = FALSE)
+factor_cols_q17 <- factor_lookup_q17$factor
+
+art_factor_q17 <- art_factor_df |>
+  semi_join(analysis_df |> select(participant_id), by = "participant_id")
+
+assert_expected_count(
+  nrow(art_factor_q17),
+  nrow(analysis_df),
+  "Q17 x ART x factor overlap participant count"
+)
+assert_unique_pid_rows(art_factor_q17, "participant_id", "Q17 x ART x factor merged")
+
+factor_correlations_q17 <- crossing(factor = factor_cols_q17) |>
+  mutate(
+    result = map(factor, ~ safe_spearman(art_factor_q17, .x, "art_net_real_minus_fake"))
+  ) |>
+  pull(result) |>
+  bind_rows() |>
+  rename(factor = predictor) |>
+  left_join(factor_lookup_q17, by = "factor") |>
+  mutate(abs_r = abs(rho)) |>
+  mutate(
+    p_bh = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni")
+  ) |>
+  arrange(desc(abs_r), p_bh, p_value)
+
+write_csv(art_factor_q17, file.path(csv_dir, "Q17_ART_Factor_Merged.csv"))
+write_csv(factor_correlations_q17, file.path(csv_dir, "Q17_ART_vs_Factors_Correlations.csv"))
+```
+
+```{r}
+factor_correlations_q17 |>
+  select(display_label, n, rho, p_value, p_bh, p_bonferroni) |>
+  mutate(
+    rho = round(rho, 3),
+    p_value = round(p_value, 4),
+    p_bh = round(p_bh, 4),
+    p_bonferroni = round(p_bonferroni, 4)
+  ) |>
+  kable(caption = "ART net score vs factor scores, ranked by |rho|")
+```
+
+```{r, fig.height=11, fig.width=11}
+factor_stats <- factor_correlations_q17 |>
+  transmute(
+    factor,
+    display_label,
+    facet_label = glue("{display_label}\n\u03c1 = {round(rho, 2)}, p = {round(p_value, 3)}")
+  )
+
+factor_plot_df <- art_factor_q17 |>
+  select(participant_id, art_net_real_minus_fake, all_of(factor_stats$factor)) |>
+  pivot_longer(
+    cols = all_of(factor_stats$factor),
+    names_to = "factor",
+    values_to = "factor_score"
+  ) |>
+  filter(!is.na(factor_score), !is.na(art_net_real_minus_fake)) |>
+  left_join(factor_stats, by = "factor") |>
+  mutate(
+    facet_label = factor(facet_label, levels = factor_stats$facet_label)
+  )
+
+p_factor_scatter <- ggplot(factor_plot_df, aes(x = factor_score, y = art_net_real_minus_fake)) +
+  geom_jitter(width = 0.08, height = 0.2, alpha = 0.65, color = "#3b6a8f") +
+  geom_smooth(method = "lm", se = FALSE, color = "#c96b3b", linewidth = 0.9) +
+  facet_wrap(~ facet_label, ncol = 2) +
+  labs(
+    title = "ART Net Score vs Factor Scores",
+    subtitle = "Panels ordered by absolute Spearman rho",
+    x = "Factor score",
+    y = "ART net score"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    strip.text = element_text(size = 8.5, lineheight = 0.95),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(
+  file.path(plot_dir, "ART_vs_Factors_Scatterplots.png"),
+  p_factor_scatter,
+  width = 11,
+  height = 11,
+  dpi = 300,
+  bg = "white"
+)
+
+p_factor_scatter
 ```
 
 ## Tool-Specific Regular Use vs ART
@@ -609,7 +918,10 @@ write_csv(tool_regular_use_summary, file.path(csv_dir, "Q17_Tool_RegularUse_vs_A
 write_csv(tool_score_vs_art_summary, file.path(csv_dir, "Q17_Tool_RegularUse_vs_AdjustedART.csv"))
 ```
 
-This section focuses on whether people who use a specific tool **regularly** (`sometimes` or `often`) tend to have higher or lower ART scores than everyone else. For these comparisons, lower values mean a weaker ART reading-exposure proxy, not "dumber" in any absolute sense.
+This section focuses on whether people who use a specific tool
+**regularly** (`sometimes` or `often`) tend to have higher or lower ART
+scores than everyone else. For these comparisons, lower values mean a
+weaker ART reading-exposure proxy, not "dumber" in any absolute sense.
 
 ```{r}
 tool_regular_use_summary |>
@@ -720,7 +1032,11 @@ top_net_patterns |>
   kable()
 ```
 
-The clearest overall pattern here is that **broader regular AI use** tends to line up with somewhat lower `ART` proxy scores. Tool-by-tool results should be interpreted more cautiously because some tools have small regular-user counts, but the regular-use tables and plots above make those cases easy to inspect directly.
+The clearest overall pattern here is that **broader regular AI use**
+tends to line up with somewhat lower `ART` proxy scores. Tool-by-tool
+results should be interpreted more cautiously because some tools have
+small regular-user counts, but the regular-use tables and plots above
+make those cases easy to inspect directly.
 
 ## Output Files
 
@@ -736,6 +1052,8 @@ q17_manifest <- tibble(
     "q17_summary",
     "q17_art_correlations",
     "q17_art_regressions",
+    "q17_art_factor_merged",
+    "q17_art_vs_factors_correlations",
     "q17_tool_regular_use_vs_art",
     "q17_tool_regular_use_vs_adjusted_art"
   ),
@@ -749,6 +1067,8 @@ q17_manifest <- tibble(
     "Q17_AI_Use_vs_ART_Summary.csv",
     "Q17_AI_Use_vs_ART_Correlations.csv",
     "Q17_AI_Use_vs_ART_Regressions.csv",
+    "Q17_ART_Factor_Merged.csv",
+    "Q17_ART_vs_Factors_Correlations.csv",
     "Q17_Tool_RegularUse_vs_ART.csv",
     "Q17_Tool_RegularUse_vs_AdjustedART.csv"
   ),
@@ -757,11 +1077,13 @@ q17_manifest <- tibble(
     "ART author selections that could not be matched to the answer key",
     "Q17 duplicate-submission resolution: best submission per participant",
     "Q17 AI tool popularity summary (ever-used and regular-use rates)",
-    "Per-participant AI use indices (number of tools heard/used/regularly used)",
+    "Per-participant AI use indices (never-heard, heard-not-used, heard, used, regular, often)",
     "Merged Q17 AI use indices and ART scores (analysis-ready)",
     "Summary table: sample sizes and top-tool statistics",
     "Spearman correlations: AI use predictors vs ART outcomes",
     "OLS regressions: AI use predictors vs ART outcomes",
+    "Factor-score merge restricted to the Q17 x ART overlap sample",
+    "ART net score vs factor-score correlations on the Q17 x ART overlap sample",
     "Tool-specific regular-use group vs ART net score comparison",
     "Tool-specific regular-use group vs adjusted ART rate comparison"
   )

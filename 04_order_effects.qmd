@@ -48,6 +48,11 @@ factor_scores_all_file <- file.path("06_interesting_findings", "csv", "Factor_Sc
 beliefs_wide_file <- file.path("05_beliefs_item_analysis", "csv", "BeliefsAboutAI_Wide.csv")
 factor_name_map_file <- file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv")
 beliefs_long_file <- file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv")
+schedule_lab_files <- tribble(
+  ~lab_source,   ~path,
+  "SS2",         "C:/Users/Canine/Downloads/Scheduling Tracking - SS2.csv",
+  "Stevenson",   "C:/Users/Canine/Downloads/Scheduling Tracking - Stevenson.csv"
+)
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -1100,6 +1105,440 @@ write_csv(mixed_anova_results, file.path(csv_dir, "Mixed_ANOVA_Tool_Order_Result
 write_csv(interaction_summary, file.path(csv_dir, "Tool_Order_Interaction_Summary.csv"))
 ```
 
+## Section 6b: Lab / Recording-Method Sensitivity Analysis
+
+This exploratory section asks whether participants in SS2 versus
+Stevenson differed on the locked EFA-derived composite scores. Lab
+assignment comes from the scheduling-tracking CSVs. Because each file
+nominally corresponds to one lab, file membership is the default rule;
+explicit cross-lab note conflicts or cross-file duplicate identities are
+treated as ambiguous and excluded from the lab comparison.
+
+Poor-quality paired data are already screened out upstream: this section
+starts from `participant_with_composites`, which inherits the strict
+`clean_pids` gate from `01_audit_cleaning.qmd`.
+
+```{r lab-sensitivity-setup}
+missing_schedule_files <- schedule_lab_files |>
+  filter(!file.exists(path))
+
+if (nrow(missing_schedule_files) > 0) {
+  stop(
+    paste0(
+      "Missing lab scheduling file(s): ",
+      paste(missing_schedule_files$path, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+lab_factor_labels <- tribble(
+  ~composite,            ~instrument,         ~factor_name,                ~plot_label,
+  "IMI_F1",              "IMI",               "Interest & Enjoyment",      "IMI\nInterest & Enjoyment",
+  "IMI_F2",              "IMI",               "Effort & Importance",       "IMI\nEffort & Importance",
+  "IMI_F3",              "IMI",               "Perceived Competence",      "IMI\nPerceived Competence",
+  "WritingEfficacy_F1",  "WritingEfficacy",   "Writing Competence",        "WritingEfficacy\nWriting Competence",
+  "WritingEfficacy_F2",  "WritingEfficacy",   "Self-Regulation",           "WritingEfficacy\nSelf-Regulation",
+  "WritingEfficacy_F3",  "WritingEfficacy",   "Resource & Planning",       "WritingEfficacy\nResource & Planning",
+  "AIReflection_F1",     "AIReflection",      "Ownership & Usefulness",    "AIReflection\nOwnership & Usefulness",
+  "AIReflection_F2",     "AIReflection",      "Enjoyment & Satisfaction",  "AIReflection\nEnjoyment & Satisfaction"
+)
+
+normalize_schedule_text <- function(x) {
+  x |>
+    as.character() |>
+    stringr::str_replace_all("\\u00A0", " ") |>
+    stringr::str_squish() |>
+    na_if("")
+}
+
+first_nonmissing_chr <- function(x) {
+  x <- x[!is.na(x) & x != ""]
+  if (length(x) == 0) NA_character_ else x[[1]]
+}
+
+schedule_tracking <- purrr::pmap_dfr(
+  schedule_lab_files,
+  function(lab_source, path) {
+    read_csv(path, show_col_types = FALSE) |>
+      mutate(lab_source = lab_source, source_path = path)
+  }
+)
+
+required_schedule_cols <- c(
+  "x", "Participant", "Session 1 Status", "Session 2 Status", "Notes",
+  "lab_source", "source_path"
+)
+assert_required_columns(
+  schedule_tracking,
+  required_schedule_cols,
+  "schedule_tracking"
+)
+
+schedule_tracking_clean <- schedule_tracking |>
+  transmute(
+    lab_source,
+    source_path,
+    participant_id = normalize_schedule_text(x),
+    participant_id_lower = str_to_lower(participant_id),
+    participant_name = str_to_lower(normalize_schedule_text(Participant)),
+    session_1_status = normalize_schedule_text(`Session 1 Status`),
+    session_2_status = normalize_schedule_text(`Session 2 Status`),
+    notes = normalize_schedule_text(Notes)
+  ) |>
+  mutate(
+    cross_lab_note = case_when(
+      lab_source == "SS2" ~ str_detect(
+        coalesce(notes, ""),
+        regex(
+          "session\\s*[12].*stevenson|taken in stevenson|scheduled\\s*s?[12]?.*stevenson|completed\\s*s[12].*stevenson",
+          ignore_case = TRUE
+        )
+      ),
+      lab_source == "Stevenson" ~ str_detect(
+        coalesce(notes, ""),
+        regex("\\bss2\\b", ignore_case = TRUE)
+      ),
+      TRUE ~ FALSE
+    )
+  )
+
+name_lab_counts <- schedule_tracking_clean |>
+  filter(!is.na(participant_name)) |>
+  distinct(participant_name, lab_source) |>
+  count(participant_name, name = "name_lab_count")
+
+schedule_id_summary <- schedule_tracking_clean |>
+  filter(!is.na(participant_id_lower)) |>
+  group_by(participant_id_lower) |>
+  summarise(
+    participant_id_schedule = first_nonmissing_chr(participant_id),
+    participant_name = first_nonmissing_chr(participant_name),
+    n_schedule_labs = n_distinct(lab_source),
+    schedule_labs = str_c(sort(unique(lab_source)), collapse = "; "),
+    assigned_lab = if_else(
+      n_schedule_labs == 1L,
+      first(lab_source),
+      NA_character_
+    ),
+    session_1_status = str_c(
+      sort(unique(na.omit(session_1_status))),
+      collapse = "; "
+    ),
+    session_2_status = str_c(
+      sort(unique(na.omit(session_2_status))),
+      collapse = "; "
+    ),
+    any_cross_lab_note = any(cross_lab_note, na.rm = TRUE),
+    note_excerpt = str_trunc(
+      str_squish(str_c(unique(na.omit(notes)), collapse = " | ")),
+      width = 260
+    ),
+    .groups = "drop"
+  ) |>
+  left_join(name_lab_counts, by = "participant_name") |>
+  mutate(
+    name_lab_count = replace_na(name_lab_count, 0L),
+    assignment_status = case_when(
+      n_schedule_labs > 1L ~ "ambiguous_id_in_both_lab_files",
+      any_cross_lab_note   ~ "ambiguous_cross_lab_note",
+      name_lab_count > 1L  ~ "ambiguous_name_in_both_lab_files",
+      n_schedule_labs == 1L ~ "assigned",
+      TRUE                 ~ "no_schedule_lab_match"
+    ),
+    exclusion_reason = case_when(
+      assignment_status == "ambiguous_id_in_both_lab_files" ~
+        "participant ID appears in both lab scheduling files",
+      assignment_status == "ambiguous_cross_lab_note" ~
+        "notes explicitly place at least one session in the other lab",
+      assignment_status == "ambiguous_name_in_both_lab_files" ~
+        "participant name appears across both lab scheduling files",
+      assignment_status == "no_schedule_lab_match" ~
+        "no scheduling-file lab match found",
+      TRUE ~ NA_character_
+    )
+  )
+
+lab_assignment <- participant_with_composites |>
+  select(participant_id) |>
+  distinct() |>
+  mutate(participant_id_lower = str_to_lower(as.character(participant_id))) |>
+  left_join(schedule_id_summary, by = "participant_id_lower") |>
+  mutate(
+    assignment_status = coalesce(assignment_status, "no_schedule_lab_match"),
+    exclusion_reason = case_when(
+      assignment_status == "no_schedule_lab_match" & is.na(exclusion_reason) ~
+        "no scheduling-file lab match found",
+      TRUE ~ exclusion_reason
+    ),
+    lab = if_else(assignment_status == "assigned", assigned_lab, NA_character_)
+  ) |>
+  select(
+    participant_id,
+    lab,
+    assignment_status,
+    exclusion_reason,
+    participant_name,
+    schedule_labs,
+    session_1_status,
+    session_2_status,
+    any_cross_lab_note,
+    note_excerpt
+  )
+
+write_csv(
+  lab_assignment,
+  file.path(csv_dir, "Lab_Assignment_Analysis_Ready.csv")
+)
+
+lab_assignment_summary <- lab_assignment |>
+  count(assignment_status, lab, name = "n") |>
+  arrange(assignment_status, lab)
+
+kable(
+  lab_assignment_summary,
+  caption = "Lab assignment summary for analysis-ready participants. Only rows with assignment_status = assigned enter the lab sensitivity analysis."
+)
+
+participant_with_lab <- participant_with_composites |>
+  inner_join(
+    lab_assignment |>
+      filter(assignment_status == "assigned") |>
+      select(participant_id, lab),
+    by = "participant_id"
+  ) |>
+  mutate(lab = factor(lab, levels = c("SS2", "Stevenson")))
+
+lab_composite_long <- participant_with_lab |>
+  select(participant_id, lab, all_of(composite_cols)) |>
+  pivot_longer(
+    cols = all_of(composite_cols),
+    names_to = "composite",
+    values_to = "score"
+  ) |>
+  left_join(lab_factor_labels, by = "composite") |>
+  mutate(
+    plot_label = factor(plot_label, levels = lab_factor_labels$plot_label)
+  )
+
+lab_descriptives <- lab_composite_long |>
+  group_by(composite, instrument, factor_name, lab) |>
+  summarise(
+    n = sum(!is.na(score)),
+    mean = mean(score, na.rm = TRUE),
+    sd = sd(score, na.rm = TRUE),
+    median = median(score, na.rm = TRUE),
+    iqr = IQR(score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(instrument, composite, lab)
+
+write_csv(
+  lab_descriptives,
+  file.path(csv_dir, "Lab_Descriptives_By_Composite.csv")
+)
+```
+
+```{r lab-mann-whitney}
+lab_mann_whitney_results <- map_dfr(composite_cols, function(comp) {
+  dat <- participant_with_lab |>
+    select(lab, all_of(comp)) |>
+    rename(score = all_of(comp)) |>
+    filter(!is.na(score))
+
+  ss2_vec <- dat |>
+    filter(lab == "SS2") |>
+    pull(score)
+
+  stevenson_vec <- dat |>
+    filter(lab == "Stevenson") |>
+    pull(score)
+
+  n_ss2 <- length(ss2_vec)
+  n_stevenson <- length(stevenson_vec)
+
+  wt <- suppressWarnings(
+    wilcox.test(
+      ss2_vec,
+      stevenson_vec,
+      exact = FALSE,
+      conf.int = TRUE
+    )
+  )
+
+  w_stat <- unname(wt$statistic)
+  u_stat <- w_stat
+  rb <- rank_biserial_from_u(w_stat, n_ss2, n_stevenson)
+
+  tibble(
+    composite = comp,
+    n_ss2 = n_ss2,
+    n_stevenson = n_stevenson,
+    median_ss2 = median(ss2_vec, na.rm = TRUE),
+    median_stevenson = median(stevenson_vec, na.rm = TRUE),
+    mean_ss2 = mean(ss2_vec, na.rm = TRUE),
+    mean_stevenson = mean(stevenson_vec, na.rm = TRUE),
+    w_stat = w_stat,
+    u_stat = u_stat,
+    p_value = wt$p.value,
+    estimate_hl = unname(wt$estimate),
+    conf_low = wt$conf.int[[1]],
+    conf_high = wt$conf.int[[2]],
+    effect_size = rb
+  )
+})
+
+lab_mann_whitney_results <- lab_mann_whitney_results |>
+  mutate(
+    p_bh = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni")
+  ) |>
+  left_join(lab_factor_labels, by = "composite") |>
+  relocate(instrument, factor_name, plot_label, .after = composite)
+
+write_csv(
+  lab_mann_whitney_results,
+  file.path(csv_dir, "Mann_Whitney_Lab_Comparisons.csv")
+)
+
+lab_mann_whitney_results |>
+  mutate(
+    across(
+      c(
+        mean_ss2, mean_stevenson, median_ss2, median_stevenson,
+        p_value, p_bh, p_bonferroni, estimate_hl, conf_low,
+        conf_high, effect_size
+      ),
+      ~ round(.x, 3)
+    )
+  ) |>
+  select(
+    instrument, factor_name, n_ss2, n_stevenson,
+    mean_ss2, mean_stevenson,
+    median_ss2, median_stevenson,
+    p_value, p_bh, effect_size
+  ) |>
+  kable(
+    caption = "SS2 versus Stevenson composite comparisons. Positive rank-biserial effect sizes indicate higher scores in SS2."
+  )
+```
+
+```{r lab-plots, fig.width=14, fig.height=10}
+lab_palette <- c(
+  "SS2" = "#2E6F95",
+  "Stevenson" = "#C97A3D"
+)
+
+instrument_palette <- c(
+  "IMI" = "#2A9D8F",
+  "WritingEfficacy" = "#E07A5F",
+  "AIReflection" = "#6D597A"
+)
+
+lab_violin_plot <- lab_composite_long |>
+  ggplot(aes(x = lab, y = score, fill = lab)) +
+  geom_violin(alpha = 0.35, width = 0.95, color = NA, trim = FALSE, na.rm = TRUE) +
+  geom_boxplot(width = 0.18, outlier.alpha = 0.55, na.rm = TRUE) +
+  facet_wrap(~ plot_label, scales = "free_y", ncol = 3) +
+  scale_fill_manual(values = lab_palette) +
+  labs(
+    title = "EFA composite scores by lab",
+    subtitle = "Exploratory SS2 vs Stevenson comparison on clean paired participants",
+    x = "Lab",
+    y = "Composite score",
+    fill = NULL,
+    caption = "Lab assignment comes from scheduling tracking CSVs. Explicit cross-lab note conflicts and cross-file duplicate identities are excluded."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 10),
+    axis.text.x = element_text(size = 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "lab_composite_violin_box.png"),
+  plot = lab_violin_plot,
+  width = 14,
+  height = 10,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "lab_composite_violin_box.pdf"),
+  plot = lab_violin_plot,
+  width = 14,
+  height = 10,
+  units = "in",
+  bg = "white"
+)
+
+lab_effect_plot_data <- lab_mann_whitney_results |>
+  mutate(
+    plot_label = factor(plot_label, levels = rev(lab_factor_labels$plot_label)),
+    p_bh_label = paste0("BH p = ", scales::number(p_bh, accuracy = 0.001))
+  )
+
+lab_effect_plot <- lab_effect_plot_data |>
+  ggplot(aes(x = effect_size, y = plot_label, color = instrument)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_segment(
+    aes(x = 0, xend = effect_size, yend = plot_label),
+    linewidth = 1.1,
+    alpha = 0.45
+  ) +
+  geom_point(size = 3.4) +
+  geom_text(
+    aes(x = 0.92, y = plot_label, label = p_bh_label),
+    inherit.aes = FALSE,
+    color = "grey35",
+    hjust = 1,
+    size = 3.2
+  ) +
+  scale_color_manual(values = instrument_palette) +
+  scale_x_continuous(
+    limits = c(-1, 1),
+    breaks = seq(-1, 1, by = 0.25),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  labs(
+    title = "Lab sensitivity effect sizes across EFA composites",
+    subtitle = "Positive values indicate higher scores in SS2; points show rank-biserial effect sizes",
+    x = "Rank-biserial effect size (SS2 higher \u2192)",
+    y = NULL,
+    color = "Instrument",
+    caption = "Mann-Whitney comparisons with BH correction across the 8 composite tests."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    axis.text.y = element_text(size = 10)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "lab_effect_size_summary.png"),
+  plot = lab_effect_plot,
+  width = 13,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = file.path(plot_dir, "lab_effect_size_summary.pdf"),
+  plot = lab_effect_plot,
+  width = 13,
+  height = 7,
+  units = "in",
+  bg = "white"
+)
+```
+
 ## Section 7: Export Ready Tables
 
 ```{r final-exports}
@@ -1131,7 +1570,10 @@ export_manifest <- tibble(
     "item_level_mann_whitney",
     "pair_specs",
     "mixed_anova",
-    "interaction_summary"
+    "interaction_summary",
+    "lab_assignment",
+    "lab_descriptives",
+    "lab_mann_whitney"
   ),
   file = c(
     "Order_Effects_Analysis_Ready.csv",
@@ -1142,7 +1584,10 @@ export_manifest <- tibble(
     "Item_Level_Order_Comparisons.csv",
     "Tool_Comparable_Pair_Specs.csv",
     "Mixed_ANOVA_Tool_Order_Results.csv",
-    "Tool_Order_Interaction_Summary.csv"
+    "Tool_Order_Interaction_Summary.csv",
+    "Lab_Assignment_Analysis_Ready.csv",
+    "Lab_Descriptives_By_Composite.csv",
+    "Mann_Whitney_Lab_Comparisons.csv"
   )
 )
 

@@ -1,0 +1,754 @@
+---
+title: "Profile Comparisons — Continuous Factor Approach (Script 11b)"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+output-dir: "11_profile_external_comparisons"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+This script complements `11_profile_external_comparisons.qmd` by
+replacing the weak cluster solution (avg silhouette = 0.164) with three
+continuous analysis strategies:
+
+1.  **Spearman correlations** — factor scores vs external variables
+    (ART, Q17 AI-use, BeliefsAboutAI themes). No grouping required.
+2.  **Multiple regression** — external variables (ART, AI-use) as
+    predictors of each factor score. Identifies unique variance
+    explained.
+3.  **Latent Profile Analysis (LPA)** via `tidyLPA` — model-based
+    alternative to Ward clustering. Reports BIC and entropy so
+    k-selection is defensible. Falls back gracefully if `tidyLPA` is not
+    installed.
+
+All outputs go to `11_profile_external_comparisons/csv/` and
+`11_profile_external_comparisons/plots/` to sit alongside script 11
+outputs.
+
+```{r setup}
+library(tidyverse)
+library(glue)
+library(knitr)
+source("scoring_helpers.R", local = knitr::knit_global())
+
+lpa_available <- requireNamespace("tidyLPA", quietly = TRUE)
+if (lpa_available) library(tidyLPA)
+```
+
+## Setup
+
+```{r config}
+# Output dirs shared with script 11
+script_dir  <- "11_profile_external_comparisons"
+csv_dir     <- file.path(script_dir, "csv")
+plot_dir    <- file.path(script_dir, "plots")
+dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Input files
+factor_scores_file        <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file        <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+art_scored_file           <- file.path("09_art_vs_all_factors_items", "csv", "ART_Scored.csv")
+q17_index_file            <- file.path("07_q17_ai_use",               "csv", "Q17_Participant_AI_Use_Index.csv")
+master_wide_file          <- file.path("02_efa_exports",              "Final_Master_Wide.csv")
+beliefs_metadata_file     <- file.path("08_ai_beliefs_items",         "csv", "AIBeliefs_Item_Metadata.csv")
+
+required_files <- c(
+  factor_scores_file, factor_lookup_file, art_scored_file,
+  q17_index_file, master_wide_file, beliefs_metadata_file
+)
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    paste0("11b missing required inputs: ", paste(missing_files, collapse = ", ")),
+    call. = FALSE
+  )
+}
+
+known_q17_exclusions <- c("9g0fXm")
+
+theme_order <- c(
+  "AI Literacy and Limitations",
+  "Academic Utility",
+  "Psychological Comfort and Anonymity",
+  "Practical Convenience",
+  "Risks and Concerns",
+  "Future Integration"
+)
+
+# Colour palette — instrument-coded (matches script 13)
+pal <- c(
+  IMI             = "#4f79b7",
+  WritingEfficacy = "#2ca02c",
+  AIReflection    = "#c96b3b",
+  BeliefsAboutAI  = "#9467bd"
+)
+
+theme_cowriters <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) %+replace%
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(colour = "grey92", linewidth = 0.4),
+      axis.text        = element_text(colour = "grey35"),
+      axis.title       = element_text(colour = "grey20", size = rel(0.92)),
+      plot.title       = element_text(face = "bold", colour = "grey10",
+                                      size = rel(1.1), hjust = 0,
+                                      margin = margin(b = 4)),
+      plot.subtitle    = element_text(colour = "grey40", size = rel(0.88),
+                                      hjust = 0, margin = margin(b = 10)),
+      plot.caption     = element_text(colour = "grey55", size = rel(0.76),
+                                      hjust = 0, margin = margin(t = 8)),
+      legend.position  = "bottom",
+      legend.title     = element_text(face = "bold", size = rel(0.85)),
+      legend.text      = element_text(size = rel(0.82)),
+      strip.text       = element_text(face = "bold", colour = "grey20"),
+      plot.margin      = margin(12, 16, 12, 12)
+    )
+}
+```
+
+## Load Data
+
+```{r load-data}
+factor_scores  <- read_csv(factor_scores_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id)) |>
+  filter(participant_id %in% as.character(master_wide$participant_id))  # add this
+
+factor_lookup  <- read_csv(factor_lookup_file,    show_col_types = FALSE)
+
+art_scores     <- read_csv(art_scored_file,       show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id)) |>
+  select(participant_id, art_net_real_minus_fake, art_adjusted_rate,
+         art_real_hits, art_fake_false_alarms)
+
+q17_index      <- read_csv(q17_index_file,        show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+master_wide    <- read_csv(master_wide_file,      show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+beliefs_meta   <- read_csv(beliefs_metadata_file, show_col_types = FALSE) |>
+  mutate(theme = factor(theme, levels = theme_order))
+
+factor_cols <- factor_lookup$factor
+
+assert_expected_count(nrow(factor_scores), 82L, "factor scores rows")
+assert_unique_pid_rows(factor_scores, "participant_id", "factor scores")
+assert_expected_count(nrow(master_wide),   82L, "master wide rows")
+assert_unique_pid_rows(master_wide, "participant_id", "master wide")
+
+# Build beliefs theme averages
+beliefs_theme_map <- tribble(
+  ~item_num, ~theme,
+  1L,  "AI Literacy and Limitations",
+  2L,  "AI Literacy and Limitations",
+  3L,  "AI Literacy and Limitations",
+  4L,  "AI Literacy and Limitations",
+  5L,  "AI Literacy and Limitations",
+  6L,  "Academic Utility",
+  7L,  "Academic Utility",
+  8L,  "Academic Utility",
+  9L,  "Academic Utility",
+  10L, "Psychological Comfort and Anonymity",
+  11L, "Psychological Comfort and Anonymity",
+  12L, "Psychological Comfort and Anonymity",
+  13L, "Practical Convenience",
+  14L, "Practical Convenience",
+  15L, "Practical Convenience",
+  16L, "Practical Convenience",
+  17L, "Risks and Concerns",
+  18L, "Risks and Concerns",
+  19L, "Risks and Concerns",
+  20L, "Risks and Concerns",
+  21L, "Future Integration",
+  22L, "Future Integration"
+)
+
+beliefs_cols <- paste0("Beliefs_", beliefs_theme_map$item_num)
+
+beliefs_theme_scores <- master_wide |>
+  select(participant_id, all_of(beliefs_cols)) |>
+  pivot_longer(
+    cols      = all_of(beliefs_cols),
+    names_to  = "belief_item",
+    values_to = "score"
+  ) |>
+  mutate(item_num = as.integer(str_remove(belief_item, "Beliefs_"))) |>
+  left_join(beliefs_theme_map, by = "item_num") |>
+  group_by(participant_id, theme) |>
+  summarise(theme_mean = mean(as.numeric(score), na.rm = TRUE), .groups = "drop") |>
+  mutate(theme_col = paste0("BeliefsTheme_", str_replace_all(theme, "[^A-Za-z0-9]+", "_"))) |>
+  select(participant_id, theme_col, theme_mean) |>
+  pivot_wider(names_from = theme_col, values_from = theme_mean)
+
+beliefs_theme_cols <- names(beliefs_theme_scores)[names(beliefs_theme_scores) != "participant_id"]
+
+# Build individual beliefs items wide
+beliefs_item_cols <- beliefs_meta |> filter(inferential) |> pull(item_col)
+
+# Master analysis frame — full n=82
+analysis_df <- factor_scores |>
+  left_join(art_scores,           by = "participant_id") |>
+  left_join(beliefs_theme_scores, by = "participant_id") |>
+  left_join(
+    master_wide |> select(participant_id, all_of(intersect(beliefs_item_cols, names(master_wide)))),
+    by = "participant_id"
+  )
+
+# For Q17: drop known exclusions
+analysis_df_q17 <- analysis_df |>
+  left_join(
+    q17_index |>
+      select(participant_id, ai_tools_heard_n, ai_tools_used_n,
+             ai_tools_regular_n, ai_tools_often_n, ai_use_mean,
+             ai_use_mean_heard_only),
+    by = "participant_id"
+  ) |>
+  filter(!participant_id %in% known_q17_exclusions)
+
+assert_expected_count(nrow(analysis_df),     82L,                                  "analysis_df rows")
+assert_expected_count(nrow(analysis_df_q17), 82L - length(known_q17_exclusions),   "analysis_df_q17 rows")
+```
+
+------------------------------------------------------------------------
+
+## Part 1 — Spearman Correlations: Factor Scores vs External Variables
+
+Replaces cluster-based Kruskal-Wallis with direct bivariate Spearman
+correlations. More powerful for continuous data; no grouping artefact.
+
+```{r spearman-helpers}
+safe_spearman_11b <- function(df, x_col, y_col) {
+  dat <- df |>
+    select(x = all_of(x_col), y = all_of(y_col)) |>
+    filter(!is.na(x), !is.na(y))
+
+  if (nrow(dat) < 10L || n_distinct(dat$x) < 2L || n_distinct(dat$y) < 2L) {
+    return(tibble(x_col = x_col, y_col = y_col, n = nrow(dat),
+                  rho = NA_real_, p_value = NA_real_, note = "insufficient data"))
+  }
+
+  test <- suppressWarnings(
+    cor.test(dat$x, dat$y, method = "spearman", exact = FALSE)
+  )
+
+  tibble(
+    x_col   = x_col,
+    y_col   = y_col,
+    n       = nrow(dat),
+    rho     = unname(test$estimate),
+    p_value = test$p.value,
+    note    = NA_character_
+  )
+}
+```
+
+### 1a — Factor Scores vs ART
+
+```{r factor-art-corr}
+art_metrics <- c("art_net_real_minus_fake", "art_adjusted_rate",
+                 "art_real_hits", "art_fake_false_alarms")
+
+factor_art_corr <- crossing(
+  x_col = factor_cols,
+  y_col = art_metrics
+) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+  pull(result) |>
+  bind_rows() |>
+  left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
+            by = c("x_col" = "factor")) |>
+  mutate(
+    abs_rho  = abs(rho),
+    p_bh     = p.adjust(p_value, method = "BH"),
+    p_bonf   = p.adjust(p_value, method = "bonferroni"),
+    sig_bh   = !is.na(p_bh)   & p_bh   < 0.05,
+    sig_bonf = !is.na(p_bonf) & p_bonf < 0.05
+  ) |>
+  arrange(p_bh, p_value, desc(abs_rho))
+
+write_csv(factor_art_corr, file.path(csv_dir, "11b_Factor_ART_Spearman.csv"))
+
+factor_art_corr |>
+  filter(y_col == "art_net_real_minus_fake") |>
+  select(instrument, display_label, rho, p_value, p_bh, p_bonf, sig_bh, sig_bonf, n) |>
+  mutate(across(c(rho, p_value, p_bh, p_bonf), ~ round(.x, 3))) |>
+  knitr::kable(caption = "Factor scores vs ART net score (primary metric)")
+```
+
+### 1b — Factor Scores vs Q17 AI-Use Indices
+
+```{r factor-q17-corr}
+q17_metrics <- c("ai_tools_heard_n", "ai_tools_used_n", "ai_tools_regular_n",
+                 "ai_tools_often_n", "ai_use_mean", "ai_use_mean_heard_only")
+
+factor_q17_corr <- crossing(
+  x_col = factor_cols,
+  y_col = q17_metrics
+) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df_q17, .x, .y))) |>
+  pull(result) |>
+  bind_rows() |>
+  left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
+            by = c("x_col" = "factor")) |>
+  mutate(
+    abs_rho  = abs(rho),
+    p_bh     = p.adjust(p_value, method = "BH"),
+    p_bonf   = p.adjust(p_value, method = "bonferroni"),
+    sig_bh   = !is.na(p_bh)   & p_bh   < 0.05,
+    sig_bonf = !is.na(p_bonf) & p_bonf < 0.05
+  ) |>
+  arrange(p_bh, p_value, desc(abs_rho))
+
+write_csv(factor_q17_corr, file.path(csv_dir, "11b_Factor_Q17_Spearman.csv"))
+
+factor_q17_corr |>
+  filter(y_col == "ai_use_mean") |>
+  select(instrument, display_label, rho, p_value, p_bh, p_bonf, sig_bh, sig_bonf, n) |>
+  mutate(across(c(rho, p_value, p_bh, p_bonf), ~ round(.x, 3))) |>
+  knitr::kable(caption = "Factor scores vs Q17 average AI use (primary metric)")
+```
+
+### 1c — Factor Scores vs BeliefsAboutAI Themes
+
+```{r factor-beliefs-corr}
+factor_beliefs_corr <- crossing(
+  x_col = factor_cols,
+  y_col = beliefs_theme_cols
+) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+  pull(result) |>
+  bind_rows() |>
+  left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
+            by = c("x_col" = "factor")) |>
+  mutate(
+    beliefs_theme = str_remove(y_col, "^BeliefsTheme_") |>
+      str_replace_all("_", " "),
+    abs_rho  = abs(rho),
+    p_bh     = p.adjust(p_value, method = "BH"),
+    p_bonf   = p.adjust(p_value, method = "bonferroni"),
+    sig_bh   = !is.na(p_bh)   & p_bh   < 0.05,
+    sig_bonf = !is.na(p_bonf) & p_bonf < 0.05
+  ) |>
+  arrange(p_bh, p_value, desc(abs_rho))
+
+write_csv(factor_beliefs_corr, file.path(csv_dir, "11b_Factor_BeliefsTheme_Spearman.csv"))
+
+factor_beliefs_corr |>
+  filter(sig_bh) |>
+  select(instrument, display_label, beliefs_theme, rho, p_value, p_bh, sig_bonf, n) |>
+  mutate(across(c(rho, p_value, p_bh), ~ round(.x, 3))) |>
+  knitr::kable(caption = "BH-significant factor × beliefs theme associations")
+```
+
+### Correlation Heatmap — Factor Scores vs All External Variables
+
+```{r corr-heatmap, fig.width=11, fig.height=8}
+# Combine ART (primary metric only) + AI use mean + beliefs themes for heatmap
+heatmap_long <- bind_rows(
+  factor_art_corr |>
+    filter(y_col == "art_net_real_minus_fake") |>
+    mutate(external_label = "ART net score", family = "ART"),
+  factor_q17_corr |>
+    filter(y_col == "ai_use_mean") |>
+    mutate(external_label = "AI use mean (Q17)", family = "Q17"),
+  factor_beliefs_corr |>
+    mutate(
+      external_label = beliefs_theme,
+      family = "Beliefs themes"
+    )
+) |>
+  mutate(
+    sig_label = case_when(
+      sig_bonf ~ "**",
+      sig_bh   ~ "*",
+      TRUE     ~ ""
+    ),
+    cell_label = if_else(
+      is.na(rho), "",
+      paste0(formatC(rho, format = "f", digits = 2), sig_label)
+    ),
+    display_label = factor(display_label,
+                           levels = factor_lookup |>
+                             arrange(match(instrument,
+                                          c("IMI", "WritingEfficacy", "AIReflection")),
+                                     factor_num) |>
+                             pull(display_label)),
+    external_label = factor(external_label,
+                            levels = rev(unique(external_label))),
+    family = factor(family, levels = c("ART", "Q17", "Beliefs themes"))
+  )
+
+corr_heatmap <- ggplot(heatmap_long,
+                       aes(x = display_label, y = external_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = cell_label), size = 2.8) +
+  facet_wrap(~ family, scales = "free_y", ncol = 1) +
+  scale_fill_gradient2(
+    low      = "#c73e3a",
+    mid      = "#f7f7f7",
+    high     = "#4f79b7",
+    midpoint = 0,
+    limits   = c(-1, 1),
+    name     = "Spearman ρ"
+  ) +
+  labs(
+    title    = "Factor Scores vs External Variables — Spearman Correlations",
+    subtitle = "* BH-corrected p < .05   ** Bonferroni p < .05   (N = 82, Q17 n = 81)",
+    x        = NULL,
+    y        = NULL
+  ) +
+  theme_cowriters() +
+  theme(
+    panel.grid   = element_blank(),
+    axis.text.x  = element_text(angle = 25, hjust = 1, size = 9),
+    strip.text   = element_text(face = "bold")
+  )
+
+ggsave(file.path(plot_dir, "11b_Factor_External_Corr_Heatmap.png"),
+       corr_heatmap, width = 12, height = 10, dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "11b_Factor_External_Corr_Heatmap.pdf"),
+       corr_heatmap, width = 12, height = 10, bg = "white")
+
+corr_heatmap
+```
+
+------------------------------------------------------------------------
+
+## Part 2 — Multiple Regression: External Variables Predicting Factor Scores
+
+Each factor score is regressed on ART net score + AI use mean
+simultaneously. Reveals unique variance explained beyond shared
+covariance.
+
+```{r regression}
+regression_predictors <- c("art_net_real_minus_fake", "ai_use_mean")
+
+run_ols <- function(df, outcome, predictors) {
+  dat <- df |>
+    select(all_of(c(outcome, predictors))) |>
+    filter(if_all(everything(), ~ !is.na(.x)))
+
+  if (nrow(dat) < 15L) {
+    return(tibble(
+      outcome    = outcome,
+      predictor  = predictors,
+      beta       = NA_real_,
+      se         = NA_real_,
+      t_value    = NA_real_,
+      p_value    = NA_real_,
+      n          = nrow(dat),
+      r_sq       = NA_real_,
+      adj_r_sq   = NA_real_,
+      note       = "insufficient n"
+    ))
+  }
+
+  fmla <- as.formula(paste(outcome, "~", paste(predictors, collapse = " + ")))
+  fit  <- lm(fmla, data = dat)
+  sm   <- summary(fit)
+  coef_tbl <- as.data.frame(sm$coefficients) |>
+    rownames_to_column("predictor") |>
+    filter(predictor != "(Intercept)") |>
+    rename(beta = Estimate, se = `Std. Error`,
+           t_value = `t value`, p_value = `Pr(>|t|)`)
+
+  coef_tbl |>
+    mutate(
+      outcome  = outcome,
+      n        = nrow(dat),
+      r_sq     = sm$r.squared,
+      adj_r_sq = sm$adj.r.squared,
+      note     = NA_character_
+    ) |>
+    select(outcome, predictor, beta, se, t_value, p_value, n, r_sq, adj_r_sq, note)
+}
+
+regression_results <- map_dfr(factor_cols, ~ run_ols(analysis_df_q17, .x, regression_predictors)) |>
+  left_join(factor_lookup |> select(factor, instrument, display_label),
+            by = c("outcome" = "factor")) |>
+  mutate(
+    p_bh   = p.adjust(p_value, method = "BH"),
+    sig_bh = !is.na(p_bh) & p_bh < 0.05
+  ) |>
+  arrange(outcome, predictor)
+
+write_csv(regression_results, file.path(csv_dir, "11b_Factor_OLS_Regression.csv"))
+
+regression_results |>
+  select(instrument, display_label, predictor, beta, se, t_value, p_value, p_bh, sig_bh, r_sq, adj_r_sq, n) |>
+  mutate(across(c(beta, se, t_value, r_sq, adj_r_sq), ~ round(.x, 3)),
+         across(c(p_value, p_bh), ~ round(.x, 4))) |>
+  knitr::kable(caption = "OLS regression: ART net score + AI use mean → each factor score")
+```
+
+### Regression Coefficient Plot
+
+```{r regression-plot, fig.width=10, fig.height=6}
+reg_plot_df <- regression_results |>
+  filter(!is.na(beta)) |>
+  mutate(
+    ci_lo = beta - 1.96 * se,
+    ci_hi = beta + 1.96 * se,
+    display_label = fct_reorder(display_label, beta),
+    predictor_label = case_when(
+      predictor == "art_net_real_minus_fake" ~ "ART net score",
+      predictor == "ai_use_mean"             ~ "AI use mean (Q17)",
+      TRUE                                   ~ predictor
+    )
+  )
+
+reg_plot <- ggplot(reg_plot_df,
+                   aes(x = beta, y = display_label,
+                       colour = instrument, shape = sig_bh)) +
+  geom_vline(xintercept = 0, colour = "grey70", linewidth = 0.6,
+             linetype = "dashed") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
+                 height = 0.3, linewidth = 0.55, alpha = 0.7) +
+  geom_point(size = 3.5, stroke = 0.8) +
+  facet_wrap(~ predictor_label) +
+  scale_colour_manual(values = pal, name = "Instrument") +
+  scale_shape_manual(
+    values = c(`TRUE` = 19, `FALSE` = 21),
+    labels = c(`TRUE` = "BH p < .05", `FALSE` = "p ≥ .05"),
+    name   = NULL
+  ) +
+  labs(
+    title    = "OLS regression coefficients: ART and AI use predicting factor scores",
+    subtitle = "Standardised predictors; error bars = 95% CI; filled = BH-significant (N = 81)",
+    x        = "Regression coefficient (β)",
+    y        = NULL,
+    caption  = "Predictors mean-centred and scaled to SD = 1 before fitting."
+  ) +
+  theme_cowriters()
+
+ggsave(file.path(plot_dir, "11b_Factor_OLS_Coefficients.png"),
+       reg_plot, width = 11, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "11b_Factor_OLS_Coefficients.pdf"),
+       reg_plot, width = 11, height = 6, bg = "white")
+
+reg_plot
+```
+
+------------------------------------------------------------------------
+
+## Part 3 — Latent Profile Analysis (LPA)
+
+Model-based clustering using `tidyLPA`. Reports BIC and entropy for k =
+2–4. Lower BIC = better fit; entropy ≥ 0.80 = well-separated profiles.
+
+```{r lpa}
+if (!lpa_available) {
+  cat(
+    "tidyLPA not installed — skipping LPA section.\n",
+    "Install with: install.packages('tidyLPA')\n"
+  )
+} else {
+
+  lpa_input <- factor_scores |>
+    select(participant_id, all_of(factor_cols)) |>
+    filter(if_all(all_of(factor_cols), ~ !is.na(.x)))
+
+  lpa_matrix <- lpa_input |>
+  select(all_of(factor_cols)) |>
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) |>
+  as.data.frame()
+
+  lpa_fit <- tryCatch(
+    lpa_matrix |>
+      estimate_profiles(n_profiles = 2:4,
+                        models      = 1),   # equal variances, covariances = 0
+    error = function(e) {
+      message("LPA fitting error: ", conditionMessage(e))
+      NULL
+    }
+  )
+
+  if (!is.null(lpa_fit)) {
+
+    lpa_stats <- get_fit(lpa_fit) |>
+      select(Model, Classes, AIC, BIC, Entropy, n_min, n_max) |>
+      rename(k = Classes)
+
+    write_csv(lpa_stats, file.path(csv_dir, "11b_LPA_Fit_Statistics.csv"))
+    knitr::kable(lpa_stats, caption = "LPA fit statistics (Model 1: equal variances)")
+
+    # Extract best k by BIC
+    best_lpa_k <- lpa_stats |>
+      arrange(BIC) |>
+      slice(1) |>
+      pull(k)
+
+    lpa_best <- lpa_fit[[paste0("model_1_class_", best_lpa_k)]]
+    lpa_assignments <- get_data(lpa_best) |>
+      select(participant_id = starts_with("participant") |
+               tidyselect::any_of("participant_id"),
+             lpa_class = Class) |>
+      mutate(
+        participant_id = lpa_input$participant_id,
+        lpa_class = factor(lpa_class)
+      )
+
+    write_csv(lpa_assignments, file.path(csv_dir, "11b_LPA_Profile_Assignments.csv"))
+
+    cat(glue("\nBest LPA solution: k = {best_lpa_k} (lowest BIC)\n"))
+    cat(glue("Entropy = {round(lpa_stats$Entropy[lpa_stats$k == best_lpa_k], 3)}\n"))
+    cat("Entropy >= 0.80 indicates well-separated profiles.\n")
+
+  } else {
+    cat("LPA did not converge. Try tidyLPA with different model specifications.\n")
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+## Part 4 — Beliefs Items Surviving Script 11 Omnibus
+
+Re-examine beliefs items that showed omnibus significance in script 11
+as continuous correlates of factor scores rather than cluster
+differences.
+
+```{r beliefs-items-continuous}
+# Load script 11 omnibus results if they exist
+beliefs_omnibus_file <- file.path(csv_dir, "Beliefs_Item_Profile_Kruskal_Results.csv")
+
+if (file.exists(beliefs_omnibus_file)) {
+
+  sig_beliefs_items <- read_csv(beliefs_omnibus_file, show_col_types = FALSE) |>
+    filter(sig_bh) |>
+    pull(variable)
+
+  if (length(sig_beliefs_items) == 0L) {
+    cat("No beliefs items survived BH correction in script 11 omnibus.\n")
+  } else {
+    cat(glue("{length(sig_beliefs_items)} beliefs item(s) survived omnibus BH correction.\n"))
+    cat("Computing continuous Spearman correlations with factor scores...\n\n")
+
+    # Filter to items present in analysis_df
+    sig_items_present <- intersect(sig_beliefs_items, names(analysis_df))
+
+    if (length(sig_items_present) > 0) {
+      beliefs_factor_corr <- crossing(
+        x_col = factor_cols,
+        y_col = sig_items_present
+      ) |>
+        mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+        pull(result) |>
+        bind_rows() |>
+        left_join(factor_lookup |> select(factor, instrument, display_label),
+                  by = c("x_col" = "factor")) |>
+        left_join(
+          beliefs_meta |> select(item_col, item_text, theme),
+          by = c("y_col" = "item_col")
+        ) |>
+        mutate(
+          abs_rho = abs(rho),
+          p_bh    = p.adjust(p_value, method = "BH"),
+          sig_bh  = !is.na(p_bh) & p_bh < 0.05
+        ) |>
+        arrange(p_bh, p_value, desc(abs_rho))
+
+      write_csv(beliefs_factor_corr,
+                file.path(csv_dir, "11b_SigBeliefs_Factor_Spearman.csv"))
+
+      beliefs_factor_corr |>
+        filter(sig_bh) |>
+        select(instrument, display_label, theme, item_text, rho, p_value, p_bh, n) |>
+        mutate(
+          across(c(rho, p_value, p_bh), ~ round(.x, 3)),
+          item_text = str_trunc(item_text, 70)
+        ) |>
+        knitr::kable(caption = "BH-significant: script-11 survivor beliefs items vs factor scores")
+    }
+  }
+} else {
+  cat(
+    "Script 11 beliefs item omnibus results not found at:\n",
+    beliefs_omnibus_file, "\n",
+    "Run 11_profile_external_comparisons.qmd first.\n"
+  )
+}
+```
+
+------------------------------------------------------------------------
+
+## Summary
+
+```{r summary}
+n_factor_art_sig <- sum(factor_art_corr$sig_bh,   na.rm = TRUE)
+n_factor_q17_sig <- sum(factor_q17_corr$sig_bh,   na.rm = TRUE)
+n_beliefs_sig    <- sum(factor_beliefs_corr$sig_bh, na.rm = TRUE)
+n_reg_sig        <- sum(regression_results$sig_bh,  na.rm = TRUE)
+
+summary_tbl <- tibble(
+  analysis = c(
+    "Factor × ART (Spearman, BH-corrected)",
+    "Factor × Q17 AI use (Spearman, BH-corrected)",
+    "Factor × Beliefs themes (Spearman, BH-corrected)",
+    "OLS regression coefficients (BH-corrected)"
+  ),
+  n_tests = c(
+    nrow(factor_art_corr),
+    nrow(factor_q17_corr),
+    nrow(factor_beliefs_corr),
+    nrow(regression_results)
+  ),
+  n_sig_bh = c(
+    n_factor_art_sig,
+    n_factor_q17_sig,
+    n_beliefs_sig,
+    n_reg_sig
+  )
+)
+
+write_csv(summary_tbl, file.path(csv_dir, "11b_Analysis_Summary.csv"))
+knitr::kable(summary_tbl)
+```
+
+## Output Manifest
+
+```{r manifest}
+manifest <- tibble(
+  object = c(
+    "factor_art_spearman",
+    "factor_q17_spearman",
+    "factor_beliefs_theme_spearman",
+    "factor_ols_regression",
+    "lpa_fit_statistics",
+    "lpa_profile_assignments",
+    "sig_beliefs_factor_spearman",
+    "analysis_summary"
+  ),
+  file = c(
+    "11b_Factor_ART_Spearman.csv",
+    "11b_Factor_Q17_Spearman.csv",
+    "11b_Factor_BeliefsTheme_Spearman.csv",
+    "11b_Factor_OLS_Regression.csv",
+    "11b_LPA_Fit_Statistics.csv",
+    "11b_LPA_Profile_Assignments.csv",
+    "11b_SigBeliefs_Factor_Spearman.csv",
+    "11b_Analysis_Summary.csv"
+  ),
+  notes = c(
+    "All factor x ART metric Spearman rho + BH/Bonferroni correction",
+    "All factor x Q17 metric Spearman rho + BH/Bonferroni correction (n=81)",
+    "All factor x beliefs theme Spearman rho + BH/Bonferroni correction",
+    "OLS: ART + AI use mean as predictors of each factor score (n=81)",
+    "LPA BIC/entropy for k=2-4 (requires tidyLPA)",
+    "Participant LPA class assignments for best-k solution",
+    "Factor correlations with beliefs items surviving script 11 omnibus",
+    "Count of significant results per analysis type"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "11b_Manifest.csv"))
+knitr::kable(manifest)
+```
