@@ -466,9 +466,21 @@ write_csv(q17_submission_audit, file.path(csv_dir, "Q17_Submission_Resolution.cs
 write_csv(q17_tool_popularity, file.path(csv_dir, "Q17_Tool_Popularity.csv"))
 write_csv(q17_participant_indices, file.path(csv_dir, "Q17_Participant_AI_Use_Index.csv"))
 
+write_csv(
+  q17_clean |> select(participant_id, tool, response_text = response_raw, use_score),
+  file.path(csv_dir, "Q17_Responses_Long.csv")
+)
+
+
+
+
 ```
 
 Most common answer
+ "Pooled across all participants and all tools  |  ",
+  "Raw sample N = 92, {scales::comma(total_responses)} responses  |  ",
+  "Correlation analyses use paired clean sample (N = 82)"
+  
 
 ```{r, fig.width=10, fig.height=5}
 q17_clean |>
@@ -479,11 +491,14 @@ q17_clean |>
       names(q17_response_map)[use_score],
       levels = names(q17_response_map)
     ),
-    pct = n / sum(n)
+    pct = n / sum(n),
+    total = sum(n),
+    count_label = paste0(scales::comma(n), "/", scales::comma(total))
   ) |>
   ggplot(aes(x = response, y = pct, fill = response)) +
   geom_col() +
   geom_text(aes(label = percent(pct, accuracy = 0.1)), vjust = -0.5, size = 3.5) +
+  geom_text(aes(label = count_label), vjust = 1.5, size = 3, color = "white") +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.1))) +
   scale_x_discrete(labels = label_wrap_gen(width = 25)) +
   scale_fill_manual(values = c(
@@ -504,6 +519,7 @@ q17_clean |>
     legend.position = "none",
     axis.text.x = element_text(angle = 0, hjust = 0.5)
   )
+
 
 ggsave(
   file.path(plot_dir, "Q17_Overall_Response_Distribution.png"),
@@ -1046,14 +1062,13 @@ q17_manifest <- tibble(
     "art_scored",
     "art_unmatched",
     "q17_submission_resolution",
+    "q17_responses_long",
     "q17_tool_popularity",
     "q17_participant_ai_use_index",
     "q17_art_merged",
     "q17_summary",
     "q17_art_correlations",
     "q17_art_regressions",
-    "q17_art_factor_merged",
-    "q17_art_vs_factors_correlations",
     "q17_tool_regular_use_vs_art",
     "q17_tool_regular_use_vs_adjusted_art"
   ),
@@ -1061,14 +1076,13 @@ q17_manifest <- tibble(
     "ART_Scored.csv",
     "ART_Unmatched_Names.csv",
     "Q17_Submission_Resolution.csv",
+    "Q17_Responses_Long.csv",
     "Q17_Tool_Popularity.csv",
     "Q17_Participant_AI_Use_Index.csv",
     "Q17_AI_Use_vs_ART_Merged.csv",
     "Q17_AI_Use_vs_ART_Summary.csv",
     "Q17_AI_Use_vs_ART_Correlations.csv",
     "Q17_AI_Use_vs_ART_Regressions.csv",
-    "Q17_ART_Factor_Merged.csv",
-    "Q17_ART_vs_Factors_Correlations.csv",
     "Q17_Tool_RegularUse_vs_ART.csv",
     "Q17_Tool_RegularUse_vs_AdjustedART.csv"
   ),
@@ -1076,14 +1090,13 @@ q17_manifest <- tibble(
     "ART net scores, hit rates, and false-alarm rates per participant",
     "ART author selections that could not be matched to the answer key",
     "Q17 duplicate-submission resolution: best submission per participant",
+    "Q17 long-format responses: one row per participant x tool (participant_id, tool, response_text, use_score); used by downstream scripts",
     "Q17 AI tool popularity summary (ever-used and regular-use rates)",
-    "Per-participant AI use indices (never-heard, heard-not-used, heard, used, regular, often)",
+    "Per-participant AI use indices (number of tools heard/used/regularly used)",
     "Merged Q17 AI use indices and ART scores (analysis-ready)",
     "Summary table: sample sizes and top-tool statistics",
     "Spearman correlations: AI use predictors vs ART outcomes",
     "OLS regressions: AI use predictors vs ART outcomes",
-    "Factor-score merge restricted to the Q17 x ART overlap sample",
-    "ART net score vs factor-score correlations on the Q17 x ART overlap sample",
     "Tool-specific regular-use group vs ART net score comparison",
     "Tool-specific regular-use group vs adjusted ART rate comparison"
   )

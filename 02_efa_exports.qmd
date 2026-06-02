@@ -9,9 +9,9 @@ editor: visual
 
 This script starts from the cleaned long-format exports and the verified triage ledger. It creates:
 
-- primary EFA datasets with instrument-specific salvage cases
-- sensitivity EFA datasets on the strict paired sample only
-- the strict paired wide-format master dataset for downstream inferential models
+-   primary EFA datasets with instrument-specific salvage cases
+-   sensitivity EFA datasets on the strict paired sample only
+-   the strict paired wide-format master dataset for downstream inferential models
 
 ------------------------------------------------------------------------
 
@@ -262,9 +262,9 @@ cat("\nRW first-dup overrides:", paste(rw_efa_override_pids, collapse = ", "), "
 
 In practice, the sensitivity check asks:
 
-- does the number of retained factors stay the same?
-- do the same items cluster together in roughly the same way?
-- do any major cross-loadings or interpretation problems appear only after salvage cases are added?
+-   does the number of retained factors stay the same?
+-   do the same items cluster together in roughly the same way?
+-   do any major cross-loadings or interpretation problems appear only after salvage cases are added?
 
 If the `primary` and `sensitivity` solutions are substantively similar, use the larger `primary` solution as the working EFA result. If they differ meaningfully, treat that instrument as unstable and prefer the stricter paired solution when interpreting the factor structure.
 

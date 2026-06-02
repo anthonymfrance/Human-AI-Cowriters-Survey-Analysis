@@ -1176,9 +1176,9 @@ This is a **robustness table**, not the main decision rule. The primary sample s
 
 At the end of the EFA workflow, the goal is **not** to stop at a pretty loading pattern. The goal is to make a defendable item-to-factor map. Once you lock `k` and rerun:
 
-- `03_efa_analysis/efa_diagnostics/EFA_Final_Loadings.csv` stores the full loading matrix for the locked solution
-- `03_efa_analysis/EFA_Final_Item_Map.csv` keeps only clean items assigned to one factor
-- `03_efa_analysis/efa_diagnostics/EFA_Sensitivity_Comparison.csv` tells you whether that structure survives the stricter paired sample
+-   `03_efa_analysis/efa_diagnostics/EFA_Final_Loadings.csv` stores the full loading matrix for the locked solution
+-   `03_efa_analysis/EFA_Final_Item_Map.csv` keeps only clean items assigned to one factor
+-   `03_efa_analysis/efa_diagnostics/EFA_Sensitivity_Comparison.csv` tells you whether that structure survives the stricter paired sample
 
 That final item map is what we use later to build **unit-weighted subscale means** for the ANOVAs.
 

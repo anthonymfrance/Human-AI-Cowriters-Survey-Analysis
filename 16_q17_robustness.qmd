@@ -1,0 +1,790 @@
+---
+title: "16 — Q17 Bucket Correlations: Robustness Checks"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+output-dir: "16_q17_robustness"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+This script runs robustness checks on the Q17 bucket correlations from
+script 15. Four model variants are compared:
+
+- **Full**: all 28 tools (replicates script 15)
+- **No Grammarly**: Grammarly excluded (passive inline correction tool;
+  categorically different interaction model from generative prompting)
+- **No ChatGPT**: ChatGPT excluded (tests whether findings are driven
+  by a single dominant tool; ~90% ever-used rate)
+- **No Grammarly + No ChatGPT**: both excluded simultaneously
+
+Additionally:
+- **Breadth score**: number of distinct tools with use_score >= 3 per
+  participant (single predictor, no compositional dependency)
+- **Mixed model**: use_score ~ factor_score + (1|tool) + (1|participant)
+
+A comparison table is auto-generated showing rho shifts across all
+four variants for every Bonferroni/BH survivor from script 15.
+
+---
+
+```{r setup}
+library(tidyverse)
+library(glue)
+library(knitr)
+library(lme4)
+library(lmerTest)
+library(ppcor)
+library(scales)
+library(conflicted)
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+source("scoring_helpers.R", local = knitr::knit_global())
+
+set.seed(42L)
+```
+
+## Configuration
+
+```{r config}
+script_dir <- "16_q17_robustness"
+csv_dir    <- file.path(script_dir, "csv")
+plot_dir   <- file.path(script_dir, "plots")
+
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+min_corr_n <- 10L
+
+# Tool names to exclude in sensitivity runs
+# Grammarly: passive inline correction, different interaction model
+# ChatGPT: ~90% ever-used, tests single-tool dominance
+EXCLUDE_GRAMMARLY <- "Grammarly"  # adjust to exact tool_name string in your data
+EXCLUDE_CHATGPT   <- "ChatGPT (including DALL-E) by OpenAI"  # adjust if needed
+
+# Inputs
+q17_long_file      <- file.path("07_q17_ai_usePART2", "csv", "Q17_Responses_Long.csv")
+factor_scores_file <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+all_items_file     <- file.path("09_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
+item_lookup_file   <- file.path("09_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
+# Script 15 Bonferroni survivors — import for comparison table
+s15_factors_file   <- file.path("15_q17likertbuckets", "csv", "Q17_Proportions_vs_Factors_Correlations.csv")
+
+required_files <- c(
+  q17_long_file, factor_scores_file, factor_lookup_file,
+  all_items_file, item_lookup_file, s15_factors_file
+)
+
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    glue(
+      "Missing required inputs:\n- {paste(missing_files, collapse = '\n- ')}\n\n",
+      "Run 07, 09, and 15 first."
+    ),
+    call. = FALSE
+  )
+}
+```
+
+## Helper Functions
+
+```{r helpers}
+safe_spearman <- function(data, predictor, outcome) {
+  dat <- data |>
+    select(all_of(c(predictor, outcome))) |>
+    filter(if_all(everything(), ~ !is.na(.x)))
+
+  if (nrow(dat) < min_corr_n ||
+      dplyr::n_distinct(dat[[predictor]]) < 2L ||
+      dplyr::n_distinct(dat[[outcome]]) < 2L) {
+    return(tibble(
+      predictor = predictor,
+      outcome   = outcome,
+      n         = nrow(dat),
+      rho       = NA_real_,
+      p_value   = NA_real_,
+      note      = "insufficient variation or sample size"
+    ))
+  }
+
+  test <- suppressWarnings(
+    cor.test(dat[[predictor]], dat[[outcome]],
+             method = "spearman", exact = FALSE)
+  )
+
+  tibble(
+    predictor = predictor,
+    outcome   = outcome,
+    n         = nrow(dat),
+    rho       = unname(test$estimate),
+    p_value   = test$p.value,
+    note      = NA_character_
+  )
+}
+
+adjust_p_within_metric <- function(df, metric_col = "q17_metric",
+                                   p_col = "p_value") {
+  df |>
+    group_by(.data[[metric_col]]) |>
+    mutate(
+      p_bh          = p.adjust(.data[[p_col]], method = "BH"),
+      p_bonferroni  = p.adjust(.data[[p_col]], method = "bonferroni")
+    ) |>
+    ungroup()
+}
+
+# Build participant-level bucket metrics from long data
+build_q17_dist <- function(long_df) {
+  long_df |>
+    group_by(participant_id) |>
+    summarise(
+      q17_tools_answered = n(),
+      q17_n_1 = sum(use_score == 1L),
+      q17_n_2 = sum(use_score == 2L),
+      q17_n_3 = sum(use_score == 3L),
+      q17_n_4 = sum(use_score == 4L),
+      q17_n_5 = sum(use_score == 5L),
+      q17_mean_use = mean(use_score),
+      .groups = "drop"
+    ) |>
+    mutate(
+      q17_p_1 = q17_n_1 / q17_tools_answered,
+      q17_p_2 = q17_n_2 / q17_tools_answered,
+      q17_p_3 = q17_n_3 / q17_tools_answered,
+      q17_p_4 = q17_n_4 / q17_tools_answered,
+      q17_p_5 = q17_n_5 / q17_tools_answered
+    )
+}
+
+# Run all factor correlations for one model variant
+run_factor_corrs <- function(dist_df, factor_df_base, factor_cols,
+                             factor_lookup, q17_metric_lookup,
+                             q17_metrics_prop) {
+  df <- factor_df_base |>
+    dplyr::select(participant_id, all_of(factor_cols)) |>
+    inner_join(dist_df, by = "participant_id")
+
+  crossing(
+    q17_metric = q17_metrics_prop,
+    factor     = factor_cols
+  ) |>
+    mutate(
+      result = map2(factor, q17_metric,
+                    ~ safe_spearman(df, .x, .y))
+    ) |>
+    pull(result) |>
+    bind_rows() |>
+    rename(factor = predictor, q17_metric = outcome) |>
+    mutate(abs_r = abs(rho)) |>
+    adjust_p_within_metric(metric_col = "q17_metric",
+                           p_col = "p_value") |>
+    left_join(factor_lookup,     by = "factor") |>
+    left_join(q17_metric_lookup, by = "q17_metric") |>
+    mutate(
+      survives_bh          = !is.na(p_bh) & p_bh < 0.05,
+      survives_bonferroni  = !is.na(p_bonferroni) & p_bonferroni < 0.05
+    )
+}
+```
+
+## Load Data
+
+```{r load}
+q17_long_raw <- readr::read_csv(q17_long_file, show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+# Confirm tool column exists — needed for exclusions
+if (!"tool" %in% names(q17_long_raw)) {
+  stop(
+    "Q17 long file missing 'tool' column. ",
+    "Check column names: ", paste(names(q17_long_raw), collapse = ", "),
+    call. = FALSE
+  )
+}
+
+all_factor_scores <- readr::read_csv(factor_scores_file,
+                                     show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+factor_lookup <- readr::read_csv(factor_lookup_file,
+                                 show_col_types = FALSE)
+
+all_item_wide <- readr::read_csv(all_items_file,
+                                 show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
+item_lookup <- readr::read_csv(item_lookup_file,
+                               show_col_types = FALSE)
+
+s15_factors <- readr::read_csv(s15_factors_file,
+                               show_col_types = FALSE)
+
+factor_cols      <- factor_lookup$factor
+item_cols        <- item_lookup$item_col
+
+q17_metric_lookup <- tribble(
+  ~q17_metric,    ~q17_label,                  ~metric_type, ~bucket,
+  "q17_n_1",      "Never heard (count)",        "count",      1L,
+  "q17_n_2",      "Heard, never used (count)",  "count",      2L,
+  "q17_n_3",      "Rarely use (count)",         "count",      3L,
+  "q17_n_4",      "Sometimes use (count)",      "count",      4L,
+  "q17_n_5",      "Often use (count)",          "count",      5L,
+  "q17_p_1",      "Never heard (prop)",         "prop",       1L,
+  "q17_p_2",      "Heard, never used (prop)",   "prop",       2L,
+  "q17_p_3",      "Rarely use (prop)",          "prop",       3L,
+  "q17_p_4",      "Sometimes use (prop)",       "prop",       4L,
+  "q17_p_5",      "Often use (prop)",           "prop",       5L,
+  "q17_mean_use", "Mean use (1–5)",             "summary",    NA_integer_
+)
+
+q17_metrics_prop <- q17_metric_lookup |>
+  filter(metric_type %in% c("prop", "summary")) |>
+  pull(q17_metric)
+
+# Verify exclusion strings exist in data
+tools_present <- unique(q17_long_raw$tool)
+check_tool <- function(name, label) {
+  if (!name %in% tools_present) {
+    warning(glue(
+      "{label} tool name '{name}' not found in data. ",
+      "Check EXCLUDE_ strings in config. Available tools:\n",
+      paste(sort(tools_present), collapse = "\n")
+    ))
+  }
+}
+check_tool(EXCLUDE_GRAMMARLY, "Grammarly")
+check_tool(EXCLUDE_CHATGPT,   "ChatGPT")
+```
+
+## Build Four Model Variants
+
+```{r build-variants}
+q17_long_clean <- q17_long_raw |>
+  filter(!is.na(participant_id), participant_id != "",
+         !is.na(use_score), use_score %in% 1:5) |>
+  mutate(
+    participant_id = as.character(participant_id),
+    use_score      = as.integer(use_score)
+  )
+
+# Four filtered long datasets
+long_full    <- q17_long_clean
+long_no_gram <- q17_long_clean |> filter(tool != EXCLUDE_GRAMMARLY)
+long_no_cgpt <- q17_long_clean |> filter(tool != EXCLUDE_CHATGPT)
+long_no_both <- q17_long_clean |>
+  filter(!tool %in% c(EXCLUDE_GRAMMARLY, EXCLUDE_CHATGPT))
+
+# Participant-level bucket distributions for each variant
+dist_full    <- build_q17_dist(long_full)
+dist_no_gram <- build_q17_dist(long_no_gram)
+dist_no_cgpt <- build_q17_dist(long_no_cgpt)
+dist_no_both <- build_q17_dist(long_no_both)
+
+cat("Tools in full model:              ", n_distinct(long_full$tool),    "\n")
+cat("Tools after dropping Grammarly:   ", n_distinct(long_no_gram$tool), "\n")
+cat("Tools after dropping ChatGPT:     ", n_distinct(long_no_cgpt$tool), "\n")
+cat("Tools after dropping both:        ", n_distinct(long_no_both$tool), "\n")
+cat("Participants (all variants):      ", nrow(dist_full),                    "\n")
+```
+
+---
+
+# Part A — Factor Correlations Across Four Variants
+
+```{r factor-corrs-all-variants}
+corrs_full    <- run_factor_corrs(dist_full,    all_factor_scores,
+                                  factor_cols, factor_lookup,
+                                  q17_metric_lookup, q17_metrics_prop) |>
+  mutate(model = "Full")
+
+corrs_no_gram <- run_factor_corrs(dist_no_gram, all_factor_scores,
+                                  factor_cols, factor_lookup,
+                                  q17_metric_lookup, q17_metrics_prop) |>
+  mutate(model = "No Grammarly")
+
+corrs_no_cgpt <- run_factor_corrs(dist_no_cgpt, all_factor_scores,
+                                  factor_cols, factor_lookup,
+                                  q17_metric_lookup, q17_metrics_prop) |>
+  mutate(model = "No ChatGPT")
+
+corrs_no_both <- run_factor_corrs(dist_no_both, all_factor_scores,
+                                  factor_cols, factor_lookup,
+                                  q17_metric_lookup, q17_metrics_prop) |>
+  mutate(model = "No Grammarly + No ChatGPT")
+
+all_factor_corrs <- bind_rows(
+  corrs_full, corrs_no_gram, corrs_no_cgpt, corrs_no_both
+)
+
+write_csv(all_factor_corrs,
+          file.path(csv_dir, "Robustness_Factor_Corrs_AllVariants.csv"))
+```
+
+## A1 — Rho Comparison Table (factor-level)
+
+Rows = every factor × Q17 metric combination that survived Bonferroni
+in at least one model variant. Columns = rho under each model.
+
+```{r rho-comparison-table}
+# Identify survivors across any model
+survivors <- all_factor_corrs |>
+  filter(survives_bonferroni) |>
+  distinct(factor, q17_metric)
+
+rho_comparison <- all_factor_corrs |>
+  semi_join(survivors, by = c("factor", "q17_metric")) |>
+  select(factor, display_label, q17_label, model, rho,
+         survives_bh, survives_bonferroni) |>
+  pivot_wider(
+    names_from  = model,
+    values_from = c(rho, survives_bonferroni),
+    names_glue  = "{model}_{.value}"
+  ) |>
+  mutate(
+    # Flag if rho changes direction or drops below BH threshold
+    # when either tool is removed
+    direction_flip = sign(`Full_rho`) != sign(`No ChatGPT_rho`) |
+                     sign(`Full_rho`) != sign(`No Grammarly_rho`),
+    chatgpt_sensitive = abs(`Full_rho` - `No ChatGPT_rho`) > 0.05,
+    grammarly_sensitive = abs(`Full_rho` - `No Grammarly_rho`) > 0.05
+  ) |>
+  arrange(q17_label, display_label)
+
+write_csv(rho_comparison,
+          file.path(csv_dir, "Robustness_Rho_Comparison_Factors.csv"))
+
+# Clean display version
+rho_comparison |>
+  select(
+    `Q17 metric`  = q17_label,
+    Factor        = display_label,
+    `Full`                          = `Full_rho`,
+    `No Grammarly`                  = `No Grammarly_rho`,
+    `No ChatGPT`                    = `No ChatGPT_rho`,
+    `No Grammarly + No ChatGPT`     = `No Grammarly + No ChatGPT_rho`,
+    `ChatGPT sensitive`             = chatgpt_sensitive,
+    `Grammarly sensitive`           = grammarly_sensitive,
+    `Direction flip`                = direction_flip
+  ) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3))) |>
+  kable(caption = "Rho comparison across model variants (Bonferroni survivors only)")
+```
+
+## A2 — Dot plot: rho shift across variants
+
+```{r rho-shift-plot, fig.width=11, fig.height=6}
+plot_df <- all_factor_corrs |>
+  semi_join(survivors, by = c("factor", "q17_metric")) |>
+  mutate(
+    label = paste0(display_label, " ~ ", q17_label),
+    model = factor(model, levels = c(
+      "Full",
+      "No Grammarly",
+      "No ChatGPT",
+      "No Grammarly + No ChatGPT"
+    ))
+  )
+
+p_shift <- ggplot(plot_df,
+                  aes(x = rho, y = fct_reorder(label, rho),
+                      color = model, shape = survives_bonferroni)) +
+  geom_vline(xintercept = 0, color = "gray60", linewidth = 0.4) +
+  geom_line(aes(group = label), color = "gray80", linewidth = 0.6) +
+  geom_point(size = 3.5) +
+  scale_color_manual(values = c(
+    "Full"                          = "#444444",
+    "No Grammarly"                  = "#4f79b7",
+    "No ChatGPT"                    = "#c96b3b",
+    "No Grammarly + No ChatGPT"     = "#8c6bb1"
+  )) +
+  scale_shape_manual(
+    values = c("TRUE" = 16, "FALSE" = 1),
+    labels = c("TRUE" = "Bonferroni p < .05", "FALSE" = "not significant"),
+    name   = NULL
+  ) +
+  labs(
+    title    = "Rho shift across model variants — Bonferroni survivors",
+    subtitle = "Each line = one factor × Q17 metric pair; filled = Bonferroni significant",
+    x        = "Spearman rho",
+    y        = NULL,
+    color    = "Model"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "bottom"
+  )
+
+ggsave(
+  file.path(plot_dir, "Robustness_Rho_Shift_Factors.png"),
+  plot = p_shift, width = 11, height = 6,
+  units = "in", dpi = 300, bg = "white"
+)
+
+p_shift
+```
+
+---
+
+# Part B — Breadth Score
+
+Breadth = number of distinct tools per participant with use_score >= 3
+(rarely, sometimes, or often use). Single continuous predictor — no
+compositional dependency, no bucket sparsity issues.
+
+```{r breadth-score}
+breadth_df <- q17_long_clean |>
+  group_by(participant_id) |>
+  summarise(
+    breadth_any_use     = sum(use_score >= 3L),
+    breadth_regular_use = sum(use_score >= 4L),
+    breadth_often       = sum(use_score == 5L),
+    n_tools_answered    = n(),
+    .groups = "drop"
+  )
+
+breadth_factor_df <- all_factor_scores |>
+  inner_join(breadth_df, by = "participant_id")
+
+cat("Participants with breadth data: ", nrow(breadth_factor_df), "\n")
+
+breadth_summary <- breadth_df |>
+  summarise(
+    across(
+      starts_with("breadth_"),
+      list(mean = mean, median = median, sd = sd, max = max),
+      .names = "{.col}_{.fn}"
+    )
+  )
+
+kable(t(breadth_summary), col.names = "value",
+      caption = "Breadth score summary statistics")
+
+write_csv(breadth_df, file.path(csv_dir, "Breadth_Scores_PerParticipant.csv"))
+```
+
+## B1 — Breadth vs Factor Scores
+
+```{r breadth-factor-corrs}
+breadth_metrics <- c("breadth_any_use", "breadth_regular_use", "breadth_often")
+
+breadth_factor_corrs <- crossing(
+  predictor = breadth_metrics,
+  outcome   = factor_cols
+) |>
+  mutate(result = map2(predictor, outcome,
+                       ~ safe_spearman(breadth_factor_df, .x, .y))) |>
+  pull(result) |>
+  bind_rows() |>
+  group_by(predictor) |>
+  mutate(
+    p_bh         = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni"),
+    abs_r        = abs(rho)
+  ) |>
+  ungroup() |>
+  left_join(factor_lookup, by = c("outcome" = "factor")) |>
+  mutate(
+    survives_bh         = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  arrange(predictor, p_bonferroni, desc(abs_r))
+
+write_csv(breadth_factor_corrs,
+          file.path(csv_dir, "Breadth_vs_Factors_Correlations.csv"))
+
+breadth_factor_corrs |>
+  select(predictor, display_label, rho, p_bh, p_bonferroni,
+         survives_bh, survives_bonferroni, n) |>
+  mutate(across(where(is.numeric), ~ round(.x, 4))) |>
+  kable(caption = "Breadth scores vs factor scores (Spearman rho)")
+```
+
+## B2 — Breadth vs Factor Scores: dot plot
+
+```{r breadth-factor-plot, fig.width=10, fig.height=5}
+p_breadth <- breadth_factor_corrs |>
+  mutate(
+    predictor_label = recode(predictor,
+      "breadth_any_use"     = "Any use (≥ rarely)",
+      "breadth_regular_use" = "Regular use (≥ sometimes)",
+      "breadth_often"       = "Often use only"
+    ),
+    sig_label = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh         ~ "*",
+      TRUE                ~ ""
+    ),
+    display_label = fct_reorder(display_label, rho)
+  ) |>
+  ggplot(aes(x = rho, y = display_label,
+             color = predictor_label, shape = survives_bh)) +
+  geom_vline(xintercept = 0, color = "gray60", linewidth = 0.4) +
+  geom_point(size = 3.5, position = position_dodge(width = 0.4)) +
+  scale_color_manual(values = c(
+    "Any use (≥ rarely)"        = "#4f79b7",
+    "Regular use (≥ sometimes)" = "#5a9367",
+    "Often use only"            = "#8c6bb1"
+  )) +
+  scale_shape_manual(
+    values = c("TRUE" = 16, "FALSE" = 1),
+    labels = c("TRUE" = "BH p < .05", "FALSE" = "ns"),
+    name   = NULL
+  ) +
+  labs(
+    title    = "Breadth score vs factor scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05",
+    x        = "Spearman rho",
+    y        = NULL,
+    color    = "Breadth definition"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "bottom"
+  )
+
+ggsave(
+  file.path(plot_dir, "Breadth_vs_Factors_DotPlot.png"),
+  plot = p_breadth, width = 10, height = 5,
+  units = "in", dpi = 300, bg = "white"
+)
+
+p_breadth
+```
+
+---
+
+# Part C — Mixed Model
+
+Predicts use_score from each factor score with random intercepts for
+tool and participant. Accounts for the nested structure: multiple
+tool-responses per participant, and multiple participants per tool.
+
+Note: runs one model per factor score. Interpret fixed effect estimate
+(not rho) — positive = higher factor score predicts higher use_score.
+
+```{r mixed-models}
+# Build long dataset joined with factor scores
+mm_long <- q17_long_clean |>
+  inner_join(
+    all_factor_scores |>
+      select(participant_id, all_of(factor_cols)),
+    by = "participant_id"
+  )
+
+cat("Rows in mixed model dataset: ", nrow(mm_long), "\n")
+cat("Participants:                ", n_distinct(mm_long$participant_id), "\n")
+cat("Tools:                       ", n_distinct(mm_long$tool), "\n")
+
+# Run one model per factor
+mm_results <- map_dfr(factor_cols, function(fac) {
+  formula_str <- glue("use_score ~ {fac} + (1 | tool) + (1 | participant_id)")
+
+  fit <- tryCatch(
+    lmer(as.formula(formula_str), data = mm_long, REML = FALSE),
+    error = function(e) NULL
+  )
+
+  if (is.null(fit)) {
+    return(tibble(
+      factor    = fac,
+      estimate  = NA_real_,
+      se        = NA_real_,
+      t_value   = NA_real_,
+      p_value   = NA_real_,
+      note      = "model failed to converge"
+    ))
+  }
+
+  coef_tbl <- as.data.frame(summary(fit)$coefficients)
+  row <- coef_tbl[fac, , drop = FALSE]
+
+  tibble(
+    factor   = fac,
+    estimate = row[["Estimate"]],
+    se       = row[["Std. Error"]],
+    t_value  = row[["t value"]],
+    p_value  = row[["Pr(>|t|)"]]
+  )
+}) |>
+  mutate(
+    p_bh         = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni"),
+    abs_est      = abs(estimate),
+    survives_bh         = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonferroni) & p_bonferroni < 0.05
+  ) |>
+  left_join(factor_lookup, by = "factor") |>
+  arrange(p_bonferroni, desc(abs_est))
+
+write_csv(mm_results,
+          file.path(csv_dir, "MixedModel_Factor_Results.csv"))
+
+mm_results |>
+  select(display_label, estimate, se, t_value,
+         p_value, p_bh, p_bonferroni,
+         survives_bh, survives_bonferroni) |>
+  mutate(across(where(is.numeric), ~ round(.x, 4))) |>
+  kable(caption = "Mixed model results: use_score ~ factor + (1|tool) + (1|participant)")
+```
+
+## C1 — Mixed model coefficient plot
+
+```{r mm-plot, fig.width=10, fig.height=5.5}
+p_mm <- mm_results |>
+  filter(!is.na(estimate)) |>
+  mutate(
+    sig_label     = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh         ~ "*",
+      TRUE                ~ ""
+    ),
+    display_label = fct_reorder(display_label, estimate),
+    ci_lo = estimate - 1.96 * se,
+    ci_hi = estimate + 1.96 * se
+  ) |>
+  ggplot(aes(x = estimate, y = display_label,
+             color = instrument, shape = survives_bh)) +
+  geom_vline(xintercept = 0, color = "gray60", linewidth = 0.4) +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
+                 height = 0.2, linewidth = 0.6) +
+  geom_point(size = 3.5) +
+  geom_text(aes(label = sig_label), hjust = -0.4, size = 4,
+            show.legend = FALSE) +
+  scale_color_manual(values = c(
+    "IMI"            = "#4f79b7",
+    "WritingEfficacy" = "#c96b3b",
+    "AIReflection"   = "#5a9367",
+    "BeliefsAboutAI" = "#8c6bb1"
+  )) +
+  scale_shape_manual(
+    values = c("TRUE" = 16, "FALSE" = 1),
+    labels = c("TRUE" = "BH p < .05", "FALSE" = "ns"),
+    name   = NULL
+  ) +
+  labs(
+    title    = "Mixed model: factor score → AI tool use_score",
+    subtitle = "Estimate = fixed effect of factor on use_score (1–5)  |  bars = 95% CI  |  * BH < .05   ** Bonferroni < .05",
+    x        = "Estimate (fixed effect)",
+    y        = NULL,
+    color    = "Instrument"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "bottom"
+  )
+
+ggsave(
+  file.path(plot_dir, "MixedModel_Factor_Coefficients.png"),
+  plot = p_mm, width = 10, height = 5.5,
+  units = "in", dpi = 300, bg = "white"
+)
+
+p_mm
+```
+
+---
+
+# Part D — Master Robustness Summary Table
+
+Combines script 15 Bonferroni survivors with all robustness checks.
+One row per finding; columns show rho/estimate across every method.
+
+```{r master-summary}
+# Script 15 survivors
+s15_survivors <- s15_factors |>
+  filter(survives_bonferroni) |>
+  select(factor, q17_metric, display_label, q17_label,
+         rho_s15 = rho, p_bonferroni_s15 = p_bonferroni)
+
+# Robustness rhos for same pairs
+robust_rhos <- all_factor_corrs |>
+  semi_join(s15_survivors, by = c("factor", "q17_metric")) |>
+  select(factor, q17_metric, model, rho) |>
+  pivot_wider(names_from = model, values_from = rho,
+              names_prefix = "rho_")
+
+# Breadth — pick best matching metric per survivor
+# (use breadth_any_use as the broadest analog to mean_use)
+breadth_rhos <- breadth_factor_corrs |>
+  filter(predictor == "breadth_any_use") |>
+  select(factor = outcome, rho_breadth = rho,
+         p_bonferroni_breadth = p_bonferroni)
+
+# Mixed model estimates
+mm_rhos <- mm_results |>
+  select(factor, mm_estimate = estimate,
+         mm_p_bonferroni = p_bonferroni,
+         mm_survives_bonferroni = survives_bonferroni)
+
+master <- s15_survivors |>
+  left_join(robust_rhos,   by = c("factor", "q17_metric")) |>
+  left_join(breadth_rhos,  by = "factor") |>
+  left_join(mm_rhos,       by = "factor") |>
+  mutate(
+    chatgpt_delta   = abs(rho_s15 - `rho_No ChatGPT`),
+    grammarly_delta = abs(rho_s15 - `rho_No Grammarly`),
+    robust_verdict  = case_when(
+      chatgpt_delta > 0.10 & grammarly_delta > 0.10 ~
+        "sensitive to both",
+      chatgpt_delta > 0.10 ~
+        "ChatGPT sensitive",
+      grammarly_delta > 0.10 ~
+        "Grammarly sensitive",
+      TRUE ~ "robust"
+    )
+  ) |>
+  arrange(q17_label, display_label)
+
+write_csv(master, file.path(csv_dir, "Master_Robustness_Summary.csv"))
+
+master |>
+  select(
+    `Q17 metric`         = q17_label,
+    Factor               = display_label,
+    `S15 rho`            = rho_s15,
+    `No Grammarly`       = `rho_No Grammarly`,
+    `No ChatGPT`         = `rho_No ChatGPT`,
+    `No Gram + No CGPT`  = `rho_No Grammarly + No ChatGPT`,
+    `Breadth rho`        = rho_breadth,
+    `MM estimate`        = mm_estimate,
+    `Verdict`            = robust_verdict
+  ) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3))) |>
+  kable(caption = "Master robustness summary — script 15 Bonferroni survivors")
+```
+
+---
+
+## Output Manifest
+
+```{r manifest}
+manifest <- tribble(
+  ~file, ~description,
+  "Robustness_Factor_Corrs_AllVariants.csv",
+    "Factor correlations under all four tool-exclusion variants (long format)",
+  "Robustness_Rho_Comparison_Factors.csv",
+    "Wide-format rho comparison for Bonferroni survivors across variants",
+  "Breadth_Scores_PerParticipant.csv",
+    "Per-participant breadth scores (any use, regular use, often use)",
+  "Breadth_vs_Factors_Correlations.csv",
+    "Spearman rho: breadth scores vs factor scores",
+  "MixedModel_Factor_Results.csv",
+    "Mixed model fixed effects: use_score ~ factor + (1|tool) + (1|participant)",
+  "Master_Robustness_Summary.csv",
+    "Combined table: S15 survivors x all robustness checks with verdict"
+)
+
+write_csv(manifest, file.path(csv_dir, "Manifest.csv"))
+kable(manifest)
+```
