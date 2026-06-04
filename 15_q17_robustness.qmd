@@ -1,10 +1,10 @@
 ---
-title: "16 — Q17 Bucket Correlations: Robustness Checks"
+title: "15 - Q17 Bucket Correlations: Robustness Checks"
 format:
   html:
     toc: true
     toc-depth: 3
-output-dir: "16_q17_robustness"
+output-dir: "15_q17_robustness"
 execute:
   echo: false
   warning: false
@@ -15,9 +15,9 @@ editor:
 ---
 
 This script runs robustness checks on the Q17 bucket correlations from
-script 15. Four model variants are compared:
+script 14. Four model variants are compared:
 
-- **Full**: all 28 tools (replicates script 15)
+- **Full**: all 28 tools (replicates script 14)
 - **No Grammarly**: Grammarly excluded (passive inline correction tool;
   categorically different interaction model from generative prompting)
 - **No ChatGPT**: ChatGPT excluded (tests whether findings are driven
@@ -30,7 +30,7 @@ Additionally:
 - **Mixed model**: use_score ~ factor_score + (1|tool) + (1|participant)
 
 A comparison table is auto-generated showing rho shifts across all
-four variants for every Bonferroni/BH survivor from script 15.
+four variants for every Bonferroni/BH survivor from script 14.
 
 ---
 
@@ -53,7 +53,7 @@ set.seed(42L)
 ## Configuration
 
 ```{r config}
-script_dir <- "16_q17_robustness"
+script_dir <- "15_q17_robustness"
 csv_dir    <- file.path(script_dir, "csv")
 plot_dir   <- file.path(script_dir, "plots")
 
@@ -69,17 +69,17 @@ EXCLUDE_GRAMMARLY <- "Grammarly"  # adjust to exact tool_name string in your dat
 EXCLUDE_CHATGPT   <- "ChatGPT (including DALL-E) by OpenAI"  # adjust if needed
 
 # Inputs
-q17_long_file      <- file.path("07_q17_ai_usePART2", "csv", "Q17_Responses_Long.csv")
-factor_scores_file <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
-factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
-all_items_file     <- file.path("09_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
-item_lookup_file   <- file.path("09_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
-# Script 15 Bonferroni survivors — import for comparison table
-s15_factors_file   <- file.path("15_q17likertbuckets", "csv", "Q17_Proportions_vs_Factors_Correlations.csv")
+q17_long_file      <- file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv")
+factor_scores_file <- file.path("07_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file <- file.path("07_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+all_items_file     <- file.path("07_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
+item_lookup_file   <- file.path("07_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
+# Script 14 Bonferroni survivors - import for comparison table
+s14_factors_file   <- file.path("14_q17_deeper_dive", "csv", "Q17_Proportions_vs_Factors_Correlations.csv")
 
 required_files <- c(
   q17_long_file, factor_scores_file, factor_lookup_file,
-  all_items_file, item_lookup_file, s15_factors_file
+  all_items_file, item_lookup_file, s14_factors_file
 )
 
 missing_files <- required_files[!file.exists(required_files)]
@@ -87,7 +87,7 @@ if (length(missing_files) > 0) {
   stop(
     glue(
       "Missing required inputs:\n- {paste(missing_files, collapse = '\n- ')}\n\n",
-      "Run 07, 09, and 15 first."
+      "Run 07, 09, and 14 first."
     ),
     call. = FALSE
   )
@@ -224,7 +224,7 @@ all_item_wide <- readr::read_csv(all_items_file,
 item_lookup <- readr::read_csv(item_lookup_file,
                                show_col_types = FALSE)
 
-s15_factors <- readr::read_csv(s15_factors_file,
+s14_factors <- readr::read_csv(s14_factors_file,
                                show_col_types = FALSE)
 
 factor_cols      <- factor_lookup$factor
@@ -697,19 +697,19 @@ p_mm
 
 # Part D — Master Robustness Summary Table
 
-Combines script 15 Bonferroni survivors with all robustness checks.
+Combines script 14 Bonferroni survivors with all robustness checks.
 One row per finding; columns show rho/estimate across every method.
 
 ```{r master-summary}
-# Script 15 survivors
-s15_survivors <- s15_factors |>
+# Script 14 survivors
+s14_survivors <- s14_factors |>
   filter(survives_bonferroni) |>
   select(factor, q17_metric, display_label, q17_label,
-         rho_s15 = rho, p_bonferroni_s15 = p_bonferroni)
+         rho_s14 = rho, p_bonferroni_s14 = p_bonferroni)
 
 # Robustness rhos for same pairs
 robust_rhos <- all_factor_corrs |>
-  semi_join(s15_survivors, by = c("factor", "q17_metric")) |>
+  semi_join(s14_survivors, by = c("factor", "q17_metric")) |>
   select(factor, q17_metric, model, rho) |>
   pivot_wider(names_from = model, values_from = rho,
               names_prefix = "rho_")
@@ -727,13 +727,13 @@ mm_rhos <- mm_results |>
          mm_p_bonferroni = p_bonferroni,
          mm_survives_bonferroni = survives_bonferroni)
 
-master <- s15_survivors |>
+master <- s14_survivors |>
   left_join(robust_rhos,   by = c("factor", "q17_metric")) |>
   left_join(breadth_rhos,  by = "factor") |>
   left_join(mm_rhos,       by = "factor") |>
   mutate(
-    chatgpt_delta   = abs(rho_s15 - `rho_No ChatGPT`),
-    grammarly_delta = abs(rho_s15 - `rho_No Grammarly`),
+    chatgpt_delta   = abs(rho_s14 - `rho_No ChatGPT`),
+    grammarly_delta = abs(rho_s14 - `rho_No Grammarly`),
     robust_verdict  = case_when(
       chatgpt_delta > 0.10 & grammarly_delta > 0.10 ~
         "sensitive to both",
@@ -752,7 +752,7 @@ master |>
   select(
     `Q17 metric`         = q17_label,
     Factor               = display_label,
-    `S15 rho`            = rho_s15,
+    `S14 rho`            = rho_s14,
     `No Grammarly`       = `rho_No Grammarly`,
     `No ChatGPT`         = `rho_No ChatGPT`,
     `No Gram + No CGPT`  = `rho_No Grammarly + No ChatGPT`,
@@ -761,7 +761,7 @@ master |>
     `Verdict`            = robust_verdict
   ) |>
   mutate(across(where(is.numeric), ~ round(.x, 3))) |>
-  kable(caption = "Master robustness summary — script 15 Bonferroni survivors")
+  kable(caption = "Master robustness summary — script 14 Bonferroni survivors")
 ```
 
 ---
@@ -782,7 +782,7 @@ manifest <- tribble(
   "MixedModel_Factor_Results.csv",
     "Mixed model fixed effects: use_score ~ factor + (1|tool) + (1|participant)",
   "Master_Robustness_Summary.csv",
-    "Combined table: S15 survivors x all robustness checks with verdict"
+    "Combined table: S14 survivors x all robustness checks with verdict"
 )
 
 write_csv(manifest, file.path(csv_dir, "Manifest.csv"))

@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "09_art_vs_all_factors_items"
+output-dir: "07_art_vs_all_factors_items"
 execute:
   echo: false
   warning: false
@@ -42,11 +42,12 @@ set.seed(42L)
 ## Setup
 
 ```{r config}
-script_dir <- "09_art_vs_all_factors_items"
+script_dir <- "07_art_vs_all_factors_items"
 csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 art_clean_file <- file.path("01_audit_cleaning", "cleaned", "AuthorRecognition_cleaned.csv")
+order_effects_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -172,6 +173,33 @@ safe_spearman <- function(data, predictor, outcome) {
     rho = unname(test$estimate),
     p_value = test$p.value,
     note = NA_character_
+  )
+}
+
+rank_average <- function(x) {
+  rank(x, ties.method = "average", na.last = "keep")
+}
+
+extract_art_rank_model <- function(data, formula, model_label) {
+  fit <- lm(formula, data = data)
+  coef_table <- summary(fit)$coefficients
+  art_ci <- confint(fit)["art_rank", ]
+  art_t <- unname(coef_table["art_rank", "t value"])
+  art_df <- fit$df.residual
+
+  tibble(
+    model = model_label,
+    n = nobs(fit),
+    beta_art_rank = unname(coef_table["art_rank", "Estimate"]),
+    se_art_rank = unname(coef_table["art_rank", "Std. Error"]),
+    t_art = art_t,
+    df_residual = art_df,
+    partial_r_art = art_t / sqrt(art_t^2 + art_df),
+    p_value_art = unname(coef_table["art_rank", "Pr(>|t|)"]),
+    ci_low_art = unname(art_ci[[1]]),
+    ci_high_art = unname(art_ci[[2]]),
+    r_squared = summary(fit)$r.squared,
+    adj_r_squared = summary(fit)$adj.r.squared
   )
 }
 
@@ -599,6 +627,191 @@ factor_correlations |>
   knitr::kable()
 ```
 
+## ART Calibration Sensitivity
+
+The primary ART factor result is the negative association between ART net
+score and `AIReflection` F1 (`Ownership & Usefulness`). This sensitivity
+check asks whether that association remains after controlling for writing
+self-efficacy, traditional-task perceived competence, order, and first
+topic. The model is rank-based, so the ART coefficient is a partial
+Spearman-style effect.
+
+```{r art-calibration-sensitivity}
+order_topic_covariates <- read_csv(order_effects_ready_file, show_col_types = FALSE) |>
+  transmute(
+    participant_id = as.character(participant_id),
+    first_topic = as.factor(first_topic)
+  )
+
+art_calibration_df <- art_factor_df |>
+  select(
+    participant_id,
+    order,
+    art_net_real_minus_fake,
+    AIRefl_MR1,
+    WSE_MR1,
+    IMI_MR3
+  ) |>
+  left_join(order_topic_covariates, by = "participant_id") |>
+  filter(
+    if_all(
+      c(art_net_real_minus_fake, AIRefl_MR1, WSE_MR1, IMI_MR3, order, first_topic),
+      ~ !is.na(.x)
+    )
+  ) |>
+  mutate(
+    order = as.factor(order),
+    first_topic = as.factor(first_topic),
+    airefl_f1_rank = rank_average(AIRefl_MR1),
+    art_rank = rank_average(art_net_real_minus_fake),
+    wse_f1_rank = rank_average(WSE_MR1),
+    imi_f3_rank = rank_average(IMI_MR3)
+  )
+
+art_calibration_cell_counts <- art_calibration_df |>
+  count(order, first_topic, name = "n") |>
+  arrange(order, first_topic)
+
+art_calibration_models <- bind_rows(
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank,
+    "zero_order_rank"
+  ),
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank + wse_f1_rank,
+    "control_writing_efficacy_f1"
+  ),
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank + imi_f3_rank,
+    "control_imi_perceived_competence_f3"
+  ),
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank + wse_f1_rank + imi_f3_rank,
+    "control_writing_efficacy_and_competence"
+  ),
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank + order + first_topic,
+    "control_order_and_first_topic"
+  ),
+  extract_art_rank_model(
+    art_calibration_df,
+    airefl_f1_rank ~ art_rank + wse_f1_rank + imi_f3_rank + order + first_topic,
+    "full_controls"
+  )
+) |>
+  mutate(
+    p_bh_art = p.adjust(p_value_art, method = "BH"),
+    p_bonferroni_art = p.adjust(p_value_art, method = "bonferroni"),
+    survives_bh = p_bh_art < 0.05,
+    survives_bonferroni = p_bonferroni_art < 0.05
+  )
+
+full_art_calibration_model <- lm(
+  airefl_f1_rank ~ art_rank + wse_f1_rank + imi_f3_rank + order + first_topic,
+  data = art_calibration_df
+)
+
+standardized_art_calibration_model <- art_calibration_df |>
+  mutate(
+    across(
+      c(airefl_f1_rank, art_rank, wse_f1_rank, imi_f3_rank),
+      ~ as.numeric(scale(.x))
+    )
+  ) |>
+  lm(
+    airefl_f1_rank ~ art_rank + wse_f1_rank + imi_f3_rank + order + first_topic,
+    data = _
+  )
+
+art_partial_residual_r <- cor(
+  resid(lm(
+    airefl_f1_rank ~ wse_f1_rank + imi_f3_rank + order + first_topic,
+    data = art_calibration_df
+  )),
+  resid(lm(
+    art_rank ~ wse_f1_rank + imi_f3_rank + order + first_topic,
+    data = art_calibration_df
+  )),
+  method = "pearson"
+)
+
+full_coef <- summary(full_art_calibration_model)$coefficients
+art_calibration_full_coefficients <- tibble(
+  term = rownames(full_coef),
+  estimate = full_coef[, "Estimate"],
+  std_error = full_coef[, "Std. Error"],
+  statistic = full_coef[, "t value"],
+  p_value = full_coef[, "Pr(>|t|)"]
+) |>
+  mutate(
+    p_bh = p.adjust(p_value, method = "BH"),
+    p_bonferroni = p.adjust(p_value, method = "bonferroni")
+  )
+
+art_calibration_summary <- tibble(
+  metric = c(
+    "participants",
+    "partial_residual_r_art",
+    "standardized_art_beta_full",
+    "full_model_art_p_bh",
+    "full_model_art_p_bonferroni"
+  ),
+  value = c(
+    nrow(art_calibration_df),
+    art_partial_residual_r,
+    unname(coef(standardized_art_calibration_model)["art_rank"]),
+    art_calibration_models |>
+      filter(model == "full_controls") |>
+      pull(p_bh_art),
+    art_calibration_models |>
+      filter(model == "full_controls") |>
+      pull(p_bonferroni_art)
+  )
+)
+
+write_csv(
+  art_calibration_models,
+  file.path(csv_dir, "ART_AIReflection_F1_Partial_Rank_Regression.csv")
+)
+write_csv(
+  art_calibration_full_coefficients,
+  file.path(csv_dir, "ART_AIReflection_F1_Full_Model_Coefficients.csv")
+)
+write_csv(
+  art_calibration_cell_counts,
+  file.path(csv_dir, "ART_AIReflection_F1_Order_Topic_Cell_Counts.csv")
+)
+write_csv(
+  art_calibration_summary,
+  file.path(csv_dir, "ART_AIReflection_F1_Partial_Summary.csv")
+)
+
+art_calibration_models |>
+  mutate(
+    across(
+      c(beta_art_rank, partial_r_art, p_value_art, p_bh_art, p_bonferroni_art),
+      ~ round(.x, 4)
+    )
+  ) |>
+  select(
+    model,
+    n,
+    beta_art_rank,
+    partial_r_art,
+    p_value_art,
+    p_bh_art,
+    p_bonferroni_art,
+    survives_bh,
+    survives_bonferroni
+  ) |>
+  knitr::kable()
+```
+
 ## ART vs All Item Statements
 
 ```{r item-correlations}
@@ -812,6 +1025,9 @@ analysis_summary <- tibble(
     "Item columns",
     "ART x factor tests",
     "ART x item tests",
+    "ART calibration sensitivity participants",
+    "ART calibration full-control partial r",
+    "ART calibration full-control Bonferroni p",
     "Top ART net factor signal",
     "Top ART net item signal"
   ),
@@ -821,6 +1037,17 @@ analysis_summary <- tibble(
     length(item_cols),
     nrow(factor_correlations),
     nrow(item_correlations),
+    art_calibration_summary |>
+      filter(metric == "participants") |>
+      pull(value),
+    art_calibration_summary |>
+      filter(metric == "partial_residual_r_art") |>
+      pull(value) |>
+      round(3),
+    art_calibration_summary |>
+      filter(metric == "full_model_art_p_bonferroni") |>
+      pull(value) |>
+      signif(3),
     paste0(
       factor_ranking_primary$display_label[[1]],
       " (rho = ",
@@ -853,6 +1080,10 @@ manifest <- tibble(
     "art_factor_overlap",
     "art_factor_correlations",
     "art_net_factor_ranking",
+    "art_aireflection_f1_partial_rank_regression",
+    "art_aireflection_f1_full_model_coefficients",
+    "art_aireflection_f1_order_topic_cell_counts",
+    "art_aireflection_f1_partial_summary",
     "item_lookup",
     "all_items_wide",
     "art_item_correlations",
@@ -867,6 +1098,10 @@ manifest <- tibble(
     "ART_Factor_Overlap_Summary.csv",
     "ART_vs_Factors_Correlations.csv",
     "ART_Net_vs_Factors_Ranked.csv",
+    "ART_AIReflection_F1_Partial_Rank_Regression.csv",
+    "ART_AIReflection_F1_Full_Model_Coefficients.csv",
+    "ART_AIReflection_F1_Order_Topic_Cell_Counts.csv",
+    "ART_AIReflection_F1_Partial_Summary.csv",
     "All_Item_Lookup.csv",
     "All_Items_Wide.csv",
     "ART_vs_All_Items_Correlations.csv",

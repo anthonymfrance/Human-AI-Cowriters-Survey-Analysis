@@ -53,10 +53,10 @@ dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Input files
-factor_scores_file        <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
-factor_lookup_file        <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
-art_scored_file           <- file.path("09_art_vs_all_factors_items", "csv", "ART_Scored.csv")
-q17_index_file            <- file.path("07_q17_ai_use",               "csv", "Q17_Participant_AI_Use_Index.csv")
+factor_scores_file        <- file.path("07_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file        <- file.path("07_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+art_scored_file           <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
+q17_index_file            <- file.path("09_q17_ai_use",               "csv", "Q17_Participant_AI_Use_Index.csv")
 master_wide_file          <- file.path("02_efa_exports",              "Final_Master_Wide.csv")
 beliefs_metadata_file     <- file.path("08_ai_beliefs_items",         "csv", "AIBeliefs_Item_Metadata.csv")
 

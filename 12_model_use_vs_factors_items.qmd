@@ -50,7 +50,7 @@ set.seed(42L)
 script_dir    <- "12_model_use_vs_factors_items"
 csv_dir       <- file.path(script_dir, "csv")
 plot_dir      <- file.path(script_dir, "plots")
-q17_csv_dir   <- file.path("07_q17_ai_usePART2", "csv")
+q17_csv_dir   <- file.path("09_q17_ai_use", "csv")
 
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
@@ -278,7 +278,7 @@ build_item_matrix <- function(instrument, file, item_id_col, score_transform, pr
 # Read the resolved Q17 CSV from script 07 outputs.
 # Fallback: re-read from raw cleaned file if 07 output missing.
 # ---------------------------------------------------------------------------
-# Load long-format Q17 responses written by 07_q17_ai_usePART2:
+# Load long-format Q17 responses written by 09_q17_ai_use:
 # Q17_Responses_Long.csv — one row per participant x tool, columns:
 #   participant_id | tool | response_text | use_score
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ q17_resolution_file <- file.path(q17_csv_dir, "Q17_Responses_Long.csv")
 if (!file.exists(q17_resolution_file)) {
   stop(glue(
     "Cannot find {q17_resolution_file}.\n",
-    "Re-run 07_q17_ai_usePART2 to regenerate it.\n",
+    "Re-run 09_q17_ai_use to regenerate it.\n",
     "Note: Q17_Submission_Resolution.csv is a per-participant summary and ",
     "cannot be used here — the long-format file is required."
   ), call. = FALSE)

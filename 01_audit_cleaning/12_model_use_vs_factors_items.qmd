@@ -44,7 +44,7 @@ set.seed(42L)
 script_dir    <- "12_model_use_vs_factors_items"
 csv_dir       <- file.path(script_dir, "csv")
 plot_dir      <- file.path(script_dir, "plots")
-q17_csv_dir   <- file.path("07_q17_ai_usePART2", "csv")
+q17_csv_dir   <- file.path("09_q17_ai_use", "csv")
 
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
@@ -290,7 +290,7 @@ required_q17_cols <- c("participant_id", "tool", "response_text")
 
 find_q17_long_file <- function(csv_dir) {
   if (!dir.exists(csv_dir))
-    stop(glue("Directory not found: {csv_dir}. Run 07_q17_ai_usePART2 first."),
+    stop(glue("Directory not found: {csv_dir}. Run 09_q17_ai_use first."),
          call. = FALSE)
 
   csv_files <- list.files(csv_dir, pattern = "\\.csv$",

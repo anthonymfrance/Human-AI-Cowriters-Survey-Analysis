@@ -50,9 +50,9 @@ plot_dir <- file.path(script_dir, "plots")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
-factor_merged_file <- file.path("09_art_vs_all_factors_items", "csv", "ART_Factor_Merged.csv")
-factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
-q17_index_file <- file.path("07_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
+factor_merged_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Factor_Merged.csv")
+factor_lookup_file <- file.path("07_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+q17_index_file <- file.path("09_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
 master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
 
 required_files <- c(

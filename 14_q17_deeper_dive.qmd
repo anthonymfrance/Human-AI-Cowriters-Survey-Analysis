@@ -1,10 +1,10 @@
 ---
-title: "15 — Q17 Likert Buckets (Counts + Proportions) vs Factor Scores and Item Statements"
+title: "14 - Q17 Likert Buckets (Counts + Proportions) vs Factor Scores and Item Statements"
 format:
   html:
     toc: true
     toc-depth: 3
-output-dir: "15_q17likertbuckets"
+output-dir: "14_q17_deeper_dive"
 execute:
   echo: false
   warning: false
@@ -31,10 +31,10 @@ For each participant we compute both:
 We then test whether these Q17 bucket metrics correlate with:
 
 1. **Factor scores** (IMI, WritingEfficacy, AIReflection) using existing
-   outputs from `09_art_vs_all_factors_items`.
+   outputs from `07_art_vs_all_factors_items`.
 2. **All item-level statements** across the four instruments
    (IMI, WritingEfficacy, AIReflection, BeliefsAboutAI) using existing
-   outputs from `09_art_vs_all_factors_items`.
+   outputs from `07_art_vs_all_factors_items`.
 
 Multiple-comparisons control:
 - **BH correction is applied within each Q17 metric** separately for the
@@ -63,7 +63,7 @@ set.seed(42L)
 ## Configuration
 
 ```{r config}
-script_dir <- "15_q17likertbuckets"
+script_dir <- "14_q17_deeper_dive"
 csv_dir    <- file.path(script_dir, "csv")
 plot_dir   <- file.path(script_dir, "plots")
 
@@ -73,13 +73,13 @@ dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 min_corr_n <- 10L
 
 # Inputs from prior pipeline outputs
-q17_long_file <- file.path("07_q17_ai_usePART2", "csv", "Q17_Responses_Long.csv")
+q17_long_file <- file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv")
 
-factor_scores_file <- file.path("09_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
-factor_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
+factor_scores_file <- file.path("07_art_vs_all_factors_items", "csv", "Other_Instrument_Factor_Scores.csv")
+factor_lookup_file <- file.path("07_art_vs_all_factors_items", "csv", "Factor_Lookup.csv")
 
-all_items_file <- file.path("09_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
-item_lookup_file <- file.path("09_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
+all_items_file <- file.path("07_art_vs_all_factors_items", "csv", "All_Items_Wide.csv")
+item_lookup_file <- file.path("07_art_vs_all_factors_items", "csv", "All_Item_Lookup.csv")
 
 required_files <- c(
   q17_long_file,
@@ -94,7 +94,7 @@ if (length(missing_files) > 0) {
   stop(
     glue(
       "Missing required inputs:\n- {paste(missing_files, collapse = '\n- ')}\n\n",
-      "Run 07_q17_ai_usePART2 and 09_art_vs_all_factors_items first."
+      "Run 09_q17_ai_use and 07_art_vs_all_factors_items first."
     ),
     call. = FALSE
   )

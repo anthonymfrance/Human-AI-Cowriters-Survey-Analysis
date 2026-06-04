@@ -51,7 +51,7 @@ profile_assignments_file <- file.path(
 profile_signatures_file <- file.path(
   "10_participant_profiles", "csv", "Profile_Signatures.csv"
 )
-q17_index_file <- file.path("07_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
+q17_index_file <- file.path("09_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv")
 beliefs_metadata_file <- file.path(
   "08_ai_beliefs_items", "csv", "AIBeliefs_Item_Metadata.csv"
 )
@@ -86,7 +86,7 @@ theme_order <- c(
 )
 
 # Participants intentionally excluded from the Q17 index in script 07.
-# 9g0fXm: straight-line first-dup (all 5s) — excluded in 07_q17_ai_usePART2
+# 9g0fXm: straight-line first-dup (all 5s) — excluded in 09_q17_ai_use
 # to avoid inflating ai_tools_regular_n. They remain in all non-Q17 comparisons.
 known_q17_exclusions <- c("9g0fXm")
 ```

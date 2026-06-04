@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "07_q17_ai_usePART2"
+output-dir: "09_q17_ai_use"
 execute:
   echo: false
   warning: false
@@ -36,10 +36,10 @@ source("scoring_helpers.R", local = knitr::knit_global())
 ## Setup
 
 ```{r}
-script_dir <- "07_q17_ai_usePART2"
+script_dir <- "09_q17_ai_use"
 csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
-factor_csv_dir <- file.path("09_art_vs_all_factors_items", "csv")
+factor_csv_dir <- file.path("07_art_vs_all_factors_items", "csv")
 art_clean_file <- file.path("01_audit_cleaning", "cleaned", "AuthorRecognition_cleaned.csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
@@ -796,7 +796,7 @@ if (length(missing_factor_files) > 0) {
   stop(
     glue(
       "Missing factor-analysis outputs: {paste(missing_factor_files, collapse = ', ')}.\n",
-      "Run 09_art_vs_all_factors_items first."
+      "Run 07_art_vs_all_factors_items first."
     ),
     call. = FALSE
   )
