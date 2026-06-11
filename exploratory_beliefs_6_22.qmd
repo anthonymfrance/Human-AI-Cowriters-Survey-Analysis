@@ -1,0 +1,1118 @@
+---
+title: "Exploratory BeliefsAboutAI 6-22 Factor Correlations"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+output-dir: "exploratory_beliefs_6_22"
+editor: visual
+---
+
+# Purpose
+
+This side report tests an exploratory three-factor `BeliefsAboutAI` scoring path using items `6-22`.
+It does not modify the numbered production pipeline. The current README describes `BeliefsAboutAI`
+as item-level in the locked workflow because the full 22-item battery failed the factorability gate.
+Here, the goal is narrower: test whether the theoretically coherent `6-22` subset yields interpretable
+factor-level correlations with the same outcome families used by the main scripts.
+
+The most valid plots to recreate from the README pipeline are factor-level plots:
+
+- script `06`: cross-instrument factor heatmap
+- script `07`: ART vs factor scores heatmap
+- script `14`/`15`: Q17 AI-use breadth/bucket vs factor scores heatmap
+- script `12`: named model use vs factor scores heatmap
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(psych)
+library(glue)
+library(knitr)
+
+source("scoring_helpers.R")
+
+set.seed(42L)
+
+script_dir <- "exploratory_beliefs_6_22"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+factor_score_method <- "tenBerge"
+
+pal <- c(
+  "IMI" = "#4f79b7",
+  "WritingEfficacy" = "#c96b3b",
+  "AIReflection" = "#5a9367",
+  "BeliefsAboutAI" = "#8c6bb1",
+  "ART" = "#67717a",
+  "Q17" = "#2f7f77",
+  "ModelUse" = "#7c6aa3"
+)
+
+theme_corr <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1),
+      legend.position = "bottom"
+    )
+}
+
+safe_spearman <- function(df, x, y) {
+  d <- df |>
+    select(all_of(c(x, y))) |>
+    mutate(across(everything(), as.numeric)) |>
+    drop_na()
+
+  if (nrow(d) < 5 || sd(d[[x]]) == 0 || sd(d[[y]]) == 0) {
+    return(tibble(n = nrow(d), rho = NA_real_, p = NA_real_))
+  }
+
+  ct <- suppressWarnings(cor.test(d[[x]], d[[y]], method = "spearman", exact = FALSE))
+  tibble(n = nrow(d), rho = unname(ct$estimate), p = ct$p.value)
+}
+
+run_corr_grid <- function(df, xs, ys, family) {
+  crossing(x = xs, y = ys) |>
+    mutate(result = map2(x, y, ~ safe_spearman(df, .x, .y))) |>
+    unnest(result) |>
+    mutate(
+      abs_rho = abs(rho),
+      p_bh = p.adjust(p, method = "BH"),
+      p_bonf = p.adjust(p, method = "bonferroni"),
+      survives_bh = p_bh < 0.05,
+      survives_bonferroni = p_bonf < 0.05,
+      family = family
+    ) |>
+    arrange(p_bh, desc(abs_rho))
+}
+
+format_p <- function(x) {
+  case_when(
+    is.na(x) ~ "",
+    x < .001 ~ "<.001",
+    TRUE ~ formatC(x, format = "f", digits = 3)
+  )
+}
+
+sig_suffix <- function(p_bh, p_bonf) {
+  case_when(
+    !is.na(p_bonf) & p_bonf < .05 ~ "**",
+    !is.na(p_bh) & p_bh < .05 ~ "*",
+    TRUE ~ ""
+  )
+}
+```
+
+# Build Beliefs 6-22 Factors
+
+```{r beliefs-factor-scores}
+beliefs_long <- read_csv(
+  file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv"),
+  show_col_types = FALSE
+) |>
+  mutate(score = as.numeric(score), item_id = as.integer(item_num))
+
+beliefs_item_text <- beliefs_long |>
+  distinct(item_id, item_text)
+
+beliefs_wide <- beliefs_long |>
+  filter(item_id %in% 6:22) |>
+  select(participant_id, item_id, score) |>
+  mutate(item_id = as.character(item_id)) |>
+  pivot_wider(names_from = item_id, values_from = score) |>
+  arrange(participant_id)
+
+beliefs_matrix <- beliefs_wide |>
+  select(-participant_id) |>
+  mutate(across(everything(), as.integer)) |>
+  as.data.frame()
+
+beliefs_poly <- compute_polychoric_safe(beliefs_matrix)
+
+beliefs_fa <- suppressWarnings(
+  psych::fa(
+    r = beliefs_poly$rho,
+    nfactors = 3,
+    n.obs = nrow(beliefs_matrix),
+    fm = "minres",
+    rotate = "oblimin"
+  )
+)
+
+beliefs_factor_order <- factor_order_by_variance(
+  beliefs_fa$loadings,
+  context_label = "Beliefs 6-22 factor ordering"
+)
+
+beliefs_loadings_ordered <- unclass(beliefs_fa$loadings)[, beliefs_factor_order, drop = FALSE]
+colnames(beliefs_loadings_ordered) <- paste0("MR", seq_len(3))
+
+beliefs_fa_ordered <- beliefs_fa
+beliefs_fa_ordered$loadings <- beliefs_loadings_ordered
+class(beliefs_fa_ordered$loadings) <- c("loadings")
+
+beliefs_scores_raw <- psych::factor.scores(
+  x = as.matrix(beliefs_matrix),
+  f = beliefs_fa_ordered,
+  rho = beliefs_poly$rho,
+  method = factor_score_method
+)
+
+beliefs_factor_scores <- bind_scores_with_ids(
+  participant_ids = beliefs_wide$participant_id,
+  score_matrix = beliefs_scores_raw$scores,
+  context_label = "Beliefs 6-22 factor scores"
+) |>
+  rename(
+    Beliefs_UtilityComfort = MR1,
+    Beliefs_AdoptionOrientation = MR2,
+    Beliefs_LowConcern = MR3
+  ) |>
+  # Items 17-20 were already reverse-scored upstream. This flip makes positive
+  # values mean stronger concern/harms endorsement for interpretation.
+  mutate(Beliefs_ConcernHarms = -Beliefs_LowConcern) |>
+  select(
+    participant_id,
+    Beliefs_UtilityComfort,
+    Beliefs_AdoptionOrientation,
+    Beliefs_ConcernHarms,
+    Beliefs_LowConcern
+  )
+
+beliefs_loadings_tbl <- as_tibble(beliefs_loadings_ordered, rownames = "item_id") |>
+  mutate(item_id = as.integer(item_id)) |>
+  left_join(beliefs_item_text, by = "item_id") |>
+  relocate(item_id, item_text)
+
+beliefs_kmo <- psych::KMO(beliefs_poly$rho)
+beliefs_model_summary <- tibble(
+  model = "BeliefsAboutAI items 6-22, 3-factor polychoric minres oblimin",
+  n = nrow(beliefs_matrix),
+  kmo = as.numeric(beliefs_kmo$MSA),
+  rmsea = as.numeric(beliefs_fa$RMSEA[1]),
+  tli = as.numeric(beliefs_fa$TLI),
+  rmsr = as.numeric(beliefs_fa$rms),
+  factor_correlation_12 = as.numeric(beliefs_fa_ordered$Phi[1, 2]),
+  factor_correlation_13 = as.numeric(beliefs_fa_ordered$Phi[1, 3]),
+  factor_correlation_23 = as.numeric(beliefs_fa_ordered$Phi[2, 3]),
+  note = "Beliefs_ConcernHarms is sign-flipped from reversed items 17-20 so higher means more concern/harms endorsement."
+)
+
+belief_factor_lookup <- tibble(
+  factor = c("Beliefs_UtilityComfort", "Beliefs_AdoptionOrientation", "Beliefs_ConcernHarms"),
+  instrument = "BeliefsAboutAI",
+  factor_num = 1:3,
+  proposed_name = c("Utility & Comfort", "Adoption Orientation", "Concern & Harms"),
+  display_label = c(
+    "Beliefs F1 -> Utility & Comfort",
+    "Beliefs F2 -> Adoption Orientation",
+    "Beliefs F3 -> Concern & Harms"
+  )
+)
+
+write_csv(beliefs_factor_scores, file.path(csv_dir, "Beliefs_6_22_Factor_Scores.csv"))
+write_csv(beliefs_loadings_tbl, file.path(csv_dir, "Beliefs_6_22_Loadings.csv"))
+write_csv(beliefs_model_summary, file.path(csv_dir, "Beliefs_6_22_Model_Summary.csv"))
+write_csv(belief_factor_lookup, file.path(csv_dir, "Beliefs_6_22_Factor_Lookup.csv"))
+
+beliefs_model_summary |>
+  mutate(across(c(kmo, rmsea, tli, rmsr, starts_with("factor_correlation")), ~ round(.x, 3))) |>
+  kable(caption = "BeliefsAboutAI 6-22 factor model summary")
+```
+
+```{r loadings-table}
+beliefs_loadings_tbl |>
+  mutate(across(starts_with("MR"), ~ round(.x, 3))) |>
+  kable(caption = "BeliefsAboutAI 6-22 ordered factor loadings")
+```
+
+```{r loadings-plot, fig.width=9.5, fig.height=7}
+loading_factor_lookup <- tibble(
+  factor_id = c("MR1", "MR2", "MR3"),
+  factor_label = c(
+    "F1: Utility & Comfort",
+    "F2: Adoption Orientation",
+    "F3: Low Concern / Low Harms"
+  )
+)
+
+loading_plot_df <- beliefs_loadings_tbl |>
+  pivot_longer(
+    cols = starts_with("MR"),
+    names_to = "factor_id",
+    values_to = "loading"
+  ) |>
+  left_join(loading_factor_lookup, by = "factor_id") |>
+  group_by(item_id) |>
+  mutate(
+    primary_abs_loading = max(abs(loading), na.rm = TRUE),
+    secondary_abs_loading = sort(abs(loading), decreasing = TRUE)[2],
+    loading_gap = primary_abs_loading - secondary_abs_loading,
+    cross_loading_item = primary_abs_loading >= 0.40 &
+      secondary_abs_loading >= 0.30 &
+      loading_gap < 0.15
+  ) |>
+  ungroup() |>
+  mutate(
+    item_label = paste0(item_id, ". ", str_trunc(item_text, 74)),
+    item_label = fct_reorder(item_label, item_id),
+    factor_label = factor(factor_label, levels = loading_factor_lookup$factor_label),
+    cell_label = formatC(loading, format = "f", digits = 2)
+  )
+
+cross_loading_note <- loading_plot_df |>
+  filter(cross_loading_item) |>
+  distinct(item_id) |>
+  arrange(item_id) |>
+  pull(item_id)
+
+loading_subtitle <- if (length(cross_loading_note) == 0) {
+  "All loading values shown; no cross-loading items flagged by .40/.30/gap < .15 rule"
+} else {
+  paste0(
+    "All loading values shown; cross-loading items flagged: ",
+    paste(cross_loading_note, collapse = ", ")
+  )
+}
+
+p_loadings <- ggplot(loading_plot_df, aes(x = factor_label, y = item_label, fill = loading)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  geom_point(
+    data = loading_plot_df |> filter(cross_loading_item, abs(loading) >= 0.30),
+    aes(x = factor_label, y = item_label),
+    inherit.aes = FALSE,
+    shape = 21,
+    size = 3.3,
+    stroke = 0.9,
+    color = "#222222",
+    fill = NA
+  ) +
+  scale_fill_gradient2(
+    low = "#b3584b",
+    mid = "white",
+    high = "#3f6fa8",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "loading"
+  ) +
+  labs(
+    title = "BeliefsAboutAI 6-22 Factor Loadings",
+    subtitle = loading_subtitle,
+    x = NULL,
+    y = NULL,
+    caption = "Outlined cells mark items that meet the cross-loading rule on at least two factors."
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    axis.text.y = element_text(size = 8, lineheight = 0.9),
+    legend.position = "bottom",
+    plot.caption = element_text(color = "gray35")
+  )
+
+ggsave(
+  file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.png"),
+  p_loadings,
+  width = 9.5,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.pdf"),
+  p_loadings,
+  width = 9.5,
+  height = 7,
+  units = "in",
+  bg = "white"
+)
+
+p_loadings
+```
+
+# Cross-Instrument Factor Correlations
+
+This recreates the script `06` factor heatmap, now adding the three exploratory Beliefs factors.
+
+```{r cross-factor-correlations}
+existing_factor_scores <- read_csv(
+  file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"),
+  show_col_types = FALSE
+)
+
+existing_factor_lookup <- read_csv(
+  file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv"),
+  show_col_types = FALSE
+) |>
+  transmute(
+    factor,
+    instrument,
+    factor_num = as.integer(factor_num),
+    proposed_name,
+    display_label = case_when(
+      factor == "IMI_MR1" ~ "IMI F1 -> Interest & Enjoyment",
+      factor == "IMI_MR2" ~ "IMI F2 -> Effort & Importance",
+      factor == "IMI_MR3" ~ "IMI F3 -> Perceived Competence",
+      factor == "WSE_MR1" ~ "WritingEfficacy F1 -> Writing Competence",
+      factor == "WSE_MR2" ~ "WritingEfficacy F2 -> Self-Regulation",
+      factor == "WSE_MR3" ~ "WritingEfficacy F3 -> Resource & Planning",
+      factor == "AIRefl_MR1" ~ "AIReflection F1 -> Ownership & Usefulness",
+      factor == "AIRefl_MR2" ~ "AIReflection F2 -> Enjoyment & Satisfaction",
+      TRUE ~ display_label
+    )
+  )
+
+all_factor_scores <- existing_factor_scores |>
+  inner_join(
+    beliefs_factor_scores |>
+      select(participant_id, Beliefs_UtilityComfort, Beliefs_AdoptionOrientation, Beliefs_ConcernHarms),
+    by = "participant_id"
+  )
+
+all_factor_lookup <- bind_rows(existing_factor_lookup, belief_factor_lookup)
+all_factor_cols <- all_factor_lookup$factor
+
+factor_pairs <- combn(all_factor_cols, 2, simplify = FALSE) |>
+  map_dfr(~ tibble(factor_x = .x[1], factor_y = .x[2]))
+
+factor_corr_unique <- factor_pairs |>
+  mutate(result = map2(factor_x, factor_y, ~ safe_spearman(all_factor_scores, .x, .y))) |>
+  unnest(result) |>
+  mutate(
+    abs_rho = abs(rho),
+    p_bh = p.adjust(p, method = "BH"),
+    p_bonf = p.adjust(p, method = "bonferroni"),
+    survives_bh = p_bh < .05,
+    survives_bonferroni = p_bonf < .05
+  ) |>
+  left_join(
+    all_factor_lookup |> transmute(factor_x = factor, instrument_x = instrument, label_x = display_label),
+    by = "factor_x"
+  ) |>
+  left_join(
+    all_factor_lookup |> transmute(factor_y = factor, instrument_y = instrument, label_y = display_label),
+    by = "factor_y"
+  ) |>
+  arrange(p_bh, desc(abs_rho))
+
+factor_corr_diag <- tibble(
+  factor_x = all_factor_cols,
+  factor_y = all_factor_cols,
+  rho = 1,
+  p = NA_real_,
+  n = map_int(all_factor_cols, ~ sum(!is.na(all_factor_scores[[.x]]))),
+  abs_rho = 1,
+  p_bh = NA_real_,
+  p_bonf = NA_real_,
+  survives_bh = NA,
+  survives_bonferroni = NA
+) |>
+  left_join(
+    all_factor_lookup |> transmute(factor_x = factor, instrument_x = instrument, label_x = display_label),
+    by = "factor_x"
+  ) |>
+  left_join(
+    all_factor_lookup |> transmute(factor_y = factor, instrument_y = instrument, label_y = display_label),
+    by = "factor_y"
+  )
+
+factor_corr_heat <- bind_rows(
+  factor_corr_unique,
+  factor_corr_unique |>
+    transmute(
+      factor_x = factor_y,
+      factor_y = factor_x,
+      rho, p, n, abs_rho, p_bh, p_bonf, survives_bh, survives_bonferroni,
+      instrument_x = instrument_y,
+      instrument_y = instrument_x,
+      label_x = label_y,
+      label_y = label_x
+    ),
+  factor_corr_diag
+)
+
+write_csv(factor_corr_unique, file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Correlations_Unique.csv"))
+write_csv(factor_corr_heat, file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Heatmap_Matrix.csv"))
+
+factor_corr_unique |>
+  filter(instrument_x == "BeliefsAboutAI" | instrument_y == "BeliefsAboutAI") |>
+  transmute(
+    beliefs_factor = if_else(instrument_x == "BeliefsAboutAI", label_x, label_y),
+    other_factor = if_else(instrument_x == "BeliefsAboutAI", label_y, label_x),
+    n, rho, p, p_bh, p_bonf
+  ) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  arrange(p_bh) |>
+  kable(caption = "Exploratory Beliefs factors vs existing survey factors")
+```
+
+```{r cross-factor-heatmap, fig.width=12, fig.height=9}
+factor_levels <- all_factor_lookup |>
+  mutate(
+    instrument_order = match(
+      instrument,
+      c("IMI", "WritingEfficacy", "AIReflection", "BeliefsAboutAI")
+    )
+  ) |>
+  arrange(instrument_order, factor_num) |>
+  pull(display_label)
+
+factor_heat_plot_df <- factor_corr_heat |>
+  mutate(
+    label_x = factor(label_x, levels = factor_levels),
+    label_y = factor(label_y, levels = rev(factor_levels)),
+    cell_label = case_when(
+      factor_x == factor_y ~ "",
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_cross_factor_heat <- ggplot(factor_heat_plot_df, aes(x = label_x, y = label_y, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#b3584b",
+    mid = "white",
+    high = "#3f6fa8",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "rho"
+  ) +
+  labs(
+    title = "Cross-Instrument Factor Heatmap with Beliefs 6-22 Factors",
+    subtitle = "* BH < .05; ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_corr(base_size = 10) +
+  theme(axis.text.y = element_text(size = 8), axis.text.x = element_text(size = 8, angle = 35, hjust = 1))
+
+ggsave(
+  file.path(plot_dir, "Beliefs_6_22_Cross_Factor_Heatmap.png"),
+  p_cross_factor_heat,
+  width = 12,
+  height = 9,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Beliefs_6_22_Cross_Factor_Heatmap.pdf"),
+  p_cross_factor_heat,
+  width = 12,
+  height = 9,
+  units = "in",
+  bg = "white"
+)
+
+p_cross_factor_heat
+```
+
+# ART vs Beliefs Factors
+
+This recreates the factor-level ART heatmap from script `07`, restricted to the exploratory
+Beliefs factors.
+
+```{r art-correlations}
+art_metric_lookup <- tibble(
+  art_metric = c(
+    "art_total_selected",
+    "art_real_hits",
+    "art_fake_false_alarms",
+    "art_neutral_selected",
+    "art_unknown_selected",
+    "art_net_real_minus_fake",
+    "art_hit_rate",
+    "art_false_alarm_rate"
+  ),
+  art_label = c(
+    "Total selected",
+    "Real hits",
+    "False alarms",
+    "Neutral selected",
+    "Unknown selected",
+    "ART net",
+    "Hit rate",
+    "False-alarm rate"
+  )
+)
+
+art_scores <- read_csv(file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv"), show_col_types = FALSE)
+art_factor_df <- art_scores |>
+  inner_join(beliefs_factor_scores |> select(participant_id, all_of(belief_factor_lookup$factor)), by = "participant_id")
+
+art_corrs <- run_corr_grid(
+  art_factor_df,
+  art_metric_lookup$art_metric,
+  belief_factor_lookup$factor,
+  "art_vs_beliefs_factors"
+) |>
+  rename(art_metric = x, factor = y) |>
+  left_join(art_metric_lookup, by = "art_metric") |>
+  left_join(belief_factor_lookup, by = "factor") |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(art_corrs, file.path(csv_dir, "ART_vs_Beliefs_6_22_Factors.csv"))
+
+art_corrs |>
+  select(art_label, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  slice_head(n = 20) |>
+  kable(caption = "ART metrics vs exploratory Beliefs factors")
+```
+
+```{r art-heatmap, fig.width=9, fig.height=4.8}
+art_heat_df <- art_corrs |>
+  mutate(
+    art_label = factor(art_label, levels = art_metric_lookup$art_label),
+    display_label = factor(display_label, levels = rev(belief_factor_lookup$display_label)),
+    cell_label = paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+  )
+
+p_art_heat <- ggplot(art_heat_df, aes(x = art_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3.2) +
+  scale_fill_gradient2(low = "#b3584b", mid = "white", high = "#3f6fa8", midpoint = 0, limits = c(-.65, .65), name = "rho") +
+  labs(
+    title = "ART vs Beliefs 6-22 Factor Scores",
+    subtitle = "* BH < .05; ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_corr()
+
+ggsave(file.path(plot_dir, "ART_vs_Beliefs_6_22_Factors_Heatmap.png"), p_art_heat, width = 9, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "ART_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_art_heat, width = 9, height = 4.8, units = "in", bg = "white")
+
+p_art_heat
+```
+
+# Q17 AI-Use Breadth vs Beliefs Factors
+
+This recreates the Q17 factor heatmap logic from scripts `14` and `15`, focusing on participant-level
+use breadth and response proportions.
+
+```{r q17-correlations}
+q17_long <- read_csv(file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv"), show_col_types = FALSE) |>
+  mutate(use_score = as.numeric(use_score))
+
+q17_bucket <- q17_long |>
+  group_by(participant_id) |>
+  summarise(
+    q17_mean = mean(use_score, na.rm = TRUE),
+    q17_p_never = mean(use_score == 1, na.rm = TRUE),
+    q17_p_heard_never = mean(use_score == 2, na.rm = TRUE),
+    q17_p_rarely = mean(use_score == 3, na.rm = TRUE),
+    q17_p_regular = mean(use_score == 4, na.rm = TRUE),
+    q17_p_often = mean(use_score == 5, na.rm = TRUE),
+    q17_breadth_ge3 = sum(use_score >= 3, na.rm = TRUE),
+    q17_breadth_ge4 = sum(use_score >= 4, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+q17_metric_lookup <- tibble(
+  q17_metric = c(
+    "q17_mean",
+    "q17_breadth_ge3",
+    "q17_breadth_ge4",
+    "q17_p_never",
+    "q17_p_heard_never",
+    "q17_p_rarely",
+    "q17_p_regular",
+    "q17_p_often"
+  ),
+  q17_label = c(
+    "Mean use score",
+    "Breadth: used at least rarely",
+    "Breadth: regular/often use",
+    "Prop. never heard",
+    "Prop. heard, never used",
+    "Prop. rarely use",
+    "Prop. regularly use",
+    "Prop. often use"
+  )
+)
+
+q17_factor_df <- q17_bucket |>
+  inner_join(beliefs_factor_scores |> select(participant_id, all_of(belief_factor_lookup$factor)), by = "participant_id")
+
+q17_corrs <- run_corr_grid(
+  q17_factor_df,
+  q17_metric_lookup$q17_metric,
+  belief_factor_lookup$factor,
+  "q17_buckets_vs_beliefs_factors"
+) |>
+  rename(q17_metric = x, factor = y) |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  left_join(belief_factor_lookup, by = "factor") |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(q17_corrs, file.path(csv_dir, "Q17_Buckets_vs_Beliefs_6_22_Factors.csv"))
+
+q17_corrs |>
+  select(q17_label, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  slice_head(n = 20) |>
+  kable(caption = "Q17 use metrics vs exploratory Beliefs factors")
+```
+
+```{r q17-heatmap, fig.width=10, fig.height=4.8}
+q17_heat_df <- q17_corrs |>
+  mutate(
+    q17_label = factor(q17_label, levels = q17_metric_lookup$q17_label),
+    display_label = factor(display_label, levels = rev(belief_factor_lookup$display_label)),
+    cell_label = paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+  )
+
+p_q17_heat <- ggplot(q17_heat_df, aes(x = q17_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3.2) +
+  scale_fill_gradient2(low = "#b3584b", mid = "white", high = "#3f6fa8", midpoint = 0, limits = c(-.65, .65), name = "rho") +
+  labs(
+    title = "Q17 AI-Use Breadth and Buckets vs Beliefs 6-22 Factors",
+    subtitle = "* BH < .05; ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_corr()
+
+ggsave(file.path(plot_dir, "Q17_vs_Beliefs_6_22_Factors_Heatmap.png"), p_q17_heat, width = 10, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Q17_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_q17_heat, width = 10, height = 4.8, units = "in", bg = "white")
+
+p_q17_heat
+```
+
+# Named Model Use vs Beliefs Factors
+
+This recreates the named-model use heatmap from script `12`, restricted to the four focal tools.
+
+```{r named-model-correlations}
+models <- c(
+  "ChatGPT (including DALL-E) by OpenAI",
+  "Claude by Anthropic",
+  "Gemini (formerly Bard) by Google",
+  "Copilot (Bing Chat) by Microsoft"
+)
+
+model_wide <- q17_long |>
+  filter(tool %in% models) |>
+  mutate(
+    model = case_when(
+      str_detect(tool, "ChatGPT") ~ "ChatGPT",
+      str_detect(tool, "Claude") ~ "Claude",
+      str_detect(tool, "Gemini") ~ "Gemini",
+      str_detect(tool, "Copilot") ~ "Copilot",
+      TRUE ~ tool
+    ),
+    model_col = paste0("model_", model)
+  ) |>
+  select(participant_id, model_col, use_score) |>
+  pivot_wider(names_from = model_col, values_from = use_score)
+
+model_lookup <- tibble(
+  model_col = c("model_ChatGPT", "model_Claude", "model_Gemini", "model_Copilot"),
+  model_label = c("ChatGPT", "Claude", "Gemini", "Copilot")
+)
+
+model_factor_df <- model_wide |>
+  inner_join(beliefs_factor_scores |> select(participant_id, all_of(belief_factor_lookup$factor)), by = "participant_id")
+
+model_corrs <- run_corr_grid(
+  model_factor_df,
+  model_lookup$model_col,
+  belief_factor_lookup$factor,
+  "named_model_use_vs_beliefs_factors"
+) |>
+  rename(model_col = x, factor = y) |>
+  left_join(model_lookup, by = "model_col") |>
+  left_join(belief_factor_lookup, by = "factor") |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors.csv"))
+
+model_corrs |>
+  select(model_label, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  kable(caption = "Named model use vs exploratory Beliefs factors")
+```
+
+```{r named-model-heatmap, fig.width=7.8, fig.height=4.8}
+model_heat_df <- model_corrs |>
+  mutate(
+    model_label = factor(model_label, levels = model_lookup$model_label),
+    display_label = factor(display_label, levels = rev(belief_factor_lookup$display_label)),
+    cell_label = paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+  )
+
+p_model_heat <- ggplot(model_heat_df, aes(x = model_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3.4) +
+  scale_fill_gradient2(low = "#b3584b", mid = "white", high = "#3f6fa8", midpoint = 0, limits = c(-.65, .65), name = "rho") +
+  labs(
+    title = "Named Model Use vs Beliefs 6-22 Factors",
+    subtitle = "* BH < .05; ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_corr()
+
+ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors_Heatmap.png"), p_model_heat, width = 7.8, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_model_heat, width = 7.8, height = 4.8, units = "in", bg = "white")
+
+p_model_heat
+```
+
+# AI Concern vs Q17 Frequency
+
+For concern, the most defensible Q17 readout is layered:
+
+- broad participant-level use metrics from scripts `14`/`15`
+- all-tool frequency correlations, one row per Q17 tool
+- bucketed descriptive checks for focal tools, especially ChatGPT
+
+The concern factor is scored so higher values mean stronger concern/harms endorsement.
+Negative correlations therefore mean higher use is associated with lower AI concern.
+
+```{r q17-concern-followup}
+q17_concern_long <- q17_long |>
+  inner_join(
+    beliefs_factor_scores |> select(participant_id, Beliefs_ConcernHarms),
+    by = "participant_id"
+  ) |>
+  filter(!is.na(use_score), !is.na(Beliefs_ConcernHarms)) |>
+  mutate(
+    use_bucket = factor(
+      use_score,
+      levels = 1:5,
+      labels = c(
+        "Never heard",
+        "Heard, never used",
+        "Rarely use",
+        "Sometimes use",
+        "Often use"
+      )
+    )
+  )
+
+concern_q17_aggregate <- q17_corrs |>
+  filter(factor == "Beliefs_ConcernHarms") |>
+  select(q17_metric, q17_label, n, rho, p, p_bh, p_bonf) |>
+  arrange(p_bh, desc(abs(rho)))
+
+write_csv(
+  concern_q17_aggregate,
+  file.path(csv_dir, "Q17_Aggregate_Metrics_vs_Beliefs_ConcernHarms.csv")
+)
+
+concern_tool_corrs <- q17_concern_long |>
+  group_by(tool) |>
+  summarise(
+    n_participants = n_distinct(participant_id),
+    score_sd = sd(use_score, na.rm = TRUE),
+    concern_sd = sd(Beliefs_ConcernHarms, na.rm = TRUE),
+    result = list(safe_spearman(cur_data(), "use_score", "Beliefs_ConcernHarms")),
+    .groups = "drop"
+  ) |>
+  unnest(result) |>
+  select(tool, n = n_participants, score_sd, concern_sd, rho, p) |>
+  mutate(
+    abs_rho = abs(rho),
+    p_bh = p.adjust(p, method = "BH"),
+    p_bonf = p.adjust(p, method = "bonferroni"),
+    survives_bh = p_bh < .05,
+    survives_bonferroni = p_bonf < .05
+  ) |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(
+  concern_tool_corrs,
+  file.path(csv_dir, "Q17_AllTools_vs_Beliefs_ConcernHarms.csv")
+)
+
+concern_tool_buckets <- q17_concern_long |>
+  group_by(tool, use_score, use_bucket) |>
+  summarise(
+    n = n_distinct(participant_id),
+    mean_concern = mean(Beliefs_ConcernHarms, na.rm = TRUE),
+    median_concern = median(Beliefs_ConcernHarms, na.rm = TRUE),
+    sd_concern = sd(Beliefs_ConcernHarms, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(tool, use_score)
+
+write_csv(
+  concern_tool_buckets,
+  file.path(csv_dir, "Q17_AllTools_Concern_By_Use_Bucket.csv")
+)
+
+concern_tool_kruskal <- q17_concern_long |>
+  group_by(tool) |>
+  group_modify(~ {
+    d <- .x |> filter(!is.na(use_score), !is.na(Beliefs_ConcernHarms))
+    if (n_distinct(d$use_score) < 2L || nrow(d) < 10L) {
+      return(tibble(statistic = NA_real_, p = NA_real_, n = nrow(d), buckets = n_distinct(d$use_score)))
+    }
+    kt <- suppressWarnings(kruskal.test(Beliefs_ConcernHarms ~ factor(use_score), data = d))
+    tibble(
+      statistic = unname(kt$statistic),
+      p = kt$p.value,
+      n = nrow(d),
+      buckets = n_distinct(d$use_score)
+    )
+  }) |>
+  ungroup() |>
+  mutate(
+    p_bh = p.adjust(p, method = "BH"),
+    p_bonf = p.adjust(p, method = "bonferroni")
+  ) |>
+  arrange(p_bh, p)
+
+write_csv(
+  concern_tool_kruskal,
+  file.path(csv_dir, "Q17_AllTools_Concern_Kruskal_By_Use_Bucket.csv")
+)
+
+concern_q17_aggregate |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  kable(caption = "Aggregate Q17 metrics vs Beliefs F3 concern/harms")
+
+concern_tool_corrs |>
+  slice_head(n = 12) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  select(tool, n, rho, p, p_bh, p_bonf, survives_bh, survives_bonferroni) |>
+  kable(caption = "Top Q17 tool-frequency correlations with Beliefs F3 concern/harms")
+```
+
+```{r q17-concern-aggregate-plot, fig.width=8.8, fig.height=4.8}
+concern_aggregate_plot_df <- concern_q17_aggregate |>
+  mutate(
+    q17_label = factor(q17_label, levels = rev(q17_metric_lookup$q17_label)),
+    sig_label = sig_suffix(p_bh, p_bonf),
+    label_hjust = if_else(rho < 0, 1.15, -0.15)
+  )
+
+p_concern_aggregate <- ggplot(concern_aggregate_plot_df, aes(x = rho, y = q17_label)) +
+  geom_vline(xintercept = 0, color = "gray65", linewidth = 0.4) +
+  geom_segment(aes(x = 0, xend = rho, yend = q17_label), color = "#8aa6a1", linewidth = 0.8) +
+  geom_point(aes(fill = p_bh < .05), shape = 21, size = 3.4, color = "#254f4a") +
+  geom_text(aes(label = paste0(formatC(rho, format = "f", digits = 2), sig_label), hjust = label_hjust), size = 3.1) +
+  scale_fill_manual(values = c("TRUE" = pal["Q17"], "FALSE" = "white"), guide = "none") +
+  coord_cartesian(xlim = c(-.35, .2), clip = "off") +
+  labs(
+    title = "Beliefs F3 Concern/Harms vs Aggregate Q17 Use Metrics",
+    subtitle = "Negative rho means more frequent or broader use is associated with lower concern",
+    x = "Spearman rho",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(file.path(plot_dir, "Q17_Aggregate_vs_Beliefs_ConcernHarms_DotPlot.png"), p_concern_aggregate, width = 8.8, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Q17_Aggregate_vs_Beliefs_ConcernHarms_DotPlot.pdf"), p_concern_aggregate, width = 8.8, height = 4.8, units = "in", bg = "white")
+
+p_concern_aggregate
+```
+
+```{r q17-concern-tool-plot, fig.width=9.2, fig.height=6}
+concern_tool_plot_df <- concern_tool_corrs |>
+  filter(!is.na(rho)) |>
+  slice_max(abs_rho, n = 15, with_ties = FALSE) |>
+  mutate(
+    tool_label = str_wrap(tool, width = 34),
+    tool_label = fct_reorder(tool_label, rho),
+    sig_label = sig_suffix(p_bh, p_bonf),
+    label_hjust = if_else(rho < 0, 1.15, -0.15)
+  )
+
+p_concern_tools <- ggplot(concern_tool_plot_df, aes(x = rho, y = tool_label)) +
+  geom_vline(xintercept = 0, color = "gray65", linewidth = 0.4) +
+  geom_segment(aes(x = 0, xend = rho, yend = tool_label), color = "#8aa6a1", linewidth = 0.8) +
+  geom_point(aes(fill = p_bh < .05), shape = 21, size = 3.4, color = "#254f4a") +
+  geom_text(aes(label = paste0(formatC(rho, format = "f", digits = 2), sig_label), hjust = label_hjust), size = 3.1) +
+  scale_fill_manual(values = c("TRUE" = pal["Q17"], "FALSE" = "white"), guide = "none") +
+  coord_cartesian(xlim = c(-.45, .45), clip = "off") +
+  labs(
+    title = "Beliefs F3 Concern/Harms vs Individual Q17 Tool Frequency",
+    subtitle = "Top 15 by |Spearman rho| across all Q17 tools; * BH < .05; ** Bonferroni < .05",
+    x = "Spearman rho",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(file.path(plot_dir, "Q17_AllTools_vs_Beliefs_ConcernHarms_DotPlot.png"), p_concern_tools, width = 9.2, height = 6, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Q17_AllTools_vs_Beliefs_ConcernHarms_DotPlot.pdf"), p_concern_tools, width = 9.2, height = 6, units = "in", bg = "white")
+
+p_concern_tools
+```
+
+```{r q17-concern-chatgpt-boxplot, fig.width=8.8, fig.height=5}
+chatgpt_concern <- q17_concern_long |>
+  filter(str_detect(tool, "ChatGPT")) |>
+  mutate(use_bucket = fct_drop(use_bucket))
+
+p_chatgpt_concern <- ggplot(chatgpt_concern, aes(x = use_bucket, y = Beliefs_ConcernHarms)) +
+  geom_boxplot(width = 0.58, outlier.shape = NA, fill = "#d7e7e4", color = "#254f4a") +
+  geom_jitter(width = 0.12, height = 0, alpha = 0.55, size = 1.8, color = "#254f4a") +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white", color = "#7b3f35") +
+  labs(
+    title = "Beliefs F3 Concern/Harms by ChatGPT Use Frequency",
+    subtitle = "Higher factor score means stronger concern/harms endorsement; diamond marks group mean",
+    x = NULL,
+    y = "Beliefs F3 concern/harms score"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+
+ggsave(file.path(plot_dir, "Q17_ChatGPT_Use_Bucket_vs_Beliefs_ConcernHarms.png"), p_chatgpt_concern, width = 8.8, height = 5, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Q17_ChatGPT_Use_Bucket_vs_Beliefs_ConcernHarms.pdf"), p_chatgpt_concern, width = 8.8, height = 5, units = "in", bg = "white")
+
+p_chatgpt_concern
+```
+
+# Top Signals Across Families
+
+```{r top-signal-table-plot, fig.width=10, fig.height=8}
+top_all <- bind_rows(
+  factor_corr_unique |>
+    filter(instrument_x == "BeliefsAboutAI" | instrument_y == "BeliefsAboutAI") |>
+    transmute(
+      source = "Survey factor",
+      predictor = if_else(instrument_x == "BeliefsAboutAI", label_y, label_x),
+      beliefs_factor = if_else(instrument_x == "BeliefsAboutAI", label_x, label_y),
+      n, rho, p, p_bh, p_bonf
+    ),
+  art_corrs |>
+    transmute(source = "ART", predictor = art_label, beliefs_factor = display_label, n, rho, p, p_bh, p_bonf),
+  q17_corrs |>
+    transmute(source = "Q17", predictor = q17_label, beliefs_factor = display_label, n, rho, p, p_bh, p_bonf),
+  model_corrs |>
+    transmute(source = "Named model", predictor = model_label, beliefs_factor = display_label, n, rho, p, p_bh, p_bonf)
+) |>
+  mutate(
+    abs_rho = abs(rho),
+    signal_label = paste0(source, ": ", predictor, "\n", beliefs_factor)
+  ) |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(top_all, file.path(csv_dir, "Beliefs_6_22_All_Correlations_Ranked.csv"))
+
+top_all |>
+  slice_head(n = 25) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  select(source, predictor, beliefs_factor, n, rho, p, p_bh, p_bonf) |>
+  kable(caption = "Top exploratory Beliefs 6-22 factor correlations")
+
+top_plot_df <- top_all |>
+  filter(!is.na(rho)) |>
+  slice_head(n = 25) |>
+  mutate(
+    signal_label = str_trunc(signal_label, 95),
+    signal_label = fct_reorder(signal_label, rho)
+  )
+
+p_top <- ggplot(top_plot_df, aes(x = rho, y = signal_label, fill = source)) +
+  geom_col(width = 0.75) +
+  geom_vline(xintercept = 0, color = "gray50", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "Survey factor" = pal["BeliefsAboutAI"],
+    "ART" = pal["ART"],
+    "Q17" = pal["Q17"],
+    "Named model" = pal["ModelUse"]
+  )) +
+  labs(
+    title = "Top Exploratory Correlations for Beliefs 6-22 Factors",
+    subtitle = "Ranked by within-family BH-adjusted p-value, then |rho|",
+    x = "Spearman rho",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 8),
+    legend.position = "bottom"
+  )
+
+ggsave(file.path(plot_dir, "Beliefs_6_22_Top_Correlations.png"), p_top, width = 10, height = 8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Beliefs_6_22_Top_Correlations.pdf"), p_top, width = 10, height = 8, units = "in", bg = "white")
+
+p_top
+```
+
+# Export Manifest
+
+```{r manifest}
+manifest <- tibble(
+  output_type = c(
+    "model_summary",
+    "factor_scores",
+    "loadings",
+    "loadings_heatmap",
+    "factor_lookup",
+    "cross_factor_correlations",
+    "cross_factor_heatmap_matrix",
+    "art_correlations",
+    "q17_correlations",
+    "q17_concern_aggregate",
+    "q17_concern_all_tools",
+    "q17_concern_by_tool_bucket",
+    "q17_concern_kruskal_by_tool",
+    "named_model_correlations",
+    "all_ranked_correlations"
+  ),
+  path = c(
+    file.path(csv_dir, "Beliefs_6_22_Model_Summary.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Factor_Scores.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Loadings.csv"),
+    file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.png"),
+    file.path(csv_dir, "Beliefs_6_22_Factor_Lookup.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Correlations_Unique.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Heatmap_Matrix.csv"),
+    file.path(csv_dir, "ART_vs_Beliefs_6_22_Factors.csv"),
+    file.path(csv_dir, "Q17_Buckets_vs_Beliefs_6_22_Factors.csv"),
+    file.path(csv_dir, "Q17_Aggregate_Metrics_vs_Beliefs_ConcernHarms.csv"),
+    file.path(csv_dir, "Q17_AllTools_vs_Beliefs_ConcernHarms.csv"),
+    file.path(csv_dir, "Q17_AllTools_Concern_By_Use_Bucket.csv"),
+    file.path(csv_dir, "Q17_AllTools_Concern_Kruskal_By_Use_Bucket.csv"),
+    file.path(csv_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors.csv"),
+    file.path(csv_dir, "Beliefs_6_22_All_Correlations_Ranked.csv")
+  ),
+  description = c(
+    "Beliefs 6-22 EFA/KMO summary",
+    "tenBerge factor scores for the exploratory Beliefs 6-22 model",
+    "Ordered factor loadings for the exploratory Beliefs model",
+    "Heatmap of Beliefs 6-22 factor loadings with cross-loading items outlined",
+    "Display labels for exploratory Beliefs factors",
+    "Unique factor-factor correlations including exploratory Beliefs factors",
+    "Symmetric factor heatmap matrix including exploratory Beliefs factors",
+    "ART metrics vs exploratory Beliefs factors",
+    "Q17 use metrics vs exploratory Beliefs factors",
+    "Aggregate Q17 use metrics vs Beliefs F3 concern/harms",
+    "Individual Q17 tool frequency vs Beliefs F3 concern/harms",
+    "Beliefs F3 concern/harms descriptives by Q17 use bucket for each tool",
+    "Kruskal-Wallis checks for Beliefs F3 concern/harms across Q17 use buckets for each tool",
+    "Named model use scores vs exploratory Beliefs factors",
+    "Combined ranked table across factor, ART, Q17, and named-model families"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "Beliefs_6_22_Manifest.csv"))
+manifest |>
+  kable(caption = "Exploratory Beliefs 6-22 output manifest")
+```

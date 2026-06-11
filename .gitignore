@@ -1,11 +1,11 @@
-# 1. Block all data, web assets, plots, and cache files globally
+# 1. Block all CSV and HTML files globally
 *.csv
 *.html
 *.css
 *.js
 *.png
 *.pdf
-.RData
+*.RData
 .Rhistory
 
 # Block Quarto/RMarkdown auto-generated directories
@@ -13,10 +13,11 @@
 *_files/
 *_cache/
 
-# 2. Exceptions (Whitelist explicit tracking)
-!scoring_helpers.R
+
+# 2. Exceptions 
 !Triage_Rap_Sheet_Verified.csv
 !rw-survey-long-040726.csv
 !llm-survey-long-040726.csv
 !Participant Tracking - IDs and Conditions Table.csv
 !authorkey.csv
+!scoring_helpers.r

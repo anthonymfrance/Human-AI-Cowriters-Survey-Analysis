@@ -24,14 +24,21 @@ library(tidyverse)
 library(ggplot2)
 library(scales)
 script_dir <- "13_results"
+mini_plot_dir <- file.path(script_dir, "mini_presentation_plots")
 dir.create(script_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(mini_plot_dir, recursive = TRUE, showWarnings = FALSE)
 art_factor_rank_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Net_vs_Factors_Ranked.csv")
+art_factor_corr_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_vs_Factors_Correlations.csv")
+art_factor_merged_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Factor_Merged.csv")
+art_partial_summary_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_AIReflection_F1_Partial_Summary.csv")
 art_item_rank_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Net_vs_All_Items_Ranked.csv")
 art_scored_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
 order_effects_analysis_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
 pairwise_rank_file <- file.path("06_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
 master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
 mann_whitney_file <- file.path("04_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
+q17_breadth_factor_file <- file.path("15_q17_robustness", "csv", "Breadth_vs_Factors_Correlations.csv")
+q17_robustness_file <- file.path("15_q17_robustness", "csv", "Robustness_Rho_Comparison_Factors.csv")
 
 # ── Colour palette (instrument-coded) ──────────────────────────────────────
 pal <- c(
@@ -78,6 +85,281 @@ sig_stars <- function(p) {
     TRUE     ~ "ns"
   )
 }
+
+save_mini_plot <- function(plot, filename, width = 10, height = 6, dpi = 320) {
+  ggsave(
+    filename = file.path(mini_plot_dir, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    units = "in",
+    dpi = dpi,
+    bg = "white"
+  )
+}
+```
+
+------------------------------------------------------------------------
+
+## Mini Presentation Figures
+
+Rendering this file writes four standalone figures to
+`13_results/mini_presentation_plots/` for quick use in slides.
+
+```{r mini-presentation-figures, fig.width=10, fig.height=6}
+art_corr_all <- read_csv(art_factor_corr_file, show_col_types = FALSE)
+art_factor_merged <- read_csv(art_factor_merged_file, show_col_types = FALSE)
+art_partial_summary <- read_csv(art_partial_summary_file, show_col_types = FALSE)
+q17_breadth <- read_csv(q17_breadth_factor_file, show_col_types = FALSE)
+q17_robustness <- read_csv(q17_robustness_file, show_col_types = FALSE)
+
+mini_theme <- function(base_size = 12) {
+  if (exists("theme_cowriters", mode = "function")) {
+    theme_cowriters(base_size = base_size)
+  } else {
+    theme_minimal(base_size = base_size) +
+      theme(
+        plot.title.position = "plot",
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom"
+      )
+  }
+}
+
+mini_art_heatmap_df <- art_corr_all |>
+  mutate(
+    art_label = factor(
+      art_label,
+      levels = c(
+        "ART net real minus fake",
+        "ART adjusted rate",
+        "ART real hits",
+        "ART fake false alarms"
+      )
+    ),
+    display_label = str_replace(display_label, " - ", "\n"),
+    display_label = fct_reorder(display_label, rho),
+    sig_label = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh ~ "*",
+      TRUE ~ ""
+    ),
+    cell_label = paste0(sprintf("%.2f", rho), sig_label)
+  )
+
+mini_art_heatmap <- ggplot(
+  mini_art_heatmap_df,
+  aes(x = art_label, y = display_label, fill = rho)
+) +
+  geom_tile(color = "white", linewidth = 0.7) +
+  geom_text(aes(label = cell_label), size = 3.2, color = "grey15") +
+  scale_fill_gradient2(
+    low = "#c96b3b",
+    mid = "white",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-0.45, 0.45),
+    oob = scales::squish,
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "Reading breadth tracks AI ownership and traditional competence",
+    subtitle = "ART correlations with factor scores. ** Bonferroni p < .05; * BH p < .05",
+    x = NULL,
+    y = NULL,
+    caption = "Key pattern: ART is negatively related to AIReflection F1, but positively related to IMI perceived competence."
+  ) +
+  mini_theme(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1),
+    panel.grid = element_blank()
+  )
+
+save_mini_plot(mini_art_heatmap, "01_art_factor_heatmap.png", width = 10.5, height = 6.2)
+
+partial_r <- art_partial_summary |>
+  filter(metric == "partial_residual_r_art") |>
+  pull(value) |>
+  as.numeric()
+
+partial_p_bonf <- art_partial_summary |>
+  filter(metric == "full_model_art_p_bonferroni") |>
+  pull(value) |>
+  as.numeric()
+
+mini_art_scatter_df <- art_factor_merged |>
+  select(participant_id, order, art_net_real_minus_fake, AIRefl_MR1) |>
+  filter(!is.na(art_net_real_minus_fake), !is.na(AIRefl_MR1)) |>
+  mutate(order = factor(order, levels = c("Traditional_First", "AI_First")))
+
+mini_art_scatter <- ggplot(
+  mini_art_scatter_df,
+  aes(x = art_net_real_minus_fake, y = AIRefl_MR1)
+) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    color = pal["AIReflection"],
+    fill = pal["AIReflection"],
+    alpha = 0.16,
+    linewidth = 1
+  ) +
+  geom_point(aes(color = order), size = 2.8, alpha = 0.78) +
+  scale_color_manual(
+    values = c(Traditional_First = "#4f79b7", AI_First = "#c96b3b"),
+    labels = c(Traditional_First = "Traditional first", AI_First = "AI first"),
+    name = "Order"
+  ) +
+  annotate(
+    "label",
+    x = Inf,
+    y = Inf,
+    hjust = 1.03,
+    vjust = 1.25,
+    label = paste0(
+      "Zero-order rho = -0.407\n",
+      "Partial r = ", sprintf("%.3f", partial_r), "\n",
+      "Full-control Bonferroni p = ", signif(partial_p_bonf, 3)
+    ),
+    size = 3.5,
+    label.size = 0.25,
+    fill = "white",
+    color = "grey20"
+  ) +
+  labs(
+    title = "Higher ART readers reported less AI ownership/usefulness",
+    subtitle = "Control set: writing efficacy, IMI perceived competence, order, and first topic",
+    x = "ART net score (real hits minus fake false alarms)",
+    y = "AIReflection F1 - Ownership & Usefulness",
+    caption = "The ART effect remains after controls, supporting a metacognitive calibration interpretation."
+  ) +
+  mini_theme(base_size = 12)
+
+save_mini_plot(mini_art_scatter, "02_art_vs_aireflection_f1_scatter.png", width = 9.5, height = 6)
+
+mini_breadth_df <- q17_breadth |>
+  mutate(
+    predictor_label = recode(
+      predictor,
+      breadth_any_use = "Any-use breadth",
+      breadth_regular_use = "Regular-use breadth",
+      breadth_often = "Often-use breadth"
+    ),
+    display_label = str_replace(display_label, " - ", "\n"),
+    display_label = fct_reorder(display_label, rho),
+    sig_label = case_when(
+      survives_bonferroni ~ "**",
+      survives_bh ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+mini_breadth_plot <- ggplot(
+  mini_breadth_df,
+  aes(x = rho, y = display_label, color = predictor_label, shape = survives_bonferroni)
+) +
+  geom_vline(xintercept = 0, color = "grey75", linetype = "dashed") +
+  geom_point(size = 3.2, alpha = 0.88) +
+  geom_text(
+    aes(label = sig_label),
+    nudge_x = 0.035,
+    size = 3.5,
+    color = "grey20",
+    show.legend = FALSE
+  ) +
+  scale_color_manual(
+    values = c(
+      "Any-use breadth" = "#4f79b7",
+      "Regular-use breadth" = "#2ca02c",
+      "Often-use breadth" = "#c96b3b"
+    ),
+    name = NULL
+  ) +
+  scale_shape_manual(
+    values = c(`TRUE` = 19, `FALSE` = 1),
+    labels = c(`TRUE` = "Bonferroni p < .05", `FALSE` = "not Bonferroni"),
+    name = NULL
+  ) +
+  scale_x_continuous(limits = c(-0.25, 0.50), breaks = seq(-0.2, 0.5, 0.1)) +
+  labs(
+    title = "Broader AI-tool experience predicts AI ownership/usefulness",
+    subtitle = "Breadth = number of distinct tools used at each threshold. ** Bonferroni p < .05; * BH p < .05",
+    x = "Spearman rho",
+    y = NULL,
+    caption = "The consistent signal is AIReflection F1; broader AI experience does not imply better retention here."
+  ) +
+  mini_theme(base_size = 12)
+
+save_mini_plot(mini_breadth_plot, "03_q17_breadth_vs_factors.png", width = 10, height = 6.4)
+
+first_nonmissing <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA)
+  x[[1]]
+}
+
+mini_robust_wide <- q17_robustness |>
+  filter(
+    display_label == "AIReflection F1 - Ownership & Usefulness",
+    q17_label == "Often use (prop)"
+  ) |>
+  summarise(
+    Full_rho = first_nonmissing(Full_rho),
+    No_Grammarly_rho = first_nonmissing(`No Grammarly_rho`),
+    No_ChatGPT_rho = first_nonmissing(`No ChatGPT_rho`),
+    No_Grammarly_ChatGPT_rho = first_nonmissing(`No Grammarly + No ChatGPT_rho`),
+    Full_sig = first_nonmissing(Full_survives_bonferroni),
+    No_Grammarly_sig = first_nonmissing(`No Grammarly_survives_bonferroni`),
+    No_ChatGPT_sig = first_nonmissing(`No ChatGPT_survives_bonferroni`),
+    No_Grammarly_ChatGPT_sig = first_nonmissing(`No Grammarly + No ChatGPT_survives_bonferroni`)
+  )
+
+mini_robust_df <- tribble(
+  ~variant, ~rho, ~survives_bonferroni,
+  "All tools", mini_robust_wide$Full_rho, mini_robust_wide$Full_sig,
+  "No Grammarly", mini_robust_wide$No_Grammarly_rho, mini_robust_wide$No_Grammarly_sig,
+  "No ChatGPT", mini_robust_wide$No_ChatGPT_rho, mini_robust_wide$No_ChatGPT_sig,
+  "No Grammarly + No ChatGPT", mini_robust_wide$No_Grammarly_ChatGPT_rho, mini_robust_wide$No_Grammarly_ChatGPT_sig
+) |>
+  mutate(
+    variant = factor(
+      variant,
+      levels = c("All tools", "No Grammarly", "No ChatGPT", "No Grammarly + No ChatGPT")
+    ),
+    survives_bonferroni = as.logical(survives_bonferroni)
+  ) |>
+  filter(!is.na(rho))
+
+mini_robust_plot <- ggplot(
+  mini_robust_df,
+  aes(x = variant, y = rho, group = 1)
+) +
+  geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
+  geom_line(color = "grey55", linewidth = 0.8) +
+  geom_point(aes(fill = survives_bonferroni), shape = 21, size = 4, color = "grey20") +
+  geom_text(aes(label = sprintf("%.3f", rho)), nudge_y = 0.032, size = 3.6) +
+  scale_fill_manual(
+    values = c(`TRUE` = "#4f79b7", `FALSE` = "white"),
+    labels = c(`TRUE` = "Bonferroni p < .05", `FALSE` = "not corrected-significant"),
+    name = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 0.46), breaks = seq(0, 0.45, 0.1)) +
+  labs(
+    title = "The often-use signal is ChatGPT-sensitive",
+    subtitle = "AIReflection F1 vs proportion of tools marked 'often use'",
+    x = NULL,
+    y = "Spearman rho",
+    caption = "Removing Grammarly strengthens the association; removing ChatGPT attenuates it below corrected significance."
+  ) +
+  mini_theme(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 18, hjust = 1))
+
+save_mini_plot(mini_robust_plot, "04_chatgpt_grammarly_robustness_shift.png", width = 8.8, height = 5.6)
+
+mini_art_heatmap
+mini_art_scatter
+mini_breadth_plot
+mini_robust_plot
 ```
 
 ------------------------------------------------------------------------
