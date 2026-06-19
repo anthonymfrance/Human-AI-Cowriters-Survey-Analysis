@@ -1,996 +1,811 @@
 ---
-title: "Cowriters Study — Top Findings Visualizer"
+title: "Cowriters Study - Survey Results"
+subtitle: "Exploratory measurement structure, reading-breadth associations, AI-use exposure, and BeliefsAboutAI sensitivity analyses"
 format:
   html:
     toc: true
     toc-depth: 2
-    toc-title: "Figures"
     theme: cosmo
     fig-width: 9
-    fig-height: 6
+    fig-height: 5
     embed-resources: true
-output-dir: "13_results"
+    css: styles.css
 execute:
   echo: false
   warning: false
   message: false
-editor:
-  markdown:
-    wrap: 72
 ---
 
 ```{r setup}
 library(tidyverse)
-library(ggplot2)
+library(knitr)
 library(scales)
-script_dir <- "13_results"
-mini_plot_dir <- file.path(script_dir, "mini_presentation_plots")
-dir.create(script_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(mini_plot_dir, recursive = TRUE, showWarnings = FALSE)
-art_factor_rank_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Net_vs_Factors_Ranked.csv")
-art_factor_corr_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_vs_Factors_Correlations.csv")
-art_factor_merged_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Factor_Merged.csv")
-art_partial_summary_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_AIReflection_F1_Partial_Summary.csv")
-art_item_rank_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Net_vs_All_Items_Ranked.csv")
+
+count_file <- file.path("02_efa_exports", "audit", "Participant_Count_Reconciliation.csv")
+efa_export_summary_file <- file.path("02_efa_exports", "efa_diagnostics", "EFA_Export_Summary.csv")
+efa_recommended_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
+efa_diagnostics_file <- file.path("03_efa_analysis", "efa_diagnostics", "EFA_Diagnostics_Summary.csv")
+efa_sensitivity_file <- file.path("03_efa_analysis", "efa_diagnostics", "EFA_Sensitivity_Comparison.csv")
+order_comparison_file <- file.path("04_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
+anova_file <- file.path("04_order_effects", "csv", "TwoWay_ANOVA_Order_Effects.csv")
+tool_order_file <- file.path("04_order_effects", "csv", "Tool_Order_Interaction_Summary.csv")
+script6_factor_corr_file <- file.path("06_interesting_findings", "csv", "Factor_Correlations_Unique.csv")
+script6_pair_summary_file <- file.path("06_interesting_findings", "csv", "Pairwise_Item_Correlation_Summary.csv")
+script6_all_pairs_file <- file.path("06_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
+factor_scores_file <- file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
+factor_lookup_file <- file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv")
+art_factor_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_vs_Factors_Correlations.csv")
 art_scored_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
-order_effects_analysis_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
-pairwise_rank_file <- file.path("06_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
-master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
-mann_whitney_file <- file.path("04_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
-q17_breadth_factor_file <- file.path("15_q17_robustness", "csv", "Breadth_vs_Factors_Correlations.csv")
-q17_robustness_file <- file.path("15_q17_robustness", "csv", "Robustness_Rho_Comparison_Factors.csv")
+ai_primary_efa_file <- file.path("02_efa_exports", "efa", "AI_Reflection_EFA_Primary.csv")
+q17_long_file <- file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv")
+script16_model_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Model_Summary.csv")
+script16_loadings_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Loadings.csv")
+script16_factor_scores_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Scores.csv")
+script16_factor_lookup_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Lookup.csv")
+script16_cross_factor_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Cross_Factor_Correlations_Unique.csv")
+script16_art_file <- file.path("16_exploratory_beliefs", "csv", "ART_vs_Beliefs_Exploratory_Factors.csv")
+script16_q17_file <- file.path("16_exploratory_beliefs", "csv", "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv")
+fit_comparison_file <- file.path("16_exploratory_beliefs", "csv", "All_Instruments_Fit_Comparison.csv")
 
-# ── Colour palette (instrument-coded) ──────────────────────────────────────
-pal <- c(
-  IMI             = "#4f79b7",
-  WritingEfficacy = "#2ca02c",
-  AIReflection    = "#c96b3b",
-  BeliefsAboutAI  = "#9467bd"
-)
+plot_primary_factor <- file.path("06_interesting_findings", "plots", "Factor_Heatmap_Across_3_Instruments.png")
+plot_beliefs_loadings <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Loadings_Heatmap.png")
+plot_beliefs_four_family <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Cross_Factor_Heatmap.png")
 
-pal_sign <- c(
-  positive = "#4f79b7",
-  negative = "#c96b3b"
-)
-
-# ── Theme (clean, publication-ready) ───────────────────────────────────────
-theme_cowriters <- function(base_size = 12) {
-  theme_minimal(base_size = base_size) %+replace%
-    theme(
-      panel.grid.minor  = element_blank(),
-      panel.grid.major  = element_line(colour = "grey92", linewidth = 0.4),
-      axis.text         = element_text(colour = "grey35"),
-      axis.title        = element_text(colour = "grey20", size = rel(0.92)),
-      plot.title        = element_text(face = "bold", colour = "grey10",
-                                       size = rel(1.12), hjust = 0,
-                                       margin = margin(b = 4)),
-      plot.subtitle     = element_text(colour = "grey40", size = rel(0.88),
-                                       hjust = 0, margin = margin(b = 12)),
-      plot.caption      = element_text(colour = "grey55", size = rel(0.76),
-                                       hjust = 0, margin = margin(t = 10)),
-      legend.position   = "bottom",
-      legend.title      = element_text(face = "bold", size = rel(0.85)),
-      legend.text       = element_text(size = rel(0.82)),
-      strip.text        = element_text(face = "bold", colour = "grey20"),
-      plot.margin       = margin(12, 16, 12, 12)
-    )
+read_or_empty <- function(path) {
+  if (file.exists(path)) {
+    read_csv(path, show_col_types = FALSE)
+  } else {
+    cat("Missing file:", path, "\n")
+    tibble()
+  }
 }
 
-# ── Significance label helper ───────────────────────────────────────────────
-sig_stars <- function(p) {
+include_if_exists <- function(path) {
+  if (file.exists(path)) {
+    knitr::include_graphics(path)
+  } else {
+    cat("Missing plot:", path, "\n")
+  }
+}
+
+fmt_p <- function(p) {
+  p <- suppressWarnings(as.numeric(p))
   case_when(
-    p < .001 ~ "***",
-    p < .01  ~ "**",
-    p < .05  ~ "*",
-    TRUE     ~ "ns"
+    is.na(p) ~ "missing",
+    p < .001 ~ "< .001",
+    TRUE ~ sprintf("%.3f", p)
   )
 }
 
-save_mini_plot <- function(plot, filename, width = 10, height = 6, dpi = 320) {
-  ggsave(
-    filename = file.path(mini_plot_dir, filename),
-    plot = plot,
-    width = width,
-    height = height,
-    units = "in",
-    dpi = dpi,
-    bg = "white"
+fmt_num <- function(x, digits = 2) {
+  x <- suppressWarnings(as.numeric(x))
+  if_else(is.na(x), "missing", sprintf(paste0("%.", digits, "f"), x))
+}
+
+fmt_rho <- function(x) fmt_num(x, 2)
+
+as_bool <- function(x) {
+  x %in% c(TRUE, "TRUE", "true", "1", 1)
+}
+
+sig_suffix <- function(p_bh, p_bonf) {
+  case_when(
+    !is.na(p_bonf) & p_bonf < .05 ~ "**",
+    !is.na(p_bh) & p_bh < .05 ~ "*",
+    TRUE ~ ""
   )
 }
-```
 
-------------------------------------------------------------------------
+short_factor_label <- function(x) {
+  x |>
+    str_replace(" -> ", "\n") |>
+    str_replace("WritingEfficacy", "Writing efficacy") |>
+    str_replace("AIReflection", "AI reflection")
+}
 
-## Mini Presentation Figures
+safe_spearman <- function(df, x, y) {
+  d <- df |>
+    select(all_of(c(x, y))) |>
+    mutate(across(everything(), as.numeric)) |>
+    drop_na()
 
-Rendering this file writes four standalone figures to
-`13_results/mini_presentation_plots/` for quick use in slides.
-
-```{r mini-presentation-figures, fig.width=10, fig.height=6}
-art_corr_all <- read_csv(art_factor_corr_file, show_col_types = FALSE)
-art_factor_merged <- read_csv(art_factor_merged_file, show_col_types = FALSE)
-art_partial_summary <- read_csv(art_partial_summary_file, show_col_types = FALSE)
-q17_breadth <- read_csv(q17_breadth_factor_file, show_col_types = FALSE)
-q17_robustness <- read_csv(q17_robustness_file, show_col_types = FALSE)
-
-mini_theme <- function(base_size = 12) {
-  if (exists("theme_cowriters", mode = "function")) {
-    theme_cowriters(base_size = base_size)
-  } else {
-    theme_minimal(base_size = base_size) +
-      theme(
-        plot.title.position = "plot",
-        panel.grid.minor = element_blank(),
-        legend.position = "bottom"
-      )
+  if (nrow(d) < 5 || sd(d[[x]]) == 0 || sd(d[[y]]) == 0) {
+    return(tibble(n = nrow(d), rho = NA_real_, p = NA_real_))
   }
+
+  ct <- suppressWarnings(cor.test(d[[x]], d[[y]], method = "spearman", exact = FALSE))
+  tibble(n = nrow(d), rho = unname(ct$estimate), p = ct$p.value)
 }
 
-mini_art_heatmap_df <- art_corr_all |>
-  mutate(
-    art_label = factor(
-      art_label,
-      levels = c(
-        "ART net real minus fake",
-        "ART adjusted rate",
-        "ART real hits",
-        "ART fake false alarms"
-      )
-    ),
-    display_label = str_replace(display_label, " - ", "\n"),
-    display_label = fct_reorder(display_label, rho),
-    sig_label = case_when(
-      survives_bonferroni ~ "**",
-      survives_bh ~ "*",
-      TRUE ~ ""
-    ),
-    cell_label = paste0(sprintf("%.2f", rho), sig_label)
-  )
+make_anchor_corrs <- function(factor_scores, factor_lookup, anchor_scores, anchor_col, anchor_label) {
+  factor_cols <- factor_lookup$factor
+  merged <- factor_scores |>
+    inner_join(anchor_scores |> select(participant_id, all_of(anchor_col)), by = "participant_id")
 
-mini_art_heatmap <- ggplot(
-  mini_art_heatmap_df,
-  aes(x = art_label, y = display_label, fill = rho)
-) +
-  geom_tile(color = "white", linewidth = 0.7) +
-  geom_text(aes(label = cell_label), size = 3.2, color = "grey15") +
-  scale_fill_gradient2(
-    low = "#c96b3b",
-    mid = "white",
-    high = "#4f79b7",
-    midpoint = 0,
-    limits = c(-0.45, 0.45),
-    oob = scales::squish,
-    name = "Spearman rho"
-  ) +
-  labs(
-    title = "Reading breadth tracks AI ownership and traditional competence",
-    subtitle = "ART correlations with factor scores. ** Bonferroni p < .05; * BH p < .05",
-    x = NULL,
-    y = NULL,
-    caption = "Key pattern: ART is negatively related to AIReflection F1, but positively related to IMI perceived competence."
-  ) +
-  mini_theme(base_size = 12) +
-  theme(
-    axis.text.x = element_text(angle = 25, hjust = 1),
-    panel.grid = element_blank()
-  )
+  map_dfr(factor_cols, function(factor_col) {
+    safe_spearman(merged, factor_col, anchor_col) |>
+      mutate(factor = factor_col)
+  }) |>
+    mutate(
+      p_bh = p.adjust(p, method = "BH"),
+      p_bonf = p.adjust(p, method = "bonferroni"),
+      abs_rho = abs(rho),
+      anchor = anchor_label
+    ) |>
+    left_join(factor_lookup, by = "factor") |>
+    arrange(instrument, factor_num)
+}
 
-save_mini_plot(mini_art_heatmap, "01_art_factor_heatmap.png", width = 10.5, height = 6.2)
-
-partial_r <- art_partial_summary |>
-  filter(metric == "partial_residual_r_art") |>
-  pull(value) |>
-  as.numeric()
-
-partial_p_bonf <- art_partial_summary |>
-  filter(metric == "full_model_art_p_bonferroni") |>
-  pull(value) |>
-  as.numeric()
-
-mini_art_scatter_df <- art_factor_merged |>
-  select(participant_id, order, art_net_real_minus_fake, AIRefl_MR1) |>
-  filter(!is.na(art_net_real_minus_fake), !is.na(AIRefl_MR1)) |>
-  mutate(order = factor(order, levels = c("Traditional_First", "AI_First")))
-
-mini_art_scatter <- ggplot(
-  mini_art_scatter_df,
-  aes(x = art_net_real_minus_fake, y = AIRefl_MR1)
-) +
-  geom_smooth(
-    method = "lm",
-    se = TRUE,
-    color = pal["AIReflection"],
-    fill = pal["AIReflection"],
-    alpha = 0.16,
-    linewidth = 1
-  ) +
-  geom_point(aes(color = order), size = 2.8, alpha = 0.78) +
-  scale_color_manual(
-    values = c(Traditional_First = "#4f79b7", AI_First = "#c96b3b"),
-    labels = c(Traditional_First = "Traditional first", AI_First = "AI first"),
-    name = "Order"
-  ) +
-  annotate(
-    "label",
-    x = Inf,
-    y = Inf,
-    hjust = 1.03,
-    vjust = 1.25,
-    label = paste0(
-      "Zero-order rho = -0.407\n",
-      "Partial r = ", sprintf("%.3f", partial_r), "\n",
-      "Full-control Bonferroni p = ", signif(partial_p_bonf, 3)
-    ),
-    size = 3.5,
-    label.size = 0.25,
-    fill = "white",
-    color = "grey20"
-  ) +
-  labs(
-    title = "Higher ART readers reported less AI ownership/usefulness",
-    subtitle = "Control set: writing efficacy, IMI perceived competence, order, and first topic",
-    x = "ART net score (real hits minus fake false alarms)",
-    y = "AIReflection F1 - Ownership & Usefulness",
-    caption = "The ART effect remains after controls, supporting a metacognitive calibration interpretation."
-  ) +
-  mini_theme(base_size = 12)
-
-save_mini_plot(mini_art_scatter, "02_art_vs_aireflection_f1_scatter.png", width = 9.5, height = 6)
-
-mini_breadth_df <- q17_breadth |>
-  mutate(
-    predictor_label = recode(
-      predictor,
-      breadth_any_use = "Any-use breadth",
-      breadth_regular_use = "Regular-use breadth",
-      breadth_often = "Often-use breadth"
-    ),
-    display_label = str_replace(display_label, " - ", "\n"),
-    display_label = fct_reorder(display_label, rho),
-    sig_label = case_when(
-      survives_bonferroni ~ "**",
-      survives_bh ~ "*",
-      TRUE ~ ""
+plot_anchor_heatmap <- function(corr_df, title, subtitle = NULL) {
+  plot_df <- corr_df |>
+    mutate(
+      display_short = short_factor_label(display_label),
+      display_short = factor(display_short, levels = rev(unique(display_short))),
+      anchor = factor(anchor, levels = unique(anchor)),
+      cell_label = if_else(is.na(rho), "", paste0(sprintf("%.2f", rho), sig_suffix(p_bh, p_bonf)))
     )
-  )
 
-mini_breadth_plot <- ggplot(
-  mini_breadth_df,
-  aes(x = rho, y = display_label, color = predictor_label, shape = survives_bonferroni)
-) +
-  geom_vline(xintercept = 0, color = "grey75", linetype = "dashed") +
-  geom_point(size = 3.2, alpha = 0.88) +
-  geom_text(
-    aes(label = sig_label),
-    nudge_x = 0.035,
-    size = 3.5,
-    color = "grey20",
-    show.legend = FALSE
-  ) +
-  scale_color_manual(
-    values = c(
-      "Any-use breadth" = "#4f79b7",
-      "Regular-use breadth" = "#2ca02c",
-      "Often-use breadth" = "#c96b3b"
-    ),
-    name = NULL
-  ) +
-  scale_shape_manual(
-    values = c(`TRUE` = 19, `FALSE` = 1),
-    labels = c(`TRUE` = "Bonferroni p < .05", `FALSE` = "not Bonferroni"),
-    name = NULL
-  ) +
-  scale_x_continuous(limits = c(-0.25, 0.50), breaks = seq(-0.2, 0.5, 0.1)) +
-  labs(
-    title = "Broader AI-tool experience predicts AI ownership/usefulness",
-    subtitle = "Breadth = number of distinct tools used at each threshold. ** Bonferroni p < .05; * BH p < .05",
-    x = "Spearman rho",
-    y = NULL,
-    caption = "The consistent signal is AIReflection F1; broader AI experience does not imply better retention here."
-  ) +
-  mini_theme(base_size = 12)
-
-save_mini_plot(mini_breadth_plot, "03_q17_breadth_vs_factors.png", width = 10, height = 6.4)
-
-first_nonmissing <- function(x) {
-  x <- x[!is.na(x)]
-  if (length(x) == 0) return(NA)
-  x[[1]]
+  ggplot(plot_df, aes(x = anchor, y = display_short, fill = rho)) +
+    geom_tile(color = "white", linewidth = 0.7) +
+    geom_text(aes(label = cell_label), size = 3.4, color = "grey15") +
+    scale_fill_gradient2(
+      low = "#b75b4a",
+      mid = "white",
+      high = "#3f6fa8",
+      midpoint = 0,
+      limits = c(-.65, .65),
+      oob = squish,
+      name = "Spearman rho"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = NULL,
+      y = NULL,
+      caption = "** Bonferroni p < .05; * BH p < .05"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(size = 10),
+      axis.text.y = element_text(size = 8.5),
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold")
+    )
 }
 
-mini_robust_wide <- q17_robustness |>
-  filter(
-    display_label == "AIReflection F1 - Ownership & Usefulness",
-    q17_label == "Often use (prop)"
+participant_counts <- read_or_empty(count_file)
+efa_export_summary <- read_or_empty(efa_export_summary_file)
+efa_recommended <- read_or_empty(efa_recommended_file)
+efa_diagnostics <- read_or_empty(efa_diagnostics_file)
+efa_sensitivity <- read_or_empty(efa_sensitivity_file)
+fit_comparison <- read_or_empty(fit_comparison_file)
+beliefs_model <- read_or_empty(script16_model_file)
+primary_factor_scores <- read_or_empty(factor_scores_file)
+primary_factor_lookup <- read_or_empty(factor_lookup_file)
+beliefs_factor_scores <- read_or_empty(script16_factor_scores_file)
+beliefs_factor_lookup <- read_or_empty(script16_factor_lookup_file)
+art_scores <- read_or_empty(art_scored_file)
+ai_primary_efa_ids <- read_or_empty(ai_primary_efa_file) |>
+  distinct(participant_id)
+q17_long_raw <- read_or_empty(q17_long_file) |>
+  mutate(use_score = as.numeric(use_score))
+q17_unreviewed_ids <- setdiff(unique(q17_long_raw$participant_id), ai_primary_efa_ids$participant_id)
+q17_long <- q17_long_raw |>
+  semi_join(ai_primary_efa_ids, by = "participant_id")
+
+primary_factor_lookup <- primary_factor_lookup |>
+  mutate(factor_num = as.integer(factor_num))
+
+beliefs_factor_lookup <- beliefs_factor_lookup |>
+  mutate(
+    factor_num = as.integer(factor_num),
+    factor_id = paste0("MR", factor_num),
+    short_factor = paste0("F", factor_num),
+    factor_label = paste0("Beliefs F", factor_num)
   ) |>
+  select(factor, instrument, factor_id, factor_num, proposed_name, short_factor, factor_label, display_label)
+
+four_factor_scores <- primary_factor_scores |>
+  inner_join(
+    beliefs_factor_scores |>
+      select(participant_id, all_of(beliefs_factor_lookup$factor)),
+    by = "participant_id"
+  )
+
+four_factor_lookup <- bind_rows(primary_factor_lookup, beliefs_factor_lookup)
+
+art_net_scores <- art_scores |>
+  select(participant_id, art_net_real_minus_fake)
+
+q17_tool_summary <- q17_long |>
+  group_by(tool) |>
   summarise(
-    Full_rho = first_nonmissing(Full_rho),
-    No_Grammarly_rho = first_nonmissing(`No Grammarly_rho`),
-    No_ChatGPT_rho = first_nonmissing(`No ChatGPT_rho`),
-    No_Grammarly_ChatGPT_rho = first_nonmissing(`No Grammarly + No ChatGPT_rho`),
-    Full_sig = first_nonmissing(Full_survives_bonferroni),
-    No_Grammarly_sig = first_nonmissing(`No Grammarly_survives_bonferroni`),
-    No_ChatGPT_sig = first_nonmissing(`No ChatGPT_survives_bonferroni`),
-    No_Grammarly_ChatGPT_sig = first_nonmissing(`No Grammarly + No ChatGPT_survives_bonferroni`)
+    n_participants = n(),
+    heard_pct = mean(use_score >= 2, na.rm = TRUE),
+    ever_used_pct = mean(use_score >= 3, na.rm = TRUE),
+    regular_use_pct = mean(use_score >= 4, na.rm = TRUE),
+    mean_use = mean(use_score, na.rm = TRUE),
+    sd_use = sd(use_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(ever_used_pct), desc(regular_use_pct), tool)
+
+q17_eligible_tools <- q17_tool_summary |>
+  filter(ever_used_pct >= .10) |>
+  pull(tool)
+
+q17_eligible_tool_label <- paste(q17_eligible_tools, collapse = "; ")
+q17_reviewed_ai_n <- n_distinct(ai_primary_efa_ids$participant_id)
+q17_descriptive_n <- n_distinct(q17_long$participant_id)
+q17_tool_n <- n_distinct(q17_long$tool)
+q17_response_n <- sum(!is.na(q17_long$use_score))
+q17_missing_reviewed_n <- q17_reviewed_ai_n - q17_descriptive_n
+q17_unreviewed_n <- length(q17_unreviewed_ids)
+
+q17_metric_scores <- q17_long |>
+  group_by(participant_id) |>
+  summarise(
+    q17_all_tools_answered = n(),
+    q17_regular_breadth = sum(use_score >= 4, na.rm = TRUE),
+    q17_all_tool_mean = mean(use_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(
+    q17_long |>
+      filter(tool %in% q17_eligible_tools) |>
+      group_by(participant_id) |>
+      summarise(
+        q17_filtered_tool_count = n(),
+        q17_filtered_mean = mean(use_score, na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "participant_id"
   )
 
-mini_robust_df <- tribble(
-  ~variant, ~rho, ~survives_bonferroni,
-  "All tools", mini_robust_wide$Full_rho, mini_robust_wide$Full_sig,
-  "No Grammarly", mini_robust_wide$No_Grammarly_rho, mini_robust_wide$No_Grammarly_sig,
-  "No ChatGPT", mini_robust_wide$No_ChatGPT_rho, mini_robust_wide$No_ChatGPT_sig,
-  "No Grammarly + No ChatGPT", mini_robust_wide$No_Grammarly_ChatGPT_rho, mini_robust_wide$No_Grammarly_ChatGPT_sig
+q17_regular_scores <- q17_metric_scores |>
+  select(participant_id, q17_regular_breadth)
+
+q17_filtered_mean_scores <- q17_metric_scores |>
+  select(participant_id, q17_filtered_mean)
+
+primary_art_net_corrs <- make_anchor_corrs(
+  primary_factor_scores,
+  primary_factor_lookup,
+  art_net_scores,
+  "art_net_real_minus_fake",
+  "ART net"
+)
+
+four_art_net_corrs <- make_anchor_corrs(
+  four_factor_scores,
+  four_factor_lookup,
+  art_net_scores,
+  "art_net_real_minus_fake",
+  "ART net"
+)
+
+primary_q17_regular_corrs <- make_anchor_corrs(
+  primary_factor_scores,
+  primary_factor_lookup,
+  q17_regular_scores,
+  "q17_regular_breadth",
+  "Regular-use breadth"
+)
+
+four_q17_regular_corrs <- make_anchor_corrs(
+  four_factor_scores,
+  four_factor_lookup,
+  q17_regular_scores,
+  "q17_regular_breadth",
+  "Regular-use breadth"
+)
+
+primary_q17_filtered_mean_corrs <- make_anchor_corrs(
+  primary_factor_scores,
+  primary_factor_lookup,
+  q17_filtered_mean_scores,
+  "q17_filtered_mean",
+  "Filtered mean use"
+)
+
+four_q17_filtered_mean_corrs <- make_anchor_corrs(
+  four_factor_scores,
+  four_factor_lookup,
+  q17_filtered_mean_scores,
+  "q17_filtered_mean",
+  "Filtered mean use"
+)
+
+q17_four_n_values <- sort(unique(four_q17_regular_corrs$n))
+q17_four_n_label <- if (length(q17_four_n_values) == 1) {
+  as.character(q17_four_n_values)
+} else {
+  paste0(min(q17_four_n_values), "-", max(q17_four_n_values))
+}
+q17_beliefs_n <- unique(four_q17_regular_corrs$n[four_q17_regular_corrs$instrument == "BeliefsAboutAI"])
+
+count_value <- function(stage_name) {
+  if (nrow(participant_counts) == 0) return(NA_integer_)
+  participant_counts |>
+    filter(stage == stage_name) |>
+    pull(count) |>
+    first()
+}
+
+strict_n <- count_value("strict_paired_clean_pid")
+rw_efa_n <- count_value("rw_primary_efa_pid")
+llm_efa_n <- count_value("llm_primary_efa_pid")
+```
+
+## Study Overview
+
+This report summarizes survey findings from a counterbalanced crossover study of AI-assisted and traditional writing. Each participant completed both writing conditions. The survey analysis focuses on three questions:
+
+1. Which self-report instruments supported interpretable exploratory factor scores?
+2. How did those factor scores relate to an external reading-breadth measure, the Author Recognition Test (ART)?
+3. How did factor scores relate to participants' reported familiarity with and use of AI tools?
+
+The report separates **primary analyses** from **exploratory extensions**. The primary factor analyses use full instruments that passed the original factorability screen. The BeliefsAboutAI extension is reported separately because the full BeliefsAboutAI battery did not support factor analysis, but a theoretically narrower attitudinal subset did.
+
+## Main Findings
+
+```{r main-findings-table}
+tibble::tribble(
+  ~Finding, ~Evidence, ~Interpretation,
+  "The primary factor structure was supported for three surveys.",
+  "IMI, WritingEfficacy, and AIReflection passed the factorability gate and produced locked exploratory factor scores.",
+  "These factor scores are the main self-report outcome structure for the report.",
+  "Traditional-writing competence clustered with writing self-efficacy.",
+  "The strongest primary cross-instrument factor links connected IMI perceived competence with WritingEfficacy factors.",
+  "Students who felt more competent during traditional writing also tended to report stronger writing efficacy.",
+  "ART provided a meaningful external anchor.",
+  "Higher ART net scores related positively to traditional competence/efficacy factors and negatively to AIReflection ownership/usefulness.",
+  "Reading breadth appears to separate traditional writing confidence from more positive AI-session ownership/usefulness responses.",
+  "AI-use exposure aligned most clearly with AI-session and Beliefs factors.",
+  "Q17 regular-use breadth was strongest for AIReflection ownership/usefulness in the primary model and for Beliefs utility/future-intent factors in the exploratory extension.",
+  "Students who regularly used more AI tools tended to endorse stronger AI usefulness, comfort, and future-use beliefs.",
+  "BeliefsAboutAI was informative but required explicit exploratory framing.",
+  "The full 22-item BeliefsAboutAI battery failed KMO; items 6-22 produced an interpretable three-factor exploratory solution.",
+  "Beliefs factors are useful for pattern evidence but should not be presented as confirmatory scale validation."
 ) |>
-  mutate(
-    variant = factor(
-      variant,
-      levels = c("All tools", "No Grammarly", "No ChatGPT", "No Grammarly + No ChatGPT")
-    ),
-    survives_bonferroni = as.logical(survives_bonferroni)
-  ) |>
-  filter(!is.na(rho))
-
-mini_robust_plot <- ggplot(
-  mini_robust_df,
-  aes(x = variant, y = rho, group = 1)
-) +
-  geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
-  geom_line(color = "grey55", linewidth = 0.8) +
-  geom_point(aes(fill = survives_bonferroni), shape = 21, size = 4, color = "grey20") +
-  geom_text(aes(label = sprintf("%.3f", rho)), nudge_y = 0.032, size = 3.6) +
-  scale_fill_manual(
-    values = c(`TRUE` = "#4f79b7", `FALSE` = "white"),
-    labels = c(`TRUE` = "Bonferroni p < .05", `FALSE` = "not corrected-significant"),
-    name = NULL
-  ) +
-  scale_y_continuous(limits = c(0, 0.46), breaks = seq(0, 0.45, 0.1)) +
-  labs(
-    title = "The often-use signal is ChatGPT-sensitive",
-    subtitle = "AIReflection F1 vs proportion of tools marked 'often use'",
-    x = NULL,
-    y = "Spearman rho",
-    caption = "Removing Grammarly strengthens the association; removing ChatGPT attenuates it below corrected significance."
-  ) +
-  mini_theme(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 18, hjust = 1))
-
-save_mini_plot(mini_robust_plot, "04_chatgpt_grammarly_robustness_shift.png", width = 8.8, height = 5.6)
-
-mini_art_heatmap
-mini_art_scatter
-mini_breadth_plot
-mini_robust_plot
+  kable(caption = "High-level findings and interpretive status.")
 ```
 
-------------------------------------------------------------------------
+## Analytic Hierarchy
 
-## Figure 1 — ART Score vs Factor Scores (Factor-Level Overview)
-
-**What it shows:** Spearman correlations between the Author Recognition
-Test (ART net real-minus-fake score, a proxy for reading breadth) and
-each EFA-derived factor composite. Error bars represent 95 % CI
-bootstrapped from the Spearman rho. Filled points survive BH correction;
-open points do not.
-
-```{r fig1-art-factors}
-art_factors <- read_csv(
-  art_factor_rank_file,
-  show_col_types = FALSE
-)
-
-# 95% CI via Fisher z transformation
-rho_ci <- function(rho, n, level = 0.95) {
-  z     <- atanh(rho)
-  se    <- 1 / sqrt(n - 3)
-  crit  <- qnorm((1 + level) / 2)
-  tanh(c(lo = z - crit * se, hi = z + crit * se))
-}
-
-art_factors_plot <- art_factors |>
-  mutate(
-    across(c(rho, n), as.numeric),
-    ci      = map2(rho, n, rho_ci),
-    ci_lo   = map_dbl(ci, "lo"),
-    ci_hi   = map_dbl(ci, "hi"),
-    label   = paste0(instrument, "\n", proposed_name),
-    label   = str_wrap(label, 18),
-    sig     = survives_bh,
-    instrument = factor(instrument,
-                        levels = c("IMI", "WritingEfficacy",
-                                   "AIReflection", "BeliefsAboutAI"))
-  ) |>
-  arrange(rho)
-
-art_factors_plot$label <- fct_inorder(art_factors_plot$label)
-
-p1 <- ggplot(art_factors_plot,
-             aes(x = rho, y = reorder(label, rho),
-                 colour = instrument, shape = sig)) +
-  geom_vline(xintercept = 0, colour = "grey70", linewidth = 0.6,
-             linetype = "dashed") +
-  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
-                 height = 0.25, linewidth = 0.55, alpha = 0.7) +
-  geom_point(size = 3.8, stroke = 0.8) +
-  scale_colour_manual(values = pal, name = "Instrument") +
-  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 21),
-                     labels = c(`TRUE` = "BH-adjusted p < .05",
-                                `FALSE` = "p ≥ .05"),
-                     name = NULL) +
-  scale_x_continuous(limits = c(-.55, .50),
-                     breaks  = seq(-.5, .5, .25),
-                     labels  = label_number(accuracy = .01)) +
-  labs(
-    title    = "Reading breadth (ART) correlates with task engagement and AI acceptance",
-    subtitle = "Spearman ρ with 95% CI — ART net real-minus-fake score vs each factor composite (N = 82)",
-    x        = "Spearman ρ",
-    y        = NULL,
-    caption  = "★ AIReflection F1 (Perceived Learning Utility) and IMI F3 (Interest/Enjoyment) survive Bonferroni correction.\n  WritingEfficacy F1 (Writing Confidence) survives BH correction only."
-  ) +
-  theme_cowriters() +
-  theme(legend.box = "vertical",
-        legend.spacing.y = unit(2, "pt"))
-
-p1
+```{r report-decision-table}
+tibble::tribble(
+  ~`Analysis layer`, ~`Included evidence`, ~`Interpretive status`,
+  "Primary factor results",
+  "IMI, WritingEfficacy, and AIReflection factor correlations",
+  "Primary exploratory factor-score evidence. These instruments used their full intended item sets and passed the original factorability gate.",
+  "Primary external anchors",
+  "ART net and Q17 regular-use breadth correlations with locked factors",
+  "Primary association evidence. ART is treated as an external reading-breadth anchor; Q17 is treated as AI-use exposure.",
+  "BeliefsAboutAI extension",
+  "Beliefs items 6-22 factor model and four-family heat map",
+  "Exploratory sensitivity evidence. The item subset is conceptually defensible and factorable, but the filtering decision was made after the full BeliefsAboutAI battery failed KMO.",
+  "Item-level analyses",
+  "Short summary table only",
+  "Triangulation evidence. Item-level results help interpret factor patterns but are not the primary inferential structure."
+) |>
+  kable(caption = "Analytic hierarchy used to distinguish primary results from exploratory extensions.")
 ```
 
-------------------------------------------------------------------------
+## Sample and Measurement
 
-## Figure 2 — ART × AIReflection F1 Scatter with LOESS
+The final paired crossover sample has `r strict_n` participants. The primary EFA samples are larger because EFA discovery uses clean instrument-specific cases: `r rw_efa_n` for traditional-session instruments and `r llm_efa_n` for AI-session instruments.
 
-**What it shows:** The strongest factor-level finding (ρ = −0.41,
-p_Bonferroni = .005). Higher reading breadth predicts *lower* Perceived
-Learning Utility from the AI session — suggesting experienced readers
-find less added value in AI summarisation.
-
-```{r fig2-art-airefl-scatter}
-# This figure requires the analysis-ready dataset which contains both
-# factor composites and ART scores.  Adjust the file path to match your
-# pipeline output (produced by 04_order_effects.qmd or 06_findings.qmd).
-
-art_composite_file <- order_effects_analysis_ready_file
-
-if (file.exists(art_composite_file)) {
-
-  analysis_ready <- read_csv(art_composite_file, show_col_types = FALSE)
-
-  art_raw <- read_csv(
-    art_scored_file,
-    show_col_types = FALSE
-  )
-  analysis_ready <- left_join(
-    analysis_ready,
-    art_raw |> select(participant_id, art_net_real_minus_fake),
-    by = "participant_id"
-  )
-
-  if (all(c("AIReflection_F1", "art_net_real_minus_fake") %in%
-          names(analysis_ready))) {
-
-    scatter_df <- analysis_ready |>
-      select(participant_id, order,
-             y = AIReflection_F1,
-             x = art_net_real_minus_fake) |>
-      filter(!is.na(x), !is.na(y))
-
-    p2 <- ggplot(scatter_df, aes(x = x, y = y)) +
-      geom_smooth(method = "lm", span = 0.9, se = TRUE,
-                  colour = pal["AIReflection"], fill = pal["AIReflection"],
-                  alpha = 0.15, linewidth = 1) +
-      geom_point(aes(colour = order), size = 2.4, alpha = 0.75) +
-      scale_colour_manual(
-        values = c(Traditional_First = "#4f79b7", AI_First = "#c96b3b"),
-        labels = c(Traditional_First = "Traditional-first",
-                   AI_First          = "AI-first"),
-        name   = "Order group"
-      ) +
-      annotate("text", x = Inf, y = Inf,
-               label = "ρ = −0.41, p\u2090\u2094\u2099\u1D64 = .005",
-               hjust = 1.1, vjust = 1.8,
-               size = 3.6, colour = "grey30") +
-      labs(
-        title    = "More widely-read students found AI summarisation less useful",
-        subtitle = "ART net score (reading breadth) vs AIReflection F1 — Perceived Learning Utility (N = 82)",
-        x        = "ART net score (real − fake authors recognised)",
-        y        = "AIReflection F1 — Perceived Learning Utility",
-        caption  = "LOESS smoother with 95% CI. Points coloured by counterbalancing order group."
-      ) +
-      theme_cowriters()
-
-    p2
-
-  } else {
-    cat("Column 'AIReflection_F1' or 'art_net_real_minus_fake' not found in",
-        art_composite_file,
-        "— update column names to match your pipeline.\n")
-  }
-
-} else {
-  cat("File not found:", art_composite_file,
-      "\nUpdate `art_composite_file` path to your analysis-ready CSV.\n")
+```{r sample-counts-table}
+if (nrow(participant_counts) > 0) {
+  participant_counts |>
+    filter(stage %in% c(
+      "strict_paired_clean_pid",
+      "rw_primary_efa_pid",
+      "llm_primary_efa_pid",
+      "final_master_wide_pid"
+    )) |>
+    mutate(
+      `Sample` = case_when(
+        stage == "strict_paired_clean_pid" ~ "Strict paired analysis sample",
+        stage == "rw_primary_efa_pid" ~ "Traditional-session primary EFA sample",
+        stage == "llm_primary_efa_pid" ~ "AI-session primary EFA sample",
+        stage == "final_master_wide_pid" ~ "Final master wide sample",
+        TRUE ~ stage
+      )
+    ) |>
+    select(Sample, N = count) |>
+    kable(caption = "Participant counts used by the report.")
 }
 ```
 
-------------------------------------------------------------------------
+```{r measurement-decisions-table}
+if (nrow(efa_diagnostics) > 0 && nrow(efa_recommended) > 0) {
+  primary_diag <- efa_diagnostics |>
+    filter(efa_sample == "primary") |>
+    distinct(instrument, .keep_all = TRUE) |>
+    select(instrument, participant_n, retained_item_count, kmo_overall, factorability_flag)
 
-## Figure 3 — IMI F3 (Interest/Enjoyment) vs ART: Traditional vs AI Session
-
-**What it shows:** IMI Interest/Enjoyment correlates positively with ART
-(ρ = 0.36, p_Bonferroni = .033). This panel separates the effect by
-order group to explore whether the reading-enjoyment link is consistent
-across conditions.
-
-```{r fig3-imi-f3-art}
-if (file.exists(art_composite_file)) {
-
-  analysis_ready2 <- read_csv(art_composite_file, show_col_types = FALSE)
-
-  art_raw2 <- read_csv(
-    art_scored_file,
-    show_col_types = FALSE
-  )
-  analysis_ready2 <- left_join(
-    analysis_ready2,
-    art_raw2 |> select(participant_id, art_net_real_minus_fake),
-    by = "participant_id"
-  )
-
-  if (all(c("IMI_F3", "art_net_real_minus_fake", "order") %in%
-          names(analysis_ready2))) {
-
-    df3 <- analysis_ready2 |>
-      select(participant_id, order, y = IMI_F3,
-             x = art_net_real_minus_fake) |>
-      filter(!is.na(x), !is.na(y)) |>
-      mutate(order_label = if_else(order == "Traditional_First",
-                                   "Traditional-first", "AI-first"))
-
-    p3 <- ggplot(df3, aes(x = x, y = y, colour = order_label)) +
-      geom_smooth(method = "lm", se = TRUE, linewidth = 0.9, alpha = 0.15) +
-      geom_point(size = 2.2, alpha = 0.72) +
-      facet_wrap(~ order_label) +
-      scale_colour_manual(
-        values = c("Traditional-first" = "#4f79b7", "AI-first" = "#c96b3b"),
-        guide  = "none"
-      ) +
-      labs(
-        title    = "Reading breadth predicts task enjoyment (IMI Interest/Enjoyment)",
-        subtitle = "Stratified by counterbalancing order group | ρ = 0.36 full sample (p\u2090\u2094\u2099\u1D64 = .033)",
-        x        = "ART net score",
-        y        = "IMI F3 — Interest/Enjoyment",
-        caption  = "Linear fit with 95% CI per subgroup. Interpret cautiously: n ≈ 45 and 37 per group substantially reduces power."
-      ) +
-      theme_cowriters() +
-      theme(strip.background = element_rect(fill = "grey95", colour = NA))
-
-    p3
-
-  } else {
-    cat("Required columns missing from analysis-ready file.\n")
-  }
-
-} else {
-  cat("File not found:", art_composite_file, "\n")
+  primary_diag |>
+    left_join(
+      efa_recommended |>
+        select(instrument, manual_locked_k, recommendation_status, recommendation_reason),
+      by = "instrument"
+    ) |>
+    mutate(
+      `Primary N` = participant_n,
+      `Items` = retained_item_count,
+      `KMO` = fmt_num(kmo_overall, 3),
+      `Locked factors` = if_else(is.na(manual_locked_k), "none", as.character(manual_locked_k)),
+      `Report role` = case_when(
+        instrument %in% c("IMI", "WritingEfficacy", "AIReflection") ~ "Primary factor score",
+        instrument == "BeliefsAboutAI" ~ "Full scale not factored; item-level or subset extension only",
+        TRUE ~ "Other"
+      )
+    ) |>
+    transmute(
+      Instrument = instrument,
+      `Primary N`,
+      Items,
+      KMO,
+      `Factorability` = factorability_flag,
+      `Locked factors`,
+      `Report role`,
+      `Decision note` = recommendation_reason
+    ) |>
+    kable(caption = "Measurement decisions from the original EFA pipeline.")
 }
 ```
 
-------------------------------------------------------------------------
+```{r fit-comparison-table}
+if (nrow(fit_comparison) > 0) {
+  fit_comparison |>
+    mutate(
+      across(c(RMSEA, TLI, RMSR), as.numeric),
+      `RMSEA` = fmt_num(RMSEA, 3),
+      `TLI` = fmt_num(TLI, 3),
+      `RMSR` = fmt_num(RMSR, 3),
+      `Interpretation` = case_when(
+        Instrument == "BeliefsAboutAI" ~ "Exploratory items 6-22 subset",
+        TRUE ~ "Original locked EFA solution"
+      )
+    ) |>
+    select(Instrument, Sample, k, RMSEA, TLI, RMSR, Interpretation) |>
+    kable(caption = "Global EFA fit comparison. These are exploratory EFA diagnostics, not confirmatory model claims.")
+}
+```
 
-## Figure 4 — Top Cross-Instrument Item Correlations (Bonferroni survivors)
+::: stats-detail
+The BeliefsAboutAI subset is distinguished from the primary factors for procedural reasons, not because its exploratory fit indices were uniquely poor. Its RMSEA and TLI are similar to several retained exploratory EFA solutions. The key distinction is that IMI, WritingEfficacy, and AIReflection passed the original full-instrument factorability workflow, whereas the BeliefsAboutAI subset was tested after the full 22-item battery failed KMO.
+:::
 
-**What it shows:** The strongest item-level pairwise Spearman
-correlations that survive Bonferroni correction across all \~1,916
-tested pairs. This is the most rigorous subset of your exploratory
-cross-instrument associations.
+## Counterbalancing Checks
 
-```{r fig4-top-pairwise}
+The study used a counterbalanced crossover structure. Order and topic checks are reported before the substantive association results so that observed factor relationships can be interpreted against the study design.
 
+```{r design-check-summary}
+order_comparisons <- read_or_empty(order_comparison_file)
+anova_terms <- read_or_empty(anova_file)
+tool_order <- read_or_empty(tool_order_file)
 
-
-#| fig-height: 9
-#| fig-width: 9
-
-
-
-pairwise <- read_csv(
-  pairwise_rank_file,
-  show_col_types = FALSE
-)
-
-bonf_top <- pairwise |>
-  filter(p_bonferroni < 0.05) |>
-  arrange(desc(abs(rho))) |>
-  slice_head(n = 18) |>
-  mutate(
-    direction  = if_else(rho > 0, "positive", "negative"),
-    pair_label = paste0(
-      str_wrap(item_text_a, 38), "\n  ×  \n",
-      str_wrap(item_text_b, 38)
-    ),
-    instrument_pair = str_extract(pair, "^[^_]+_vs_([^_]+)", group = 1) |>
-      paste0(str_extract(pair, "^([^_]+)_vs_", group = 1), " × ", x = _),
-    pair_source = str_replace_all(pair, "_vs_", " × "),
-    abs_rho = abs(rho)
-  )
-
-# Rank by abs_rho for y-axis ordering
-bonf_top <- bonf_top |>
-  mutate(
-    rank_label = glue::glue(
-      "{str_trunc(item_text_a, 42)} ×\n{str_trunc(item_text_b, 42)}"
+if (nrow(order_comparisons) > 0 && nrow(anova_terms) > 0 && nrow(tool_order) > 0) {
+  order_min <- order_comparisons |>
+    mutate(p_bh = as.numeric(p_bh), effect_size = as.numeric(effect_size)) |>
+    summarise(
+      best_bh = min(p_bh, na.rm = TRUE),
+      largest_abs_r = max(abs(effect_size), na.rm = TRUE),
+      n_traditional_first = first(n_traditional_first),
+      n_ai_first = first(n_ai_first)
     )
+
+  topic_top <- anova_terms |>
+    mutate(across(c(f_value, p_bh, partial_eta_sq), as.numeric)) |>
+    filter(term_family == "topic_main") |>
+    arrange(p_bh) |>
+    slice(1)
+
+  interaction_best <- anova_terms |>
+    mutate(p_bh = as.numeric(p_bh)) |>
+    filter(term_family == "interaction") |>
+    summarise(best_bh = min(p_bh, na.rm = TRUE))
+
+  tool_order_best <- tool_order |>
+    mutate(p_bh_primary = as.numeric(p_bh_primary)) |>
+    summarise(best_bh = min(p_bh_primary, na.rm = TRUE))
+
+  tibble::tribble(
+    ~Check, ~Result, ~Interpretation,
+    "Order group differences",
+    paste0(
+      "None survived BH correction; best BH p = ",
+      fmt_p(order_min$best_bh),
+      "; largest absolute rank-biserial r = ",
+      fmt_num(order_min$largest_abs_r, 2)
+    ),
+    paste0(
+      "Traditional-first n = ",
+      order_min$n_traditional_first,
+      "; AI-first n = ",
+      order_min$n_ai_first,
+      ". Counterbalancing looks acceptable."
+    ),
+    "Tool x order interactions",
+    paste0("None survived BH correction; best BH p = ", fmt_p(tool_order_best$best_bh)),
+    "Order did not materially change comparable traditional-vs-AI factor pairs.",
+    "Essay topic effects",
+    paste0(
+      topic_top$composite,
+      " showed the strongest topic result: F = ",
+      fmt_num(topic_top$f_value, 2),
+      ", BH p = ",
+      fmt_p(topic_top$p_bh),
+      ", partial eta squared = ",
+      fmt_num(topic_top$partial_eta_sq, 3)
+    ),
+    "AI-session reactions may depend partly on which essay topic students summarized.",
+    "Order x topic interactions",
+    paste0("None survived BH correction; best BH p = ", fmt_p(interaction_best$best_bh)),
+    "Topic effects do not appear order-dependent."
   ) |>
-  arrange(abs_rho) |>
-  mutate(rank_label = fct_inorder(rank_label))
-
-p4 <- ggplot(bonf_top,
-             aes(x = rho, y = rank_label, fill = direction)) +
-  geom_col(width = 0.65, alpha = 0.88) +
-  geom_text(aes(label = sprintf("ρ = %.2f", rho),
-                x = rho + if_else(rho > 0, .015, -.015)),
-            hjust  = if_else(bonf_top$rho > 0, 0, 1),
-            size   = 2.9, colour = "grey25") +
-  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.5) +
-  scale_fill_manual(
-    values = c(positive = "#4f79b7", negative = "#c96b3b"),
-    labels = c(positive = "Positive association",
-               negative = "Negative association"),
-    name   = NULL
-  ) +
-  scale_x_continuous(limits = c(-.70, .80),
-                     breaks  = seq(-.5, .75, .25),
-                     labels  = label_number(accuracy = .01)) +
-  facet_wrap(~ pair_source, scales = "free_y", ncol = 1) +
-  labs(
-    title    = "Strongest item-level cross-instrument associations (Bonferroni-corrected)",
-    subtitle = "Top 18 pairs by |ρ| surviving Bonferroni correction across 1,916 tests",
-    x        = "Spearman ρ",
-    y        = NULL,
-    caption  = "Pair-local Bonferroni correction applied within each instrument pair. N = 88 (IMI×WSE) or 91 (AIRefl×Beliefs)."
-  ) +
-  theme_cowriters() +
-  theme(
-    axis.text.y      = element_text(size = 7.5, lineheight = 1.1),
-    panel.spacing    = unit(1.2, "lines"),
-    strip.text       = element_text(size = 9, face = "bold")
-  )
-
-p4
+    kable(caption = "Counterbalancing and topic checks.")
+}
 ```
 
-------------------------------------------------------------------------
+## Primary Likert Factor Map
 
-## Figure 5 — Perceived Competence × Writing Self-Efficacy Deep Dive
+The primary factor map includes the three instruments that passed the original factorability gate using their full intended item sets: IMI, WritingEfficacy, and AIReflection.
 
-**What it shows:** The two strongest correlations in the entire dataset
-(ρ = 0.61, ρ = 0.59, both p_Bonferroni \< 0.001) in context. This panel
-spotlights the convergence between within-session task competence (IMI)
-and domain self-efficacy (WritingEfficacy), providing construct validity
-evidence.
+```{r primary-factor-heatmap, fig.cap="Primary factor heat map across the three locked factorable surveys."}
+include_if_exists(plot_primary_factor)
+```
 
-```{r fig5-competence-efficacy}
-# Pull only IMI×WritingEfficacy pairs, top hits, for a focused scatter
-# Requires analysis-ready data with item-level columns.
-# Adjust column names below to match your master file.
+```{r primary-factor-table}
+factor_corrs <- read_or_empty(script6_factor_corr_file)
 
-analysis_ready3_path <- order_effects_analysis_ready_file
+if (nrow(factor_corrs) > 0) {
+  factor_corrs |>
+    mutate(
+      rho = as.numeric(rho),
+      p_bh = as.numeric(p_bh),
+      p_bonferroni = as.numeric(p_bonferroni),
+      survives_bh = as_bool(survives_bh),
+      survives_bonferroni = as_bool(survives_bonferroni)
+    ) |>
+    filter(instrument_x != instrument_y, survives_bh) |>
+    arrange(p_bh, desc(abs(rho))) |>
+    transmute(
+      `Factor 1` = str_replace(factor_label_x, " -> ", ": "),
+      `Factor 2` = str_replace(factor_label_y, " -> ", ": "),
+      N = n,
+      `Spearman rho` = fmt_rho(rho),
+      `BH p` = fmt_p(p_bh),
+      `Bonferroni p` = fmt_p(p_bonferroni),
+      `Correction strength` = if_else(survives_bonferroni, "Bonferroni", "BH only")
+    ) |>
+    kable(caption = "Corrected cross-instrument factor correlations from the primary three-survey map.")
+}
+```
 
-master_path <- master_wide_file
+::: plain-callout
+**Interpretation:** Traditional-session perceived competence clusters with writing self-efficacy. Cross-session links between traditional-writing factors and AIReflection are weaker, suggesting that students' traditional writing confidence and AI-session reflections were related but not interchangeable constructs.
+:::
 
-use_path <- if (file.exists(master_path)) master_path else
-            if (file.exists(analysis_ready3_path)) analysis_ready3_path else
-            NULL
+## Reading Breadth: ART Net
 
-if (!is.null(use_path)) {
+The Author Recognition Test (ART) is included as an external reading-breadth anchor rather than another AI attitude measure. The primary ART score is **ART net**, computed as real author hits minus false-alarm selections.
 
-  master <- read_csv(use_path, show_col_types = FALSE)
+```{r art-primary-heatmap, fig.width=5.8, fig.height=5.7, fig.cap="ART net correlations with primary locked factor scores."}
+plot_anchor_heatmap(
+  primary_art_net_corrs,
+  title = "Primary factors x ART net",
+  subtitle = "Three locked surveys only: IMI, WritingEfficacy, and AIReflection"
+)
+```
 
-  # IMI item 9  = "I think I did pretty well at this activity"
-  # WSE item 5  = "I can be recognized as a strong writer"
-  # IMI item 8  = "I think I am pretty good at this activity"
-  #
-  # Column names differ between Final_Master_Wide and Order_Effects_Analysis_Ready:
-  #   Master wide uses: IMI_9, Efficacy_5   (no session suffix)
-  #   If those are absent the script tries IMI_S1_9, Efficacy_S1_5 variants.
+```{r art-four-survey-heatmap, fig.width=5.8, fig.height=7.0, fig.cap="ART net correlations with primary and exploratory Beliefs factor scores."}
+plot_anchor_heatmap(
+  four_art_net_corrs,
+  title = "Four-family factors x ART net",
+  subtitle = "Includes exploratory BeliefsAboutAI items 6-22 factors"
+)
+```
 
-  find_col <- function(df, candidates) {
-    candidates[candidates %in% names(df)][1]
-  }
+```{r art-primary-table}
+if (nrow(primary_art_net_corrs) > 0) {
+  primary_art_net_corrs |>
+    mutate(
+      survives_bh = p_bh < .05,
+      survives_bonferroni = p_bonf < .05
+    ) |>
+    arrange(p_bh, desc(abs(rho))) |>
+    transmute(
+      Factor = display_label,
+      N = n,
+      `Spearman rho` = fmt_rho(rho),
+      `BH p` = fmt_p(p_bh),
+      `Bonferroni p` = fmt_p(p_bonf),
+      `Correction strength` = case_when(
+        survives_bonferroni ~ "Bonferroni",
+        survives_bh ~ "BH only",
+        TRUE ~ "Not corrected"
+      )
+    ) |>
+    kable(caption = "Primary factors ranked by association with ART net.")
+}
+```
 
-  imi9  <- find_col(master, c("IMI_9",  "IMI_S1_9",  "imi_9"))
-  imi8  <- find_col(master, c("IMI_8",  "IMI_S1_8",  "imi_8"))
-  wse5  <- find_col(master, c("Efficacy_5", "WSE_5", "Efficacy_S1_5", "wse_5"))
+::: plain-callout
+**Interpretation:** Higher ART net scores are positively associated with traditional perceived/writing competence factors and negatively associated with AIReflection ownership/usefulness. This pattern suggests that broader reading exposure may align with traditional writing confidence while relating inversely to perceived ownership/usefulness in the AI-assisted session.
+:::
 
-  top_pairs <- list(
-    list(x = imi9, y = wse5,
-         xlab = "IMI: I think I did pretty well",
-         ylab = "WSE: Recognized as a strong writer",
-         rho  = 0.61, p_label = "p < .001"),
-    list(x = imi8, y = wse5,
-         xlab = "IMI: I think I am pretty good at this",
-         ylab = "WSE: Recognized as a strong writer",
-         rho  = 0.59, p_label = "p < .001")
-  )
+## AI-Use Exposure: Q17
 
-  valid_pairs <- keep(top_pairs, ~ !is.na(.x$x) && !is.na(.x$y) &&
-                                    all(c(.x$x, .x$y) %in% names(master)))
+Q17 asked participants to rate familiarity/use for a broad list of AI tools on a 1-5 scale: never heard, heard but never used, rarely use, sometimes use, often use. The list intentionally covered both common and niche tools, so a simple all-tool mean would be dominated by never-heard responses for low-prevalence tools.
 
-  if (length(valid_pairs) == 0) {
-    cat("Item columns for Figure 5 not found in", use_path, "\n",
-        "Columns detected in master file that start with IMI_ or Efficacy_:\n")
-    cat(paste(grep("^IMI_|^Efficacy_|^WSE_", names(master), value = TRUE),
-              collapse = ", "), "\n")
-  } else {
+Before computing Q17 summaries, this report filters Q17 responses to the Script 2 reviewed AI-side primary inclusion set. The reviewed AI-side pool contains `r q17_reviewed_ai_n` participants; Q17 responses are available for `r q17_descriptive_n` of them after the Q17-specific outlier exclusion, yielding `r comma(q17_response_n)` tool-level responses across `r q17_tool_n` tools. This removes `r q17_unreviewed_n` Q17 respondents who were outside the reviewed AI-side inclusion set. The Q17 x exploratory Beliefs rows therefore use N = `r q17_beliefs_n`; the full four-family Q17 heat map has pairwise N = `r q17_four_n_label` because the original locked factors and post-hoc Beliefs factors have different available score sets.
 
-    scatter_df <- imap_dfr(valid_pairs, function(pair, i) {
-      master |>
-        select(x = all_of(pair$x), y = all_of(pair$y)) |>
-        filter(!is.na(x), !is.na(y)) |>
-        mutate(
-          panel = paste0(pair$xlab, "\nvs\n", pair$ylab),
-          rho_label = paste0("ρ = ", sprintf("%.2f", pair$rho), ", ", pair$p_label)
+```{r q17-overall-response-distribution, fig.width=10, fig.height=5, fig.cap="Overall Q17 response distribution after filtering to reviewed AI-side participants with available Q17 data."}
+if (nrow(q17_long) > 0) {
+  q17_long |>
+    filter(!is.na(use_score)) |>
+    count(use_score) |>
+    mutate(
+      response = factor(
+        case_when(
+          use_score == 1 ~ "I have never heard of\nthis tool.",
+          use_score == 2 ~ "I have heard of this\ntool but never used it.",
+          use_score == 3 ~ "I rarely use this tool.",
+          use_score == 4 ~ "I sometimes use this\ntool.",
+          use_score == 5 ~ "I often use this tool.",
+          TRUE ~ "Missing"
+        ),
+        levels = c(
+          "I have never heard of\nthis tool.",
+          "I have heard of this\ntool but never used it.",
+          "I rarely use this tool.",
+          "I sometimes use this\ntool.",
+          "I often use this tool."
         )
-    })
-
-    label_df <- scatter_df |>
-      distinct(panel, rho_label) |>
-      mutate(x = -Inf, y = Inf)
-
-    ggplot(scatter_df, aes(x = x, y = y)) +
-      geom_jitter(width = 0.12, height = 0.12,
-                  colour = "#4f79b7", alpha = 0.65, size = 2) +
-      geom_smooth(method = "lm", se = TRUE,
-                  colour = "#4f79b7", fill = "#4f79b7",
-                  alpha = 0.15, linewidth = 0.9) +
-      geom_text(
-        data = label_df,
-        aes(x = x, y = y, label = rho_label),
-        inherit.aes = FALSE,
-        hjust = -0.1, vjust = 1.6,
-        size  = 3.5, colour = "grey30"
-      ) +
-      scale_x_continuous(breaks = 1:7) +
-      scale_y_continuous(breaks = 1:5) +
-      facet_wrap(~ panel, ncol = 2) +
-      labs(
-        title    = "Task competence and writing self-efficacy converge strongly",
-        subtitle = "Two strongest cross-instrument item correlations (both survive Bonferroni at p < .001, N = 88)",
-        x        = "Item response",
-        y        = "Item response",
-        caption  = "Jitter added (±0.12) to separate overplotted Likert responses. Linear fit with 95% CI."
-      ) +
-      theme_cowriters() +
-      theme(strip.text = element_text(size = 9, face = "bold"))
-  }
-
-} else {
-  cat("Neither ", master_wide_file, " nor ", order_effects_analysis_ready_file, " found.\n",
-      "Render the upstream pipeline first.\n", sep = "")
+      ),
+      total = sum(n),
+      pct = n / total,
+      count_label = paste0(comma(n), "/", comma(total))
+    ) |>
+    ggplot(aes(x = response, y = pct, fill = response)) +
+    geom_col(width = 0.9) +
+    geom_text(aes(label = percent(pct, accuracy = 0.1)), vjust = -0.5, size = 3.5) +
+    geom_text(aes(label = count_label), vjust = 1.5, size = 3, color = "white") +
+    scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.1))) +
+    scale_fill_manual(values = c("#c96b3b", "#d6ae6d", "#acb99d", "#4f7c5f", "#275b3d")) +
+    labs(
+      title = "Overall distribution of Q17 responses",
+      subtitle = paste0(
+        "Reviewed AI-side Q17 sample: ",
+        q17_descriptive_n,
+        " participants x ",
+        q17_tool_n,
+        " tools = ",
+        comma(q17_response_n),
+        " tool-level responses"
+      ),
+      x = NULL,
+      y = "Share of responses",
+      fill = NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.position = "none",
+      panel.grid.major.x = element_blank(),
+      plot.title = element_text(face = "bold")
+    )
 }
 ```
 
-------------------------------------------------------------------------
+For the inferential summaries, the primary Q17 metric is **regular-use breadth**: the number of tools a participant rated 4 or 5, meaning sometimes or often used. The sensitivity metric is **filtered mean use**: the mean 1-5 score after retaining only tools with at least 10% ever-used prevalence in this sample, where ever-used means a score of 3, 4, or 5. This retained `r length(q17_eligible_tools)` tools: `r q17_eligible_tool_label`.
 
-## Figure 6 — ART vs Item-Level: Top BH-Surviving Items
-
-**What it shows:** The 12 strongest item-level ART correlations that
-survive BH correction, colour-coded by instrument and direction. This
-surfaces the specific items driving the factor-level ART signals.
-
-```{r fig6-art-items-bh}
-
-art_factors <- read_csv(
-  art_factor_rank_file,
-  show_col_types = FALSE
-)
-
-art_items <- read_csv(
-  art_item_rank_file,
-  show_col_types = FALSE
-)
-
-art_top_bh <- art_items |>
-  filter(survives_bh) |>
-  arrange(desc(abs_r)) |>
-  slice_head(n = 12) |>
-  mutate(
-    direction      = if_else(rho > 0, "positive", "negative"),
-    short_text     = str_trunc(item_text, 58),
-    short_text     = fct_reorder(short_text, abs_r),
-    bonf_survivor  = survives_bonferroni,
-    sig_label      = case_when(
-      survives_bonferroni ~ paste0("★ ρ = ", sprintf("%.2f", rho)),
-      TRUE                ~ paste0("ρ = ",   sprintf("%.2f", rho))
+```{r q17-tool-popularity-plot, fig.width=8.5, fig.height=5.8, fig.cap="Q17 tool popularity by ever-used and regular-use rates."}
+if (nrow(q17_tool_summary) > 0) {
+  q17_tool_summary |>
+    slice_head(n = 12) |>
+    select(tool, ever_used_pct, regular_use_pct) |>
+    pivot_longer(
+      cols = c(ever_used_pct, regular_use_pct),
+      names_to = "metric",
+      values_to = "pct"
+    ) |>
+    mutate(
+      tool = fct_reorder(tool, pct, .fun = max),
+      metric = recode(
+        metric,
+        ever_used_pct = "Ever used",
+        regular_use_pct = "Regular use"
+      )
+    ) |>
+    ggplot(aes(x = pct, y = tool, fill = metric)) +
+    geom_col(position = position_dodge(width = 0.72), width = 0.64) +
+    scale_x_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+    scale_fill_manual(values = c("Ever used" = "#c96b3b", "Regular use" = "#4f7c5f")) +
+    labs(
+      title = "Q17 tool popularity",
+      subtitle = "Top 12 tools by ever-used rate",
+      x = "Share of participants",
+      y = NULL,
+      fill = NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.major.y = element_blank(),
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold")
     )
-  )
-
-p6 <- ggplot(art_top_bh,
-             aes(x = rho, y = short_text,
-                 fill = instrument, alpha = bonf_survivor)) +
-  geom_col(width = 0.68) +
-  geom_text(aes(label = sig_label,
-                x = rho + if_else(rho > 0, .012, -.012)),
-            hjust   = if_else(art_top_bh$rho > 0, 0, 1),
-            size    = 3.0, colour = "grey20") +
-  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.45) +
-  scale_fill_manual(values = pal, name = "Instrument") +
-  scale_alpha_manual(
-    values = c(`TRUE` = 1.0, `FALSE` = 0.55),
-    labels = c(`TRUE` = "Bonferroni p < .05 (★)",
-               `FALSE` = "BH p < .05 only"),
-    name   = NULL
-  ) +
-  scale_x_continuous(limits = c(-.60, .62),
-                     breaks  = seq(-.5, .5, .25),
-                     labels  = label_number(accuracy = .01)) +
-  labs(
-    title    = "Item-level ART correlations: reading breadth spans task engagement and AI attitudes",
-    subtitle = "Top 12 BH-corrected items across all instruments (N = 82). ★ = survives Bonferroni",
-    x        = "Spearman ρ  (ART net score)",
-    y        = NULL,
-    caption  = paste0(
-      "Negative ρ: higher reading breadth → less positive AI attitude / lower AI session satisfaction.\n",
-      "Positive ρ: higher reading breadth → higher task competence / writing efficacy."
-    )
-  ) +
-  theme_cowriters() +
-  theme(axis.text.y = element_text(size = 8.5))
-
-p6
+}
 ```
 
-------------------------------------------------------------------------
-
-## Figure 7 — The Null Results: Tool × Order ANOVA and Order Group Comparisons
-
-**What it shows:** Communicating null results clearly is as important as
-reporting significant ones. This figure visualises the Mann-Whitney
-composite distributions split by order group, making it plain that the
-two groups are statistically indistinguishable — which validates
-counterbalancing.
-
-```{r fig7-null-results}
-
-
-mw <- read_csv(
-  mann_whitney_file,
-  show_col_types = FALSE
+```{r q17-primary-heatmap, fig.width=5.8, fig.height=5.7, fig.cap="Regular-use breadth correlations with primary locked factor scores."}
+plot_anchor_heatmap(
+  primary_q17_regular_corrs,
+  title = "Primary factors x regular-use breadth",
+  subtitle = "Three locked surveys only: IMI, WritingEfficacy, and AIReflection"
 )
-
-null_plot_df <- mw |>
-  select(composite, instrument, factor_id,
-         median_traditional_first, median_ai_first,
-         p_bh, effect_size) |>
-  pivot_longer(
-    cols      = c(median_traditional_first, median_ai_first),
-    names_to  = "group",
-    values_to = "median_score"
-  ) |>
-  mutate(
-    group      = if_else(str_detect(group, "traditional"),
-                         "Traditional-first", "AI-first"),
-    group      = factor(group, levels = c("Traditional-first", "AI-first")),
-    factor_label = paste0(instrument, "\n", factor_id),
-    bh_label   = if_else(p_bh < .05, paste0("p\u1d40\u029c = ", round(p_bh, 3)),
-                         paste0("p\u1d40\u029c = ", round(p_bh, 3),
-                                " (ns)")),
-    rb_label   = paste0("r\u1d47 = ", round(coalesce(effect_size, 0), 2))
-  )
-
-p7 <- ggplot(null_plot_df,
-             aes(x = factor_label, y = median_score, fill = group)) +
-  geom_col(position = position_dodge(0.72), width = 0.65, alpha = 0.85) +
-  geom_text(
-    data = mw |>
-      mutate(factor_label = paste0(instrument, "\n", factor_id),
-             rb_label = paste0("r\u1d47 = ", round(coalesce(effect_size, 0), 2))),
-    aes(x = factor_label, y = pmax(median_traditional_first, median_ai_first),
-        label = rb_label, fill = NULL),
-    inherit.aes = FALSE,
-    vjust = -0.5, size = 2.8, colour = "grey40"
-  ) +
-  scale_fill_manual(
-    values = c("Traditional-first" = "#4f79b7", "AI-first" = "#c96b3b"),
-    name   = "Order group"
-  ) +
-  scale_y_continuous(expand = expansion(mult = c(0, .15))) +
-  labs(
-    title    = "No order effect detected on any composite (all p\u1d40\u029c > .93)",
-    subtitle = "Median composite scores by order group — Mann-Whitney, BH-corrected (N ≈ 45 vs 37)",
-    x        = NULL,
-    y        = "Median composite score",
-    caption  = "Rank-biserial effect sizes (rᵦ) shown above bars. All effects negligible (|rᵦ| < 0.15).\n  This validates counterbalancing: groups are statistically indistinguishable at baseline."
-  ) +
-  theme_cowriters() +
-  theme(axis.text.x = element_text(size = 8.5, lineheight = 1.2))
-
-p7
 ```
 
-------------------------------------------------------------------------
-
-## Figure 8 — Conceptual Summary: The Three-Strand Narrative
-
-**What it shows:** A one-page conceptual overview of what the study's
-exploratory correlational findings actually tell us, organised around
-the three coherent patterns that emerged.
-
-```{r fig8-conceptual-summary, fig.height=5}
-
-# Data for the three-strand lollipop summary
-strands <- tribble(
-  ~strand, ~finding, ~rho, ~threshold, ~label_rho,
-  "Strand A\nReading × Competence",
-    "IMI competence × Writing self-efficacy\n(traditional session)",     0.61,  "Bonferroni", "ρ = 0.61 ***",
-  "Strand A\nReading × Competence",
-    "ART net score × IMI Interest/Enjoyment",                            0.36,  "Bonferroni", "ρ = 0.36 **",
-  "Strand A\nReading × Competence",
-    "ART net score × Writing Confidence (WSE F1)",                       0.29,  "BH only",    "ρ = 0.29 *",
-  "Strand B\nAI Utility × Attitudes",
-    "AI Perceived Utility (AIRefl F1) × ART net score",                -0.41,  "Bonferroni", "ρ = −0.41 **",
-  "Strand B\nAI Utility × Attitudes",
-    "Willingness to reuse AI × Envisioning AI in teaching",              0.46,  "Bonferroni", "ρ = 0.46 ***",
-  "Strand B\nAI Utility × Attitudes",
-    "Willingness to reuse AI × Worried AI hinders skills (inverted)",   -0.43,  "Bonferroni", "ρ = −0.43 **",
-  "Strand C\nSession Independence",
-    "Writing Confidence × AI session measures (max cross-session)",      0.38,  "ns",         "ρ = 0.38 ns",
-  "Strand C\nSession Independence",
-    "Tool × Order interaction F1 pair (ANOVA)",                          0.05,  "ns",         "F = 0.05 ns",
-  "Strand C\nSession Independence",
-    "All composite order effects (Mann-Whitney, max |rᵦ|)",              0.15,  "ns",         "|rᵦ| < 0.15 ns"
+```{r q17-four-survey-heatmap, fig.width=5.8, fig.height=7.0, fig.cap="Regular-use breadth correlations with primary and exploratory Beliefs factor scores."}
+plot_anchor_heatmap(
+  four_q17_regular_corrs,
+  title = "Four-family factors x regular-use breadth",
+  subtitle = "Includes exploratory BeliefsAboutAI items 6-22 factors"
 )
+```
 
-strand_colours <- c(
-  "Strand A\nReading × Competence" = "#4f79b7",
-  "Strand B\nAI Utility × Attitudes" = "#c96b3b",
-  "Strand C\nSession Independence" = "#2ca02c"
+```{r q17-sensitivity-primary-heatmap, fig.width=5.8, fig.height=5.7, fig.cap="Filtered mean use score correlations with primary locked factor scores."}
+plot_anchor_heatmap(
+  primary_q17_filtered_mean_corrs,
+  title = "Primary factors x filtered mean use",
+  subtitle = "Sensitivity metric: mean use across tools with ever-used rate >= 10%"
 )
-
-p8 <- ggplot(strands,
-             aes(y = reorder(finding, abs(rho)),
-                 x = rho,
-                 colour = strand, shape = threshold)) +
-  geom_vline(xintercept = 0, colour = "grey65", linewidth = 0.5,
-             linetype = "dashed") +
-  geom_segment(aes(xend = 0, yend = reorder(finding, abs(rho))),
-               linewidth = 0.9, alpha = 0.6) +
-  geom_point(size = 4.5) +
-  geom_text(aes(label = label_rho,
-                x = rho + if_else(rho >= 0, .035, -.035)),
-            hjust   = if_else(strands$rho >= 0, 0, 1),
-            size    = 3.0, colour = "grey25") +
-  scale_colour_manual(values = strand_colours, name = "Narrative strand") +
-  scale_shape_manual(
-    values = c(Bonferroni = 19, "BH only" = 17, ns = 1),
-    labels = c(Bonferroni = "Bonferroni p < .05",
-               "BH only"  = "BH p < .05 only",
-               ns         = "Not significant"),
-    name   = "Correction"
-  ) +
-  scale_x_continuous(limits = c(-.80, .85),
-                     breaks  = seq(-.75, .75, .25)) +
-  facet_wrap(~ strand, scales = "free_y", ncol = 1) +
-  labs(
-    title    = "Three coherent patterns in the Cowriters exploratory findings",
-    subtitle = "Effect sizes from cross-instrument Spearman correlations and mixed ANOVAs (N = 82)",
-    x        = "Effect size (Spearman ρ or scaled equivalent)",
-    y        = NULL,
-    caption  = "Strand C null results are substantive: they confirm counterbalancing integrity and the\n  psychological independence of traditional and AI writing self-concepts in this sample."
-  ) +
-  theme_cowriters() +
-  theme(
-    axis.text.y   = element_text(size = 8, lineheight = 1.15),
-    panel.spacing = unit(1.0, "lines"),
-    strip.text    = element_text(size = 10, face = "bold",
-                                 colour = "grey10")
-  )
-
-p8
 ```
 
-------------------------------------------------------------------------
-
-## Session Info
-
-```{r session}
-sessionInfo()
+```{r q17-sensitivity-four-survey-heatmap, fig.width=5.8, fig.height=7.0, fig.cap="Filtered mean use score correlations with primary and exploratory Beliefs factor scores."}
+plot_anchor_heatmap(
+  four_q17_filtered_mean_corrs,
+  title = "Four-family factors x filtered mean use",
+  subtitle = "Sensitivity metric: mean use across tools with ever-used rate >= 10%"
+)
 ```
+
+::: plain-callout
+**Interpretation:** Regular-use breadth is the primary Q17 readout because it focuses on tools participants reported using at least sometimes. Filtered mean use is a sensitivity check that preserves 1-5 intensity information while reducing the influence of tools that were rarely used in this sample.
+:::
+
+## Exploratory BeliefsAboutAI Extension
+
+The full 22-item BeliefsAboutAI battery failed the original KMO factorability gate. A narrower post-hoc subset, items 6-22, was therefore evaluated as an exploratory sensitivity analysis. Items 1-5 primarily measured awareness of AI limitations, factual inaccuracy, bias, and limited emotional intelligence. Items 6-22 more directly measured attitudes toward AI utility, comfort, future use, and concern/harms.
+
+::: stats-detail
+BeliefsAboutAI items 6-22: KMO = `r if (nrow(beliefs_model) > 0) fmt_num(beliefs_model$kmo[1], 3) else "missing"`, RMSEA = `r if (nrow(beliefs_model) > 0) fmt_num(beliefs_model$rmsea[1], 3) else "missing"`, TLI = `r if (nrow(beliefs_model) > 0) fmt_num(beliefs_model$tli[1], 3) else "missing"`, RMSR = `r if (nrow(beliefs_model) > 0) fmt_num(beliefs_model$rmsr[1], 3) else "missing"`. These diagnostics support exploratory factor scoring for pattern interpretation, not confirmatory validation of a BeliefsAboutAI scale.
+:::
+
+```{r beliefs-loadings-plot, fig.cap="Exploratory BeliefsAboutAI items 6-22 factor loadings."}
+include_if_exists(plot_beliefs_loadings)
+```
+
+```{r beliefs-four-family-plot, fig.cap="Exploratory four-family factor heat map including BeliefsAboutAI items 6-22."}
+include_if_exists(plot_beliefs_four_family)
+```
+
+::: plain-callout
+**Exploratory interpretation:** Beliefs utility/comfort and future AI intent align most strongly with AIReflection ownership/usefulness. Participants who experienced the AI-assisted writing task as useful or personally owned also tended to endorse more positive AI-use beliefs.
+:::
+
+## Interpretation Summary
+
+The results support the following interpretation:
+
+1. The cleaned paired sample included `r strict_n` participants, with no meaningful task-order artifacts.
+2. Three full surveys supported the primary factor-score pipeline: IMI, WritingEfficacy, and AIReflection.
+3. The primary factor map shows a traditional-writing competence cluster and weaker cross-session relationships.
+4. ART provides the clearest external anchor: higher ART relates to stronger traditional competence but lower AI ownership/usefulness.
+5. Q17 regular-use breadth is the primary AI-use anchor; filtered mean use is a sensitivity check that removes tools with very low use prevalence.
+6. BeliefsAboutAI is best handled in two layers: the full 22-item scale is not factorable, but the theoretically narrower items 6-22 subset is a defensible exploratory extension.
+7. Item-level analyses were not included in this summary report because they involve many exploratory pairwise tests and are better suited to a supplement.
