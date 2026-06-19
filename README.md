@@ -51,7 +51,7 @@ The code treats manual salvage differently by stage:
 | `WritingEfficacy` | RW/traditional session | EFA, composites, order checks, ART analyses, profiles | raw anchors are `0/25/50/75/100`; EFA uses `(x / 25) + 1` |
 | `AuthorRecognition` / `ART` | RW survey | external reading-breadth anchor | hits, false alarms, net score, hit rate, false-alarm rate, adjusted rate |
 | `AIReflection` | LLM/AI session | EFA, composites, order checks, ART analyses, profiles | no reverse scoring in current pipeline |
-| `BeliefsAboutAI` | LLM/AI session | item-level fallback analyses | original Qualtrics items `17-20` reverse-scored with `6 - x`; not factorable in the locked workflow |
+| `BeliefsAboutAI` | LLM/AI session | item-level fallback analyses; exploratory items `6-22` factor model in script `16` | original Qualtrics items `17-20` reverse-scored with `6 - x`; full 22-item battery is not factorable in the locked workflow |
 | `Q17` AI tool use | LLM side survey | AI-tool familiarity/use analyses | ordered scale from `1 = never heard` to `5 = often use` |
 
 ## Render Order
@@ -73,6 +73,7 @@ The active numbered scripts are:
 13. `13_results.qmd`
 14. `14_q17_deeper_dive.qmd`
 15. `15_q17_robustness.qmd`
+16. `16_exploratory_beliefs.qmd`
 
 There is also one companion script:
 
@@ -532,6 +533,7 @@ Purpose:
 
 - Builds a compiled visual report from upstream outputs.
 - Uses already-created CSV files and plots them in a consolidated Quarto document.
+- Serves as the final human-facing synthesis pass when the full pipeline is being rendered.
 
 Key methods:
 
@@ -539,6 +541,10 @@ Key methods:
 - uses Fisher-z intervals for selected correlation displays
 - creates figures from existing upstream outputs rather than replacing the upstream analyses
 - renders with embedded resources for a self-contained HTML report
+
+Render note:
+
+- Although it keeps the script number `13` for continuity, render it after scripts `14`, `15`, and `16` when building the full final report because it may consume those downstream exploratory/robustness outputs.
 
 Output folder:
 
@@ -617,6 +623,42 @@ Important outputs:
 - `15_q17_robustness/plots/Robustness_Rho_Shift_Factors.png`
 - `15_q17_robustness/plots/Breadth_vs_Factors_DotPlot.png`
 - `15_q17_robustness/plots/MixedModel_Factor_Coefficients.png`
+
+### `16_exploratory_beliefs.qmd`
+
+Purpose:
+
+- Tests an exploratory `BeliefsAboutAI` factor-scoring path using items `6-22`.
+- Treats items `1-5` as awareness/literacy items rather than belief items for this secondary model.
+- Creates factor-level validity checks against the same families used elsewhere in the pipeline.
+
+Key methods:
+
+- reads `02_efa_exports/efa/BeliefsAboutAI_EFA_Primary.csv`
+- fits a three-factor ordinal EFA with polychoric correlations, `minres` extraction, and `oblimin` rotation
+- scores exploratory factors with tenBerge scores
+- labels the factors as Utility & Comfort, Future AI Intent, and Concern & Harms
+- correlates exploratory Beliefs factors with existing factor scores, ART metrics, Q17 participant-level use profiles, and named model use
+- includes concern-focused follow-ups for aggregate Q17 use and individual Q17 tool frequency
+
+Output folder:
+
+- `16_exploratory_beliefs/`
+
+Important outputs:
+
+- `16_exploratory_beliefs/csv/Beliefs_Exploratory_Model_Summary.csv`
+- `16_exploratory_beliefs/csv/Beliefs_Exploratory_Factor_Scores.csv`
+- `16_exploratory_beliefs/csv/Beliefs_Exploratory_Loadings.csv`
+- `16_exploratory_beliefs/csv/Beliefs_Exploratory_Cross_Factor_Correlations_Unique.csv`
+- `16_exploratory_beliefs/csv/ART_vs_Beliefs_Exploratory_Factors.csv`
+- `16_exploratory_beliefs/csv/Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv`
+- `16_exploratory_beliefs/csv/Q17_Aggregate_Metrics_vs_Beliefs_ConcernHarms.csv`
+- `16_exploratory_beliefs/csv/Named_Model_Use_vs_Beliefs_Exploratory_Factors.csv`
+- `16_exploratory_beliefs/plots/Beliefs_Exploratory_Loadings_Heatmap.png`
+- `16_exploratory_beliefs/plots/ART_vs_Beliefs_Exploratory_Factors_Heatmap.png`
+- `16_exploratory_beliefs/plots/Q17_vs_Beliefs_Exploratory_Factors_Heatmap.png`
+- `16_exploratory_beliefs/plots/Q17_ChatGPT_Use_Bucket_vs_Beliefs_ConcernHarms.png`
 
 ## Legacy And Non-Active Files
 

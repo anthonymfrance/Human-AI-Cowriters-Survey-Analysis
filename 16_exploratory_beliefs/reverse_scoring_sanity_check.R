@@ -10,7 +10,7 @@ safe_cor <- function(df, x, y) {
 }
 
 belief_scores <- read_csv(
-  "exploratory_beliefs_6_22/csv/Beliefs_6_22_Factor_Scores.csv",
+  "16_exploratory_beliefs/csv/Beliefs_Exploratory_Factor_Scores.csv",
   show_col_types = FALSE
 )
 factor_scores <- read_csv(
@@ -58,7 +58,7 @@ cor_sanity <- bind_rows(
   safe_cor(sanity_df, "Beliefs_UtilityComfort_mean_7_16", "IMI_MR3")
 )
 
-write_csv(cor_sanity, "exploratory_beliefs_6_22/csv/Reverse_Scoring_Sanity_Correlations.csv")
+write_csv(cor_sanity, "16_exploratory_beliefs/csv/Reverse_Scoring_Sanity_Correlations.csv")
 print(cor_sanity, n = 20)
 
 rw_col_names <- c(

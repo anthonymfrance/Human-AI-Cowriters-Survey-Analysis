@@ -5,7 +5,7 @@ source("scoring_helpers.R")
 
 set.seed(42L)
 
-csv_dir <- file.path("exploratory_beliefs_6_22", "csv")
+csv_dir <- file.path("16_exploratory_beliefs", "csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 
 factor_score_method <- "tenBerge"
@@ -37,7 +37,7 @@ mk_corrs <- function(df, xs, ys, family) {
     arrange(p_bh, desc(abs_rho))
 }
 
-score_beliefs_6_22 <- function() {
+score_exploratory_beliefs <- function() {
   bel <- read_csv(
     file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv"),
     show_col_types = FALSE
@@ -97,7 +97,7 @@ score_beliefs_6_22 <- function() {
   ) |>
     rename(
       Beliefs_UtilityComfort = MR1,
-      Beliefs_AdoptionOrientation = MR2,
+      Beliefs_FutureAIIntent = MR2,
       Beliefs_LowConcern = MR3
     ) |>
     # Items 17-20 were already reverse-scored upstream. Flip this factor so
@@ -106,7 +106,7 @@ score_beliefs_6_22 <- function() {
     select(
       participant_id,
       Beliefs_UtilityComfort,
-      Beliefs_AdoptionOrientation,
+      Beliefs_FutureAIIntent,
       Beliefs_ConcernHarms,
       Beliefs_LowConcern
     )
@@ -130,18 +130,18 @@ score_beliefs_6_22 <- function() {
     note = "Beliefs_ConcernHarms is sign-flipped from reversed items 17-20 so higher means more concern/harms endorsement."
   )
 
-  write_csv(belief_scores, file.path(csv_dir, "Beliefs_6_22_Factor_Scores.csv"))
-  write_csv(loadings_tbl, file.path(csv_dir, "Beliefs_6_22_Loadings.csv"))
-  write_csv(model_summary, file.path(csv_dir, "Beliefs_6_22_Model_Summary.csv"))
+  write_csv(belief_scores, file.path(csv_dir, "Beliefs_Exploratory_Factor_Scores.csv"))
+  write_csv(loadings_tbl, file.path(csv_dir, "Beliefs_Exploratory_Loadings.csv"))
+  write_csv(model_summary, file.path(csv_dir, "Beliefs_Exploratory_Model_Summary.csv"))
 
   list(scores = belief_scores, summary = model_summary, loadings = loadings_tbl)
 }
 
-belief_obj <- score_beliefs_6_22()
+belief_obj <- score_exploratory_beliefs()
 belief_scores <- belief_obj$scores
 belief_cols <- c(
   "Beliefs_UtilityComfort",
-  "Beliefs_AdoptionOrientation",
+  "Beliefs_FutureAIIntent",
   "Beliefs_ConcernHarms"
 )
 
@@ -162,7 +162,7 @@ factor_corrs <- mk_corrs(
   "beliefs_vs_existing_factors"
 ) |>
   rename(beliefs_factor = x, other_factor = y)
-write_csv(factor_corrs, file.path(csv_dir, "Beliefs_6_22_vs_Existing_Factors.csv"))
+write_csv(factor_corrs, file.path(csv_dir, "Beliefs_Exploratory_vs_Existing_Factors.csv"))
 
 art <- read_csv(file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv"), show_col_types = FALSE)
 art_cols <- c(
@@ -182,7 +182,7 @@ art_df <- inner_join(
 )
 art_corrs <- mk_corrs(art_df, art_cols, belief_cols, "art_vs_beliefs_factors") |>
   rename(art_metric = x, beliefs_factor = y)
-write_csv(art_corrs, file.path(csv_dir, "ART_vs_Beliefs_6_22_Factors.csv"))
+write_csv(art_corrs, file.path(csv_dir, "ART_vs_Beliefs_Exploratory_Factors.csv"))
 
 q17 <- read_csv(file.path("09_q17_ai_use", "csv", "Q17_Participant_AI_Use_Index.csv"), show_col_types = FALSE)
 q17_cols <- c(
@@ -201,7 +201,7 @@ q17_df <- inner_join(
 )
 q17_corrs <- mk_corrs(q17_df, q17_cols, belief_cols, "q17_index_vs_beliefs_factors") |>
   rename(q17_metric = x, beliefs_factor = y)
-write_csv(q17_corrs, file.path(csv_dir, "Q17_Index_vs_Beliefs_6_22_Factors.csv"))
+write_csv(q17_corrs, file.path(csv_dir, "Q17_Index_vs_Beliefs_Exploratory_Factors.csv"))
 
 q17_long <- read_csv(file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv"), show_col_types = FALSE) |>
   mutate(use_score = as.numeric(use_score))
@@ -226,7 +226,7 @@ bucket_df <- inner_join(
 )
 bucket_corrs <- mk_corrs(bucket_df, bucket_cols, belief_cols, "q17_buckets_vs_beliefs_factors") |>
   rename(q17_metric = x, beliefs_factor = y)
-write_csv(bucket_corrs, file.path(csv_dir, "Q17_Buckets_vs_Beliefs_6_22_Factors.csv"))
+write_csv(bucket_corrs, file.path(csv_dir, "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv"))
 
 models <- c(
   "ChatGPT (including DALL-E) by OpenAI",
@@ -255,7 +255,7 @@ model_df <- inner_join(
 )
 model_corrs <- mk_corrs(model_df, model_cols, belief_cols, "named_model_use_vs_beliefs_factors") |>
   rename(model = x, beliefs_factor = y)
-write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors.csv"))
+write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Beliefs_Exploratory_Factors.csv"))
 
 top_all <- bind_rows(
   factor_corrs |>
@@ -271,7 +271,7 @@ top_all <- bind_rows(
 ) |>
   mutate(abs_rho = abs(rho)) |>
   arrange(p_bh, desc(abs_rho))
-write_csv(top_all, file.path(csv_dir, "Beliefs_6_22_All_Correlations_Ranked.csv"))
+write_csv(top_all, file.path(csv_dir, "Beliefs_Exploratory_All_Correlations_Ranked.csv"))
 
 cat("Wrote exploratory outputs to ", csv_dir, "\n", sep = "")
 print(belief_obj$summary)
