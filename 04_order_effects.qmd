@@ -1596,7 +1596,9 @@ write_csv(export_manifest, file.path(csv_dir, "Order_Effects_Export_Manifest.csv
 kable(export_manifest)
 ```
 
-## Section 8: Order-Stratified Correlation Analysis
+Then we need to come up with a quick way to understand what we like. All of this should be one or two sentences describing what we did for the script and then one or two graphs. Ideally just one graph for these early scripts.
+
+For script 4 we should say, "This builds the composite scores from locked EFA item map, compares traditional first versus AI first participants, and tests tool times ordered interactions with a secondary topic controlled model." We should show some table or graph that shows the results of that.## Section 8: Order-Stratified Correlation Analysis
 
 This section asks whether key cross-instrument factor correlations and
 Beliefs item correlations differ depending on which session participants
@@ -1975,15 +1977,786 @@ belief_strat_wide |>
   kable(caption = "Beliefs item × Factor correlations stratified by order group. fisher_p tests subgroup rho difference.")
 ```
 
+## Section 9: Exploratory Beliefs 6-22 Order-Stratified Addendum
+
+This addendum treats the secondary BeliefsAboutAI items 6-22 factors from
+Script 16 as exploratory factor scores. These are not the locked
+production Beliefs factors; they come from a narrower post hoc model and
+are used here only for hypothesis-generating order checks. The existing
+Section 8 outputs remain unchanged.
+
+```{r exploratory-beliefs-order-levels}
+exploratory_beliefs_factor_file <- file.path(
+  "16_exploratory_beliefs",
+  "csv",
+  "Beliefs_Exploratory_Factor_Scores.csv"
+)
+exploratory_beliefs_lookup_file <- file.path(
+  "16_exploratory_beliefs",
+  "csv",
+  "Beliefs_Exploratory_Factor_Lookup.csv"
+)
+
+if (!file.exists(exploratory_beliefs_factor_file)) {
+  stop(
+    paste0(
+      "Missing exploratory Beliefs factor scores: ",
+      exploratory_beliefs_factor_file,
+      ". Render 16_exploratory_beliefs.qmd first."
+    ),
+    call. = FALSE
+  )
+}
+
+if (!file.exists(exploratory_beliefs_lookup_file)) {
+  stop(
+    paste0(
+      "Missing exploratory Beliefs factor lookup: ",
+      exploratory_beliefs_lookup_file,
+      ". Render 16_exploratory_beliefs.qmd first."
+    ),
+    call. = FALSE
+  )
+}
+
+new_beliefs_factor_cols <- c(
+  "Beliefs_UtilityComfort",
+  "Beliefs_FutureAIIntent",
+  "Beliefs_ConcernHarms"
+)
+
+exploratory_beliefs_scores <- read_csv(
+  exploratory_beliefs_factor_file,
+  show_col_types = FALSE
+) |>
+  mutate(participant_id = as.character(participant_id)) |>
+  select(participant_id, all_of(new_beliefs_factor_cols))
+
+exploratory_beliefs_lookup <- read_csv(
+  exploratory_beliefs_lookup_file,
+  show_col_types = FALSE
+) |>
+  filter(factor %in% new_beliefs_factor_cols) |>
+  mutate(
+    factor = as.character(factor),
+    display_label = paste0(display_label, " (exploratory 6-22)")
+  )
+
+assert_lookup_covers_factor_columns(
+  factor_lookup = exploratory_beliefs_lookup,
+  factor_cols = new_beliefs_factor_cols,
+  context_label = "Script 16 exploratory Beliefs factor lookup"
+)
+
+exploratory_beliefs_with_order <- order_labels |>
+  inner_join(exploratory_beliefs_scores, by = "participant_id")
+
+if (nrow(exploratory_beliefs_with_order) != nrow(order_labels)) {
+  warning(
+    paste0(
+      "Exploratory Beliefs order join returned ",
+      nrow(exploratory_beliefs_with_order),
+      " rows for ",
+      nrow(order_labels),
+      " strict-paired participants."
+    ),
+    call. = FALSE
+  )
+}
+
+missing_exploratory_scores <- exploratory_beliefs_with_order |>
+  summarise(across(all_of(new_beliefs_factor_cols), ~ sum(is.na(.x)))) |>
+  pivot_longer(everything(), names_to = "factor", values_to = "n_missing")
+
+if (any(missing_exploratory_scores$n_missing > 0)) {
+  warning(
+    paste0(
+      "Some strict-paired participants have missing exploratory Beliefs factor scores: ",
+      paste(
+        paste0(missing_exploratory_scores$factor, "=", missing_exploratory_scores$n_missing),
+        collapse = ", "
+      )
+    ),
+    call. = FALSE
+  )
+}
+
+exploratory_beliefs_mw <- map_dfr(new_beliefs_factor_cols, function(comp) {
+  dat <- exploratory_beliefs_with_order |>
+    select(order, all_of(comp)) |>
+    rename(score = all_of(comp)) |>
+    filter(!is.na(order), !is.na(score))
+
+  trad_vec <- dat |> filter(order == "Traditional_First") |> pull(score)
+  ai_vec   <- dat |> filter(order == "AI_First")          |> pull(score)
+
+  n_trad <- length(trad_vec)
+  n_ai   <- length(ai_vec)
+
+  med_trad <- median(trad_vec)
+  med_ai   <- median(ai_vec)
+
+  if (n_trad < 2 || n_ai < 2) {
+    return(tibble(
+      composite = comp,
+      n_traditional_first = n_trad,
+      n_ai_first = n_ai,
+      median_traditional_first = med_trad,
+      median_ai_first = med_ai,
+      w_stat = NA_real_,
+      u_stat = NA_real_,
+      p_value = NA_real_,
+      estimate_hl = NA_real_,
+      conf_low = NA_real_,
+      conf_high = NA_real_,
+      rank_biserial = NA_real_,
+      note = "insufficient sample size"
+    ))
+  }
+
+  test <- suppressWarnings(
+    wilcox.test(
+      x = trad_vec,
+      y = ai_vec,
+      exact = FALSE,
+      conf.int = TRUE,
+      conf.level = 0.95
+    )
+  )
+
+  w <- as.numeric(unname(test$statistic))
+
+  tibble(
+    composite = comp,
+    n_traditional_first = n_trad,
+    n_ai_first = n_ai,
+    median_traditional_first = med_trad,
+    median_ai_first = med_ai,
+    w_stat = w,
+    u_stat = as.numeric(w),
+    p_value = test$p.value,
+    estimate_hl = if (!is.null(test$estimate)) as.numeric(test$estimate) else NA_real_,
+    conf_low  = if (!is.null(test$conf.int)) as.numeric(test$conf.int[[1]]) else NA_real_,
+    conf_high = if (!is.null(test$conf.int)) as.numeric(test$conf.int[[2]]) else NA_real_,
+    rank_biserial = rank_biserial_from_u(w, n_trad, n_ai),
+    note = NA_character_
+  )
+}) |>
+  left_join(
+    exploratory_beliefs_lookup |>
+      select(composite = factor, display_label),
+    by = "composite"
+  ) |>
+  mutate(
+    instrument = "BeliefsAboutAI items 6-22 exploratory factors",
+    p_bh = p.adjust(p_value, method = adjustment_methods[[1]]),
+    p_bonferroni = p.adjust(p_value, method = adjustment_methods[[2]]),
+    effect_size = rank_biserial
+  ) |>
+  select(
+    composite, display_label, instrument,
+    n_traditional_first, n_ai_first,
+    median_traditional_first, median_ai_first,
+    w_stat, u_stat, p_value, p_bh, p_bonferroni,
+    estimate_hl, conf_low, conf_high, effect_size, note
+  ) |>
+  arrange(p_bh, p_value)
+
+write_csv(
+  exploratory_beliefs_mw,
+  file.path(csv_dir, "Exploratory_Beliefs_Mann_Whitney_Order_Comparisons.csv")
+)
+
+exploratory_beliefs_mw |>
+  mutate(across(where(is.numeric), ~ round(.x, 3))) |>
+  kable(caption = "Exploratory Beliefs 6-22 factor scores compared by order group. Positive rank-biserial means Traditional-First tends higher.")
+```
+
+```{r exploratory-beliefs-factor-stratified}
+strat_base_ext <- strat_base |>
+  left_join(exploratory_beliefs_scores, by = "participant_id")
+
+strict_missing_exploratory <- strat_base_ext |>
+  summarise(across(all_of(new_beliefs_factor_cols), ~ sum(is.na(.x)))) |>
+  pivot_longer(everything(), names_to = "factor", values_to = "n_missing")
+
+if (any(strict_missing_exploratory$n_missing > 0)) {
+  warning(
+    paste0(
+      "Exploratory Beliefs factor scores are missing after joining to strat_base: ",
+      paste(
+        paste0(strict_missing_exploratory$factor, "=", strict_missing_exploratory$n_missing),
+        collapse = ", "
+      )
+    ),
+    call. = FALSE
+  )
+}
+
+exploratory_beliefs_existing_pairs <- expand_grid(
+  col_x = new_beliefs_factor_cols,
+  col_y = factor_cols_strat
+)
+
+exploratory_beliefs_internal_pairs <- t(combn(new_beliefs_factor_cols, 2)) |>
+  as_tibble(.name_repair = "minimal") |>
+  setNames(c("col_x", "col_y"))
+
+exploratory_beliefs_factor_pairs <- bind_rows(
+  exploratory_beliefs_existing_pairs,
+  exploratory_beliefs_internal_pairs
+)
+
+exploratory_beliefs_strat_results <- pmap_dfr(
+  exploratory_beliefs_factor_pairs,
+  function(col_x, col_y) correlate_stratified(strat_base_ext, col_x, col_y)
+)
+
+exploratory_factor_label_lookup <- bind_rows(
+  factor_label_lookup_strat,
+  exploratory_beliefs_lookup |>
+    select(factor, display_label)
+)
+
+assert_lookup_covers_factor_columns(
+  factor_lookup = exploratory_factor_label_lookup,
+  factor_cols = c(factor_cols_strat, new_beliefs_factor_cols),
+  context_label = "Exploratory Beliefs order-stratified label lookup"
+)
+
+exploratory_beliefs_strat_wide <- exploratory_beliefs_strat_results |>
+  pivot_wider(
+    names_from  = group,
+    values_from = c(n, rho, p),
+    names_glue  = "{group}_{.value}"
+  ) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(col_x = factor, label_x = display_label),
+    by = "col_x"
+  ) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(col_y = factor, label_y = display_label),
+    by = "col_y"
+  ) |>
+  mutate(
+    fisher_p_bh = p.adjust(fisher_p, method = adjustment_methods[[1]]),
+    fisher_p_bonferroni = p.adjust(fisher_p, method = adjustment_methods[[2]]),
+    fisher_sig = case_when(
+      is.na(fisher_p)  ~ "NA",
+      fisher_p < 0.001 ~ "p < .001",
+      fisher_p < 0.01  ~ "p < .01",
+      fisher_p < 0.05  ~ "p < .05",
+      TRUE             ~ paste0("p = ", round(fisher_p, 3))
+    ),
+    fisher_sig_bh = case_when(
+      is.na(fisher_p_bh)  ~ "NA",
+      fisher_p_bh < 0.001 ~ "BH p < .001",
+      fisher_p_bh < 0.01  ~ "BH p < .01",
+      fisher_p_bh < 0.05  ~ "BH p < .05",
+      TRUE                ~ paste0("BH p = ", round(fisher_p_bh, 3))
+    ),
+    fisher_sig_bonferroni = case_when(
+      is.na(fisher_p_bonferroni)  ~ "NA",
+      fisher_p_bonferroni < 0.001 ~ "Bonf p < .001",
+      fisher_p_bonferroni < 0.01  ~ "Bonf p < .01",
+      fisher_p_bonferroni < 0.05  ~ "Bonf p < .05",
+      TRUE                        ~ paste0("Bonf p = ", round(fisher_p_bonferroni, 3))
+    ),
+    rho_diff = round(Traditional_First_rho - AI_First_rho, 3),
+    comparison_family = case_when(
+      col_x %in% new_beliefs_factor_cols & col_y %in% factor_cols_strat ~
+        "Exploratory Beliefs 6-22 factor x locked IMI/WritingEfficacy/AIReflection factor",
+      col_x %in% new_beliefs_factor_cols & col_y %in% new_beliefs_factor_cols ~
+        "Within exploratory Beliefs 6-22 factors",
+      TRUE ~ "Exploratory Beliefs 6-22 factor pair"
+    )
+  ) |>
+  arrange(fisher_p_bh, fisher_p, desc(abs(rho_diff)))
+
+write_csv(
+  exploratory_beliefs_strat_wide,
+  file.path(csv_dir, "Exploratory_Beliefs_Factor_Order_Stratified_Correlations.csv")
+)
+
+exploratory_factor_levels <- factor_label_lookup_strat$display_label[
+  match(factor_cols_strat, factor_label_lookup_strat$factor)
+]
+
+if (any(is.na(exploratory_factor_levels))) {
+  stop("Exploratory Beliefs order plots: missing display labels for one or more locked factor columns.", call. = FALSE)
+}
+
+exploratory_beliefs_plot_long <- exploratory_beliefs_strat_results |>
+  filter(col_x %in% new_beliefs_factor_cols, col_y %in% factor_cols_strat) |>
+  left_join(
+    exploratory_beliefs_lookup |>
+      select(col_x = factor, belief_factor_label = display_label),
+    by = "col_x"
+  ) |>
+  left_join(
+    factor_label_lookup_strat |>
+      rename(col_y = factor, factor_label = display_label),
+    by = "col_y"
+  ) |>
+  mutate(
+    factor_label = factor(factor_label, levels = exploratory_factor_levels),
+    group = factor(group, levels = c("Full", "Traditional_First", "AI_First"))
+  )
+
+exploratory_beliefs_plot_annotations <- exploratory_beliefs_strat_wide |>
+  filter(col_x %in% new_beliefs_factor_cols, col_y %in% factor_cols_strat) |>
+  select(col_x, col_y, label_y, fisher_sig_bh) |>
+  mutate(label_y = factor(label_y, levels = exploratory_factor_levels))
+
+for (belief_factor_col in new_beliefs_factor_cols) {
+  plot_df <- exploratory_beliefs_plot_long |>
+    filter(col_x == belief_factor_col)
+
+  ann_df <- exploratory_beliefs_plot_annotations |>
+    filter(col_x == belief_factor_col)
+
+  if (nrow(plot_df) == 0 || all(is.na(plot_df$rho))) {
+    next
+  }
+
+  belief_factor_title <- plot_df |>
+    distinct(belief_factor_label) |>
+    pull(belief_factor_label) |>
+    first()
+
+  exploratory_beliefs_order_plot <- ggplot(
+    plot_df,
+    aes(x = factor_label, y = rho, group = group, color = group, linetype = group, shape = group)
+  ) +
+    geom_hline(yintercept = 0, color = "#c7c7c7", linewidth = 0.8) +
+    geom_hline(yintercept = c(-0.30, 0.30), color = "#bdbdbd", linewidth = 0.7, linetype = "dotted") +
+    geom_line(linewidth = 1.2, alpha = 0.95) +
+    geom_point(size = 3.7, alpha = 0.95) +
+    geom_text(
+      data = ann_df,
+      aes(x = label_y, y = -1.07, label = fisher_sig_bh),
+      inherit.aes = FALSE,
+      color = "#5a5a5a",
+      size = 4.0
+    ) +
+    scale_color_manual(
+      values = c(
+        "Full" = "#7a7a7a",
+        "Traditional_First" = "#c93e2c",
+        "AI_First" = "#3a88bf"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "Full" = "22",
+        "Traditional_First" = "solid",
+        "AI_First" = "solid"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Full" = 16,
+        "Traditional_First" = 17,
+        "AI_First" = 15
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_y_continuous(
+      limits = c(-1.1, 1.0),
+      breaks = seq(-1, 1, by = 0.25),
+      labels = scales::number_format(accuracy = 0.01)
+    ) +
+    labs(
+      title = belief_factor_title,
+      subtitle = "Spearman rho with locked factors by order group; exploratory Beliefs model uses items 6-22",
+      x = NULL,
+      y = "Spearman rho",
+      caption = "BH-adjusted Fisher's z p-value shown below each factor label. Dotted lines at rho = +/-0.30."
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "none",
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1, size = 10),
+      axis.text.y = element_text(size = 11),
+      plot.title = element_text(face = "bold", size = 17),
+      plot.subtitle = element_text(size = 11, color = "#666666"),
+      plot.caption = element_text(size = 10, color = "#7a7a7a"),
+      plot.margin = margin(15, 20, 20, 15)
+    )
+
+  ggsave(
+    filename = file.path(plot_dir, paste0("exploratory_", belief_factor_col, "_order_corr.png")),
+    plot = exploratory_beliefs_order_plot,
+    width = 16,
+    height = 10,
+    units = "in",
+    dpi = 160,
+    bg = "white"
+  )
+}
+
+combined_all_factor_strat_results <- bind_rows(
+  factor_strat_results,
+  exploratory_beliefs_strat_results
+)
+
+combined_all_factor_strat_wide <- combined_all_factor_strat_results |>
+  pivot_wider(
+    names_from  = group,
+    values_from = c(n, rho, p),
+    names_glue  = "{group}_{.value}"
+  ) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(col_x = factor, label_x = display_label),
+    by = "col_x"
+  ) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(col_y = factor, label_y = display_label),
+    by = "col_y"
+  ) |>
+  mutate(
+    fisher_p_bh = p.adjust(fisher_p, method = adjustment_methods[[1]]),
+    fisher_p_bonferroni = p.adjust(fisher_p, method = adjustment_methods[[2]]),
+    fisher_sig = case_when(
+      is.na(fisher_p)  ~ "NA",
+      fisher_p < 0.001 ~ "p < .001",
+      fisher_p < 0.01  ~ "p < .01",
+      fisher_p < 0.05  ~ "p < .05",
+      TRUE             ~ paste0("p = ", round(fisher_p, 3))
+    ),
+    fisher_sig_bh = case_when(
+      is.na(fisher_p_bh)  ~ "NA",
+      fisher_p_bh < 0.001 ~ "BH p < .001",
+      fisher_p_bh < 0.01  ~ "BH p < .01",
+      fisher_p_bh < 0.05  ~ "BH p < .05",
+      TRUE                ~ paste0("BH p = ", round(fisher_p_bh, 3))
+    ),
+    fisher_sig_bonferroni = case_when(
+      is.na(fisher_p_bonferroni)  ~ "NA",
+      fisher_p_bonferroni < 0.001 ~ "Bonf p < .001",
+      fisher_p_bonferroni < 0.01  ~ "Bonf p < .01",
+      fisher_p_bonferroni < 0.05  ~ "Bonf p < .05",
+      TRUE                        ~ paste0("Bonf p = ", round(fisher_p_bonferroni, 3))
+    ),
+    plot_sig = case_when(
+      !is.na(fisher_p_bonferroni) & fisher_p_bonferroni < 0.05 ~ fisher_sig_bonferroni,
+      !is.na(fisher_p_bh) & fisher_p_bh < 0.05 ~ fisher_sig_bh,
+      TRUE ~ fisher_sig
+    ),
+    rho_diff = round(Traditional_First_rho - AI_First_rho, 3),
+    comparison_family = case_when(
+      col_x %in% factor_cols_strat & col_y %in% factor_cols_strat ~
+        "Locked IMI/WritingEfficacy/AIReflection factors",
+      col_x %in% new_beliefs_factor_cols & col_y %in% factor_cols_strat ~
+        "Exploratory Beliefs 6-22 factor x locked IMI/WritingEfficacy/AIReflection factor",
+      col_x %in% new_beliefs_factor_cols & col_y %in% new_beliefs_factor_cols ~
+        "Within exploratory Beliefs 6-22 factors",
+      TRUE ~ "All-factor pair"
+    )
+  ) |>
+  arrange(fisher_p_bh, fisher_p, desc(abs(rho_diff)))
+
+write_csv(
+  combined_all_factor_strat_wide,
+  file.path(csv_dir, "All_Factors_With_Exploratory_Beliefs_Order_Stratified_Correlations.csv")
+)
+
+all_factor_cols_order <- c(factor_cols_strat, new_beliefs_factor_cols)
+all_factor_label_levels <- exploratory_factor_label_lookup$display_label[
+  match(all_factor_cols_order, exploratory_factor_label_lookup$factor)
+]
+
+if (any(is.na(all_factor_label_levels))) {
+  stop("All-factor order plots: missing display labels for one or more factor columns.", call. = FALSE)
+}
+
+combined_all_factor_plot_long <- bind_rows(
+  combined_all_factor_strat_results |>
+    transmute(
+      focal_factor = col_x,
+      comparison_factor = col_y,
+      group, n, rho, p, note, fisher_p
+    ),
+  combined_all_factor_strat_results |>
+    transmute(
+      focal_factor = col_y,
+      comparison_factor = col_x,
+      group, n, rho, p, note, fisher_p
+    )
+) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(focal_factor = factor, focal_label = display_label),
+    by = "focal_factor"
+  ) |>
+  left_join(
+    exploratory_factor_label_lookup |>
+      rename(comparison_factor = factor, comparison_label = display_label),
+    by = "comparison_factor"
+  ) |>
+  mutate(group = factor(group, levels = c("Full", "Traditional_First", "AI_First")))
+
+combined_all_factor_plot_annotations <- bind_rows(
+  combined_all_factor_strat_wide |>
+    transmute(
+      focal_factor = col_x,
+      comparison_factor = col_y,
+      comparison_label = label_y,
+      plot_sig
+    ),
+  combined_all_factor_strat_wide |>
+    transmute(
+      focal_factor = col_y,
+      comparison_factor = col_x,
+      comparison_label = label_x,
+      plot_sig
+    )
+)
+
+for (focal_col in all_factor_cols_order) {
+  comparison_levels <- all_factor_label_levels[all_factor_cols_order != focal_col]
+
+  plot_df <- combined_all_factor_plot_long |>
+    filter(focal_factor == focal_col) |>
+    mutate(comparison_label = factor(comparison_label, levels = comparison_levels))
+
+  ann_df <- combined_all_factor_plot_annotations |>
+    filter(focal_factor == focal_col) |>
+    mutate(comparison_label = factor(comparison_label, levels = comparison_levels))
+
+  if (nrow(plot_df) == 0 || all(is.na(plot_df$rho))) {
+    next
+  }
+
+  focal_title <- plot_df |>
+    distinct(focal_label) |>
+    pull(focal_label) |>
+    first()
+
+  all_factor_order_plot <- ggplot(
+    plot_df,
+    aes(x = comparison_label, y = rho, group = group, color = group, linetype = group, shape = group)
+  ) +
+    geom_hline(yintercept = 0, color = "#c7c7c7", linewidth = 0.8) +
+    geom_hline(yintercept = c(-0.30, 0.30), color = "#bdbdbd", linewidth = 0.7, linetype = "dotted") +
+    geom_line(linewidth = 1.2, alpha = 0.95) +
+    geom_point(size = 3.7, alpha = 0.95) +
+    geom_text(
+      data = ann_df,
+      aes(x = comparison_label, y = -1.07, label = plot_sig),
+      inherit.aes = FALSE,
+      color = "#5a5a5a",
+      size = 3.7
+    ) +
+    scale_color_manual(
+      values = c(
+        "Full" = "#7a7a7a",
+        "Traditional_First" = "#c93e2c",
+        "AI_First" = "#3a88bf"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "Full" = "22",
+        "Traditional_First" = "solid",
+        "AI_First" = "solid"
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Full" = 16,
+        "Traditional_First" = 17,
+        "AI_First" = 15
+      ),
+      labels = c(
+        "Full" = "Full sample",
+        "Traditional_First" = "Traditional-First",
+        "AI_First" = "AI-First"
+      )
+    ) +
+    scale_y_continuous(
+      limits = c(-1.1, 1.0),
+      breaks = seq(-1, 1, by = 0.25),
+      labels = scales::number_format(accuracy = 0.01)
+    ) +
+    labs(
+      title = focal_title,
+      subtitle = "Spearman rho with each other factor — Full sample (gray dashed), Traditional-First (red), AI-First (blue)",
+      x = NULL,
+      y = "Spearman rho",
+      caption = "Fisher's z p-value shown below each factor label; corrected labels shown when BH/Bonferroni survive. Dotted lines at rho = +/-0.30."
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "none",
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1, size = 9.2),
+      axis.text.y = element_text(size = 11),
+      plot.title = element_text(face = "bold", size = 17),
+      plot.subtitle = element_text(size = 11, color = "#666666"),
+      plot.caption = element_text(size = 10, color = "#7a7a7a"),
+      plot.margin = margin(15, 20, 20, 15)
+    )
+
+  ggsave(
+    filename = file.path(
+      plot_dir,
+      paste0(
+        "factor_all_",
+        str_replace_all(focal_col, "[^A-Za-z0-9]+", "_"),
+        "_order_corr.png"
+      )
+    ),
+    plot = all_factor_order_plot,
+    width = 17,
+    height = 10,
+    units = "in",
+    dpi = 160,
+    bg = "white"
+  )
+}
+
+exploratory_beliefs_diff_plot_data <- exploratory_beliefs_strat_wide |>
+  mutate(
+    pair_label = paste0(label_x, "\n× ", label_y),
+    significance = case_when(
+      !is.na(fisher_p_bonferroni) & fisher_p_bonferroni < 0.05 ~ "Bonferroni < .05",
+      !is.na(fisher_p_bh) & fisher_p_bh < 0.05 ~ "BH < .05",
+      !is.na(fisher_p) & fisher_p < 0.05 ~ "Nominal < .05",
+      TRUE ~ "Not significant"
+    ),
+    significance = factor(
+      significance,
+      levels = c("Bonferroni < .05", "BH < .05", "Nominal < .05", "Not significant")
+    ),
+    p_label = case_when(
+      significance == "Bonferroni < .05" ~ fisher_sig_bonferroni,
+      significance == "BH < .05" ~ fisher_sig_bh,
+      significance == "Nominal < .05" ~ fisher_sig,
+      TRUE ~ ""
+    ),
+    pair_label = fct_reorder(pair_label, rho_diff)
+  )
+
+exploratory_beliefs_diff_plot <- ggplot(
+  exploratory_beliefs_diff_plot_data,
+  aes(x = rho_diff, y = pair_label, fill = significance)
+) +
+  geom_vline(xintercept = 0, color = "#bdbdbd", linewidth = 0.8) +
+  geom_col(width = 0.72, alpha = 0.95) +
+  geom_text(
+    aes(
+      label = p_label,
+      hjust = if_else(rho_diff >= 0, -0.08, 1.08)
+    ),
+    size = 3.4,
+    color = "#3f3f3f"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Bonferroni < .05" = "#7b2cbf",
+      "BH < .05" = "#1b9e77",
+      "Nominal < .05" = "#e69500",
+      "Not significant" = "#b8b8b8"
+    ),
+    drop = FALSE
+  ) +
+  scale_x_continuous(
+    limits = c(-0.9, 0.55),
+    breaks = seq(-0.8, 0.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  labs(
+    title = "Order-group rho differences involving exploratory Beliefs factors",
+    subtitle = "Bars show Traditional-First rho minus AI-First rho; color marks Fisher z multiplicity status",
+    x = "rho difference",
+    y = NULL,
+    fill = NULL,
+    caption = "Exploratory Beliefs factors use the Script 16 items 6-22 model. Bonferroni and BH corrections are across this 27-pair addendum family."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 8.4),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 11, color = "#666666"),
+    plot.caption = element_text(size = 9.5, color = "#7a7a7a"),
+    plot.margin = margin(12, 50, 12, 12)
+  )
+
+ggsave(
+  filename = file.path(plot_dir, "exploratory_beliefs_order_rho_diff_ranked.png"),
+  plot = exploratory_beliefs_diff_plot,
+  width = 14,
+  height = 10,
+  units = "in",
+  dpi = 180,
+  bg = "white"
+)
+
+exploratory_beliefs_strat_wide |>
+  select(
+    label_x, label_y, comparison_family,
+    Full_n, Full_rho, Full_p,
+    Traditional_First_n, Traditional_First_rho, Traditional_First_p,
+    AI_First_n, AI_First_rho, AI_First_p,
+    fisher_p, fisher_p_bh, fisher_p_bonferroni, fisher_sig_bh,
+    fisher_sig_bonferroni, rho_diff
+  ) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3))) |>
+  kable(caption = "Exploratory Beliefs 6-22 factor correlations stratified by order group. fisher_p tests whether Traditional-First rho differs from AI-First rho.")
+```
+
 ```{r order-strat-exports}
 strat_export_manifest <- tibble(
   file = c(
     "Factor_Factor_Order_Stratified_Correlations.csv",
-    "Beliefs_Factor_Order_Stratified_Correlations.csv"
+    "Beliefs_Factor_Order_Stratified_Correlations.csv",
+    "Exploratory_Beliefs_Mann_Whitney_Order_Comparisons.csv",
+    "Exploratory_Beliefs_Factor_Order_Stratified_Correlations.csv",
+    "All_Factors_With_Exploratory_Beliefs_Order_Stratified_Correlations.csv",
+    "plots/factor_all_*_order_corr.png",
+    "plots/exploratory_beliefs_order_rho_diff_ranked.png"
   ),
   description = c(
     "Factor × factor Spearman correlations split by order group with Fisher z-test",
-    "Beliefs item × factor Spearman correlations split by order group with Fisher z-test"
+    "Beliefs item × factor Spearman correlations split by order group with Fisher z-test",
+    "Exploratory BeliefsAboutAI items 6-22 factor scores compared by order group with Mann-Whitney tests",
+    "Exploratory BeliefsAboutAI items 6-22 factor correlations split by order group with Fisher z-test and multiplicity correction",
+    "Combined 11-factor order-stratified correlations including locked factors and exploratory Beliefs 6-22 factors",
+    "One plot per focal factor showing order-stratified rho with every other factor",
+    "Ranked plot of Traditional-First minus AI-First rho differences for exploratory Beliefs factor pairs"
   )
 )
 

@@ -14,10 +14,14 @@
 *_cache/
 
 
-# 2. Exceptions 
+# 2. Exceptions
 !Triage_Rap_Sheet_Verified.csv
 !rw-survey-long-040726.csv
 !llm-survey-long-040726.csv
 !Participant Tracking - IDs and Conditions Table.csv
 !authorkey.csv
 !scoring_helpers.r
+!styles.css
+
+/.quarto/
+**/*.quarto_ipynb

@@ -1,11 +1,11 @@
 ---
-title: "16 - Exploratory BeliefsAboutAI Factor Analysis"
+title: "Exploratory BeliefsAboutAI 6-22 Factor Correlations"
 format:
   html:
     toc: true
     toc-depth: 3
     embed-resources: true
-output-dir: "16_exploratory_beliefs"
+output-dir: "exploratory_beliefs_6_22"
 editor: visual
 ---
 
@@ -33,7 +33,7 @@ source("scoring_helpers.R")
 
 set.seed(42L)
 
-script_dir <- "16_exploratory_beliefs"
+script_dir <- "exploratory_beliefs_6_22"
 csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
@@ -169,7 +169,7 @@ beliefs_factor_scores <- bind_scores_with_ids(
 ) |>
   rename(
     Beliefs_UtilityComfort = MR1,
-    Beliefs_FutureAIIntent = MR2,
+    Beliefs_AdoptionOrientation = MR2,
     Beliefs_LowConcern = MR3
   ) |>
   # Items 17-20 were already reverse-scored upstream. This flip makes positive
@@ -178,7 +178,7 @@ beliefs_factor_scores <- bind_scores_with_ids(
   select(
     participant_id,
     Beliefs_UtilityComfort,
-    Beliefs_FutureAIIntent,
+    Beliefs_AdoptionOrientation,
     Beliefs_ConcernHarms,
     Beliefs_LowConcern
   )
@@ -203,21 +203,21 @@ beliefs_model_summary <- tibble(
 )
 
 belief_factor_lookup <- tibble(
-  factor = c("Beliefs_UtilityComfort", "Beliefs_FutureAIIntent", "Beliefs_ConcernHarms"),
+  factor = c("Beliefs_UtilityComfort", "Beliefs_AdoptionOrientation", "Beliefs_ConcernHarms"),
   instrument = "BeliefsAboutAI",
   factor_num = 1:3,
-  proposed_name = c("Utility & Comfort", "Future AI Intent", "Concern & Harms"),
+  proposed_name = c("Utility & Comfort", "Adoption Orientation", "Concern & Harms"),
   display_label = c(
     "Beliefs F1 -> Utility & Comfort",
-    "Beliefs F2 -> Future AI Intent",
+    "Beliefs F2 -> Adoption Orientation",
     "Beliefs F3 -> Concern & Harms"
   )
 )
 
-write_csv(beliefs_factor_scores, file.path(csv_dir, "Beliefs_Exploratory_Factor_Scores.csv"))
-write_csv(beliefs_loadings_tbl, file.path(csv_dir, "Beliefs_Exploratory_Loadings.csv"))
-write_csv(beliefs_model_summary, file.path(csv_dir, "Beliefs_Exploratory_Model_Summary.csv"))
-write_csv(belief_factor_lookup, file.path(csv_dir, "Beliefs_Exploratory_Factor_Lookup.csv"))
+write_csv(beliefs_factor_scores, file.path(csv_dir, "Beliefs_6_22_Factor_Scores.csv"))
+write_csv(beliefs_loadings_tbl, file.path(csv_dir, "Beliefs_6_22_Loadings.csv"))
+write_csv(beliefs_model_summary, file.path(csv_dir, "Beliefs_6_22_Model_Summary.csv"))
+write_csv(belief_factor_lookup, file.path(csv_dir, "Beliefs_6_22_Factor_Lookup.csv"))
 
 beliefs_model_summary |>
   mutate(across(c(kmo, rmsea, tli, rmsr, starts_with("factor_correlation")), ~ round(.x, 3))) |>
@@ -235,7 +235,7 @@ loading_factor_lookup <- tibble(
   factor_id = c("MR1", "MR2", "MR3"),
   factor_label = c(
     "F1: Utility & Comfort",
-    "F2: Future AI Intent",
+    "F2: Adoption Orientation",
     "F3: Low Concern / Low Harms"
   )
 )
@@ -317,7 +317,7 @@ p_loadings <- ggplot(loading_plot_df, aes(x = factor_label, y = item_label, fill
   )
 
 ggsave(
-  file.path(plot_dir, "Beliefs_Exploratory_Loadings_Heatmap.png"),
+  file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.png"),
   p_loadings,
   width = 9.5,
   height = 7,
@@ -326,7 +326,7 @@ ggsave(
   bg = "white"
 )
 ggsave(
-  file.path(plot_dir, "Beliefs_Exploratory_Loadings_Heatmap.pdf"),
+  file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.pdf"),
   p_loadings,
   width = 9.5,
   height = 7,
@@ -372,7 +372,7 @@ existing_factor_lookup <- read_csv(
 all_factor_scores <- existing_factor_scores |>
   inner_join(
     beliefs_factor_scores |>
-      select(participant_id, Beliefs_UtilityComfort, Beliefs_FutureAIIntent, Beliefs_ConcernHarms),
+      select(participant_id, Beliefs_UtilityComfort, Beliefs_AdoptionOrientation, Beliefs_ConcernHarms),
     by = "participant_id"
   )
 
@@ -438,8 +438,8 @@ factor_corr_heat <- bind_rows(
   factor_corr_diag
 )
 
-write_csv(factor_corr_unique, file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Correlations_Unique.csv"))
-write_csv(factor_corr_heat, file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Heatmap_Matrix.csv"))
+write_csv(factor_corr_unique, file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Correlations_Unique.csv"))
+write_csv(factor_corr_heat, file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Heatmap_Matrix.csv"))
 
 factor_corr_unique |>
   filter(instrument_x == "BeliefsAboutAI" | instrument_y == "BeliefsAboutAI") |>
@@ -496,7 +496,7 @@ p_cross_factor_heat <- ggplot(factor_heat_plot_df, aes(x = label_x, y = label_y,
   theme(axis.text.y = element_text(size = 8), axis.text.x = element_text(size = 8, angle = 35, hjust = 1))
 
 ggsave(
-  file.path(plot_dir, "Beliefs_Exploratory_Cross_Factor_Heatmap.png"),
+  file.path(plot_dir, "Beliefs_6_22_Cross_Factor_Heatmap.png"),
   p_cross_factor_heat,
   width = 12,
   height = 9,
@@ -505,7 +505,7 @@ ggsave(
   bg = "white"
 )
 ggsave(
-  file.path(plot_dir, "Beliefs_Exploratory_Cross_Factor_Heatmap.pdf"),
+  file.path(plot_dir, "Beliefs_6_22_Cross_Factor_Heatmap.pdf"),
   p_cross_factor_heat,
   width = 12,
   height = 9,
@@ -559,7 +559,7 @@ art_corrs <- run_corr_grid(
   left_join(belief_factor_lookup, by = "factor") |>
   arrange(p_bh, desc(abs_rho))
 
-write_csv(art_corrs, file.path(csv_dir, "ART_vs_Beliefs_Exploratory_Factors.csv"))
+write_csv(art_corrs, file.path(csv_dir, "ART_vs_Beliefs_6_22_Factors.csv"))
 
 art_corrs |>
   select(art_label, display_label, n, rho, p, p_bh, p_bonf) |>
@@ -588,8 +588,8 @@ p_art_heat <- ggplot(art_heat_df, aes(x = art_label, y = display_label, fill = r
   ) +
   theme_corr()
 
-ggsave(file.path(plot_dir, "ART_vs_Beliefs_Exploratory_Factors_Heatmap.png"), p_art_heat, width = 9, height = 4.8, units = "in", dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "ART_vs_Beliefs_Exploratory_Factors_Heatmap.pdf"), p_art_heat, width = 9, height = 4.8, units = "in", bg = "white")
+ggsave(file.path(plot_dir, "ART_vs_Beliefs_6_22_Factors_Heatmap.png"), p_art_heat, width = 9, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "ART_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_art_heat, width = 9, height = 4.8, units = "in", bg = "white")
 
 p_art_heat
 ```
@@ -653,7 +653,7 @@ q17_corrs <- run_corr_grid(
   left_join(belief_factor_lookup, by = "factor") |>
   arrange(p_bh, desc(abs_rho))
 
-write_csv(q17_corrs, file.path(csv_dir, "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv"))
+write_csv(q17_corrs, file.path(csv_dir, "Q17_Buckets_vs_Beliefs_6_22_Factors.csv"))
 
 q17_corrs |>
   select(q17_label, display_label, n, rho, p, p_bh, p_bonf) |>
@@ -682,8 +682,8 @@ p_q17_heat <- ggplot(q17_heat_df, aes(x = q17_label, y = display_label, fill = r
   ) +
   theme_corr()
 
-ggsave(file.path(plot_dir, "Q17_vs_Beliefs_Exploratory_Factors_Heatmap.png"), p_q17_heat, width = 10, height = 4.8, units = "in", dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "Q17_vs_Beliefs_Exploratory_Factors_Heatmap.pdf"), p_q17_heat, width = 10, height = 4.8, units = "in", bg = "white")
+ggsave(file.path(plot_dir, "Q17_vs_Beliefs_6_22_Factors_Heatmap.png"), p_q17_heat, width = 10, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Q17_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_q17_heat, width = 10, height = 4.8, units = "in", bg = "white")
 
 p_q17_heat
 ```
@@ -734,7 +734,7 @@ model_corrs <- run_corr_grid(
   left_join(belief_factor_lookup, by = "factor") |>
   arrange(p_bh, desc(abs_rho))
 
-write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Beliefs_Exploratory_Factors.csv"))
+write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors.csv"))
 
 model_corrs |>
   select(model_label, display_label, n, rho, p, p_bh, p_bonf) |>
@@ -762,8 +762,8 @@ p_model_heat <- ggplot(model_heat_df, aes(x = model_label, y = display_label, fi
   ) +
   theme_corr()
 
-ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_Exploratory_Factors_Heatmap.png"), p_model_heat, width = 7.8, height = 4.8, units = "in", dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_Exploratory_Factors_Heatmap.pdf"), p_model_heat, width = 7.8, height = 4.8, units = "in", bg = "white")
+ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors_Heatmap.png"), p_model_heat, width = 7.8, height = 4.8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors_Heatmap.pdf"), p_model_heat, width = 7.8, height = 4.8, units = "in", bg = "white")
 
 p_model_heat
 ```
@@ -1003,7 +1003,7 @@ top_all <- bind_rows(
   ) |>
   arrange(p_bh, desc(abs_rho))
 
-write_csv(top_all, file.path(csv_dir, "Beliefs_Exploratory_All_Correlations_Ranked.csv"))
+write_csv(top_all, file.path(csv_dir, "Beliefs_6_22_All_Correlations_Ranked.csv"))
 
 top_all |>
   slice_head(n = 25) |>
@@ -1042,8 +1042,8 @@ p_top <- ggplot(top_plot_df, aes(x = rho, y = signal_label, fill = source)) +
     legend.position = "bottom"
   )
 
-ggsave(file.path(plot_dir, "Beliefs_Exploratory_Top_Correlations.png"), p_top, width = 10, height = 8, units = "in", dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "Beliefs_Exploratory_Top_Correlations.pdf"), p_top, width = 10, height = 8, units = "in", bg = "white")
+ggsave(file.path(plot_dir, "Beliefs_6_22_Top_Correlations.png"), p_top, width = 10, height = 8, units = "in", dpi = 300, bg = "white")
+ggsave(file.path(plot_dir, "Beliefs_6_22_Top_Correlations.pdf"), p_top, width = 10, height = 8, units = "in", bg = "white")
 
 p_top
 ```
@@ -1070,21 +1070,21 @@ manifest <- tibble(
     "all_ranked_correlations"
   ),
   path = c(
-    file.path(csv_dir, "Beliefs_Exploratory_Model_Summary.csv"),
-    file.path(csv_dir, "Beliefs_Exploratory_Factor_Scores.csv"),
-    file.path(csv_dir, "Beliefs_Exploratory_Loadings.csv"),
-    file.path(plot_dir, "Beliefs_Exploratory_Loadings_Heatmap.png"),
-    file.path(csv_dir, "Beliefs_Exploratory_Factor_Lookup.csv"),
-    file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Correlations_Unique.csv"),
-    file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Heatmap_Matrix.csv"),
-    file.path(csv_dir, "ART_vs_Beliefs_Exploratory_Factors.csv"),
-    file.path(csv_dir, "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Model_Summary.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Factor_Scores.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Loadings.csv"),
+    file.path(plot_dir, "Beliefs_6_22_Loadings_Heatmap.png"),
+    file.path(csv_dir, "Beliefs_6_22_Factor_Lookup.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Correlations_Unique.csv"),
+    file.path(csv_dir, "Beliefs_6_22_Cross_Factor_Heatmap_Matrix.csv"),
+    file.path(csv_dir, "ART_vs_Beliefs_6_22_Factors.csv"),
+    file.path(csv_dir, "Q17_Buckets_vs_Beliefs_6_22_Factors.csv"),
     file.path(csv_dir, "Q17_Aggregate_Metrics_vs_Beliefs_ConcernHarms.csv"),
     file.path(csv_dir, "Q17_AllTools_vs_Beliefs_ConcernHarms.csv"),
     file.path(csv_dir, "Q17_AllTools_Concern_By_Use_Bucket.csv"),
     file.path(csv_dir, "Q17_AllTools_Concern_Kruskal_By_Use_Bucket.csv"),
-    file.path(csv_dir, "Named_Model_Use_vs_Beliefs_Exploratory_Factors.csv"),
-    file.path(csv_dir, "Beliefs_Exploratory_All_Correlations_Ranked.csv")
+    file.path(csv_dir, "Named_Model_Use_vs_Beliefs_6_22_Factors.csv"),
+    file.path(csv_dir, "Beliefs_6_22_All_Correlations_Ranked.csv")
   ),
   description = c(
     "Beliefs 6-22 EFA/KMO summary",
@@ -1105,158 +1105,7 @@ manifest <- tibble(
   )
 )
 
-write_csv(manifest, file.path(csv_dir, "Beliefs_Exploratory_Manifest.csv"))
+write_csv(manifest, file.path(csv_dir, "Beliefs_6_22_Manifest.csv"))
 manifest |>
   kable(caption = "Exploratory Beliefs 6-22 output manifest")
-```
-
-# Final Fit Comparison
-
-```{r all-instruments-fit-comparison}
-# Final validity check: compare locked EFA fit metrics with exploratory Beliefs 6-22 model.
-
-fit_poly_minres_oblimin <- function(path, item_col, k, instrument, sample_label, drop_items = integer()) {
-  long_df <- read_csv(path, show_col_types = FALSE) |>
-    mutate(
-      item_id = as.integer(.data[[item_col]]),
-      score = as.numeric(score)
-    ) |>
-    filter(!item_id %in% drop_items)
-
-  # WritingEfficacy sensitivity exports retain 0/25/50/75/100 anchors.
-  # Match the locked EFA pipeline by converting those anchors to 1-5.
-  if (instrument == "WritingEfficacy" && max(long_df$score, na.rm = TRUE) > 7) {
-    long_df <- long_df |>
-      mutate(score = (score / 25) + 1)
-  }
-
-  wide_df <- long_df |>
-    select(participant_id, item_id, score) |>
-    mutate(item_id = as.character(item_id)) |>
-    pivot_wider(names_from = item_id, values_from = score) |>
-    arrange(participant_id)
-
-  efa_matrix <- wide_df |>
-    select(-participant_id) |>
-    mutate(across(everything(), as.integer)) |>
-    as.data.frame()
-
-  poly <- compute_polychoric_safe(efa_matrix)
-
-  fit <- suppressWarnings(
-    psych::fa(
-      r = poly$rho,
-      nfactors = k,
-      n.obs = nrow(efa_matrix),
-      fm = "minres",
-      rotate = "oblimin"
-    )
-  )
-
-  tibble(
-    Instrument = instrument,
-    Sample = sample_label,
-    k = k,
-    RMSEA = as.numeric(fit$RMSEA[1]),
-    TLI = as.numeric(fit$TLI),
-    RMSR = as.numeric(fit$rms)
-  )
-}
-
-locked_fits <- tribble(
-  ~Instrument,         ~k,  ~sensitivity_file,                                                        ~item_col,
-  "IMI",               3L,  file.path("02_efa_exports", "efa", "IMI_EFA_Sensitivity.csv"),             "item_code",
-  "WritingEfficacy",   3L,  file.path("02_efa_exports", "efa", "WritingEfficacy_EFA_Sensitivity.csv"), "item_code",
-  "AIReflection",      2L,  file.path("02_efa_exports", "efa", "AI_Reflection_EFA_Sensitivity.csv"),   "item_num"
-)
-
-established_primary <- read_csv(
-  file.path("03_efa_analysis", "efa_diagnostics", "EFA_Candidate_Solutions.csv"),
-  show_col_types = FALSE
-) |>
-  inner_join(locked_fits |> select(instrument = Instrument, locked_k = k), by = "instrument") |>
-  filter(k == locked_k, efa_sample == "primary") |>
-  transmute(
-    Instrument = instrument,
-    Sample = "Primary",
-    k = as.integer(k),
-    RMSEA = as.numeric(rmsea),
-    TLI = as.numeric(tli),
-    RMSR = as.numeric(rmsr)
-  )
-
-established_sensitivity <- pmap_dfr(
-  locked_fits,
-  \(Instrument, k, sensitivity_file, item_col) {
-    fit_poly_minres_oblimin(
-      path = sensitivity_file,
-      item_col = item_col,
-      k = k,
-      instrument = Instrument,
-      sample_label = "Sensitivity"
-    )
-  }
-)
-
-beliefs_summary_raw <- read_csv(
-  file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Model_Summary.csv"),
-  show_col_types = FALSE
-)
-
-beliefs_sample_col <- intersect(c("Sample", "sample", "efa_sample"), names(beliefs_summary_raw))[1]
-
-beliefs_summary <- tibble(
-  Instrument = "BeliefsAboutAI",
-  Sample = if (is.na(beliefs_sample_col)) {
-    rep("Primary", nrow(beliefs_summary_raw))
-  } else {
-    str_to_title(as.character(beliefs_summary_raw[[beliefs_sample_col]]))
-  },
-  k = if ("k" %in% names(beliefs_summary_raw)) {
-    as.integer(beliefs_summary_raw$k)
-  } else {
-    rep(3L, nrow(beliefs_summary_raw))
-  },
-  RMSEA = as.numeric(beliefs_summary_raw$rmsea),
-  TLI = as.numeric(beliefs_summary_raw$tli),
-  RMSR = as.numeric(beliefs_summary_raw$rmsr)
-)
-
-beliefs_sensitivity <- if (!any(beliefs_summary$Sample == "Sensitivity")) {
-  fit_poly_minres_oblimin(
-    path = file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Sensitivity.csv"),
-    item_col = "item_num",
-    k = 3L,
-    instrument = "BeliefsAboutAI",
-    sample_label = "Sensitivity",
-    drop_items = 1:5
-  )
-} else {
-  tibble()
-}
-
-all_instruments_fit_comparison <- bind_rows(
-  established_primary,
-  established_sensitivity,
-  beliefs_summary,
-  beliefs_sensitivity
-) |>
-  mutate(
-    Instrument = factor(
-      Instrument,
-      levels = c("IMI", "WritingEfficacy", "AIReflection", "BeliefsAboutAI")
-    ),
-    Sample = factor(Sample, levels = c("Primary", "Sensitivity"))
-  ) |>
-  arrange(Instrument, Sample) |>
-  mutate(Instrument = as.character(Instrument), Sample = as.character(Sample))
-
-write_csv(
-  all_instruments_fit_comparison,
-  file.path("16_exploratory_beliefs", "csv", "All_Instruments_Fit_Comparison.csv")
-)
-
-all_instruments_fit_comparison |>
-  mutate(across(c(RMSEA, TLI, RMSR), ~ round(.x, 3))) |>
-  kable(caption = "Locked and exploratory factor-model fit comparison")
 ```

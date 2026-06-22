@@ -385,6 +385,21 @@ assert_lookup_covers_factor_columns(
 
 write_csv(factor_lookup,     file.path(csv_dir, "Factor_Name_Map.csv"))
 write_csv(all_factor_scores, file.path(csv_dir, "Factor_Scores_All_Instruments.csv"))
+
+strict_paired_ids <- read_csv(
+  order_effects_analysis_ready_file,
+  show_col_types = FALSE
+) |>
+  transmute(participant_id = as.character(participant_id))
+
+assert_expected_count(nrow(strict_paired_ids), 82L, "Script 06 strict paired factor-heatmap IDs")
+assert_unique_pid_rows(strict_paired_ids, "participant_id", "Script 06 strict paired factor-heatmap IDs")
+
+factor_heatmap_scores <- all_factor_scores |>
+  mutate(participant_id = as.character(participant_id)) |>
+  semi_join(strict_paired_ids, by = "participant_id")
+
+assert_expected_count(nrow(factor_heatmap_scores), 82L, "Script 06 strict paired factor-heatmap scores")
 ```
 
 ## Factor Name Map (Current Working Labels)
@@ -406,7 +421,7 @@ factor_pairs <- t(combn(factor_cols, 2)) |>
 factor_corr_unique <- factor_pairs |>
   mutate(
     result = map2(factor_x, factor_y,
-                  ~ safe_spearman_pair(all_factor_scores, .x, .y))
+                  ~ safe_spearman_pair(factor_heatmap_scores, .x, .y))
   ) |>
   pull(result) |>
   bind_rows() |>
@@ -456,7 +471,7 @@ factor_corr_diag <- tibble(
   rho                 = 1,
   p                   = NA_real_,
   n                   = map_int(factor_cols,
-                                ~ sum(!is.na(all_factor_scores[[.x]]))),
+                                ~ sum(!is.na(factor_heatmap_scores[[.x]]))),
   note                = "diagonal",
   p_bonferroni        = NA_real_,
   p_bh                = NA_real_,
@@ -547,7 +562,7 @@ factor_heatmap_plot <- ggplot(
   ) +
   labs(
     title    = "Interesting Findings Finder: Factor Heatmap Across 3 Instruments",
-    subtitle = "* BH < .05   ** Bonferroni < .05",
+    subtitle = "Strict paired analysis sample, N = 82. * BH < .05   ** Bonferroni < .05",
     x        = NULL,
     y        = NULL
   ) +
@@ -785,8 +800,8 @@ findings_manifest <- tibble(
   description = c(
     "Factor labels and variance-ordered positions from EFA solutions",
     "Factor scores for IMI, WritingEfficacy, AIReflection (primary EFA samples)",
-    "Unique Spearman correlations across all factor pairs (BH and Bonferroni corrected)",
-    "Full symmetric heatmap matrix including diagonal entries",
+    "Unique Spearman correlations across all factor pairs in the strict paired N = 82 sample (BH and Bonferroni corrected)",
+    "Full symmetric strict paired N = 82 heatmap matrix including diagonal entries",
     "Summary of significant item-level correlations per instrument pair",
     "Top 15 item-pair hits per instrument combination, ranked by abs(rho)",
     "All pairwise item correlations across all instrument pairs, ranked by abs(rho)"
