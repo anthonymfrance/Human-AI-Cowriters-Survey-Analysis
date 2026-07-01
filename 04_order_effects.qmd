@@ -50,8 +50,8 @@ factor_name_map_file <- file.path("06_interesting_findings", "csv", "Factor_Name
 beliefs_long_file <- file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv")
 schedule_lab_files <- tribble(
   ~lab_source,   ~path,
-  "SS2",         "C:/Users/Canine/Downloads/Scheduling Tracking - SS2.csv",
-  "Stevenson",   "C:/Users/Canine/Downloads/Scheduling Tracking - Stevenson.csv"
+  "SS2",         "Scheduling Tracking - SS2.csv",
+  "Stevenson",   "Scheduling Tracking - Stevenson.csv"
 )
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1109,9 +1109,9 @@ write_csv(interaction_summary, file.path(csv_dir, "Tool_Order_Interaction_Summar
 
 This exploratory section asks whether participants in SS2 versus
 Stevenson differed on the locked EFA-derived composite scores. Lab
-assignment comes from the scheduling-tracking CSVs. Because each file
+assignment comes from the sanitized scheduling-tracking CSVs. Because each file
 nominally corresponds to one lab, file membership is the default rule;
-explicit cross-lab note conflicts or cross-file duplicate identities are
+explicit cross-lab note conflicts or cross-file duplicate schedule keys are
 treated as ambiguous and excluded from the lab comparison.
 
 Poor-quality paired data are already screened out upstream: this section
@@ -1181,7 +1181,7 @@ schedule_tracking_clean <- schedule_tracking |>
     source_path,
     participant_id = normalize_schedule_text(x),
     participant_id_lower = str_to_lower(participant_id),
-    participant_name = str_to_lower(normalize_schedule_text(Participant)),
+    participant_schedule_key = str_to_lower(normalize_schedule_text(Participant)),
     session_1_status = normalize_schedule_text(`Session 1 Status`),
     session_2_status = normalize_schedule_text(`Session 2 Status`),
     notes = normalize_schedule_text(Notes)
@@ -1203,17 +1203,17 @@ schedule_tracking_clean <- schedule_tracking |>
     )
   )
 
-name_lab_counts <- schedule_tracking_clean |>
-  filter(!is.na(participant_name)) |>
-  distinct(participant_name, lab_source) |>
-  count(participant_name, name = "name_lab_count")
+schedule_key_lab_counts <- schedule_tracking_clean |>
+  filter(!is.na(participant_schedule_key)) |>
+  distinct(participant_schedule_key, lab_source) |>
+  count(participant_schedule_key, name = "schedule_key_lab_count")
 
 schedule_id_summary <- schedule_tracking_clean |>
   filter(!is.na(participant_id_lower)) |>
   group_by(participant_id_lower) |>
   summarise(
     participant_id_schedule = first_nonmissing_chr(participant_id),
-    participant_name = first_nonmissing_chr(participant_name),
+    participant_schedule_key = first_nonmissing_chr(participant_schedule_key),
     n_schedule_labs = n_distinct(lab_source),
     schedule_labs = str_c(sort(unique(lab_source)), collapse = "; "),
     assigned_lab = if_else(
@@ -1236,13 +1236,13 @@ schedule_id_summary <- schedule_tracking_clean |>
     ),
     .groups = "drop"
   ) |>
-  left_join(name_lab_counts, by = "participant_name") |>
+  left_join(schedule_key_lab_counts, by = "participant_schedule_key") |>
   mutate(
-    name_lab_count = replace_na(name_lab_count, 0L),
+    schedule_key_lab_count = replace_na(schedule_key_lab_count, 0L),
     assignment_status = case_when(
       n_schedule_labs > 1L ~ "ambiguous_id_in_both_lab_files",
       any_cross_lab_note   ~ "ambiguous_cross_lab_note",
-      name_lab_count > 1L  ~ "ambiguous_name_in_both_lab_files",
+      schedule_key_lab_count > 1L  ~ "ambiguous_key_in_both_lab_files",
       n_schedule_labs == 1L ~ "assigned",
       TRUE                 ~ "no_schedule_lab_match"
     ),
@@ -1251,8 +1251,8 @@ schedule_id_summary <- schedule_tracking_clean |>
         "participant ID appears in both lab scheduling files",
       assignment_status == "ambiguous_cross_lab_note" ~
         "notes explicitly place at least one session in the other lab",
-      assignment_status == "ambiguous_name_in_both_lab_files" ~
-        "participant name appears across both lab scheduling files",
+      assignment_status == "ambiguous_key_in_both_lab_files" ~
+        "anonymized schedule key appears across both lab scheduling files",
       assignment_status == "no_schedule_lab_match" ~
         "no scheduling-file lab match found",
       TRUE ~ NA_character_
@@ -1278,7 +1278,7 @@ lab_assignment <- participant_with_composites |>
     lab,
     assignment_status,
     exclusion_reason,
-    participant_name,
+    participant_schedule_key,
     schedule_labs,
     session_1_status,
     session_2_status,
@@ -1447,7 +1447,7 @@ lab_violin_plot <- lab_composite_long |>
     x = "Lab",
     y = "Composite score",
     fill = NULL,
-    caption = "Lab assignment comes from scheduling tracking CSVs. Explicit cross-lab note conflicts and cross-file duplicate identities are excluded."
+    caption = "Lab assignment comes from sanitized scheduling tracking CSVs. Explicit cross-lab note conflicts and cross-file duplicate schedule keys are excluded."
   ) +
   theme_minimal(base_size = 12) +
   theme(

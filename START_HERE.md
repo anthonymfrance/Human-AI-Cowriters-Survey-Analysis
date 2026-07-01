@@ -29,6 +29,11 @@ Keep these in the top-level folder because the active QMDs read them from here:
 - `rw-survey-long-040726.csv`
 - `llm-survey-long-040726.csv`
 - `Participant Tracking - IDs and Conditions Table.csv`
+- `Scheduling Tracking - SS2.csv`
+- `Scheduling Tracking - Stevenson.csv`
+
+The scheduling files are sanitized for repo use and only support the lab
+sensitivity section in `04_order_effects.qmd`.
 
 ## Current Outputs
 

@@ -11,7 +11,14 @@ Keep these source files at the repository root:
 - `rw-survey-long-040726.csv`
 - `llm-survey-long-040726.csv`
 - `Participant Tracking - IDs and Conditions Table.csv`
+- `Scheduling Tracking - SS2.csv`
+- `Scheduling Tracking - Stevenson.csv`
 - `authorkey.csv`
+
+The scheduling tracking files are sanitized inputs used by
+`04_order_effects.qmd` for the lab sensitivity analysis. They retain only
+study IDs, anonymized schedule keys, session statuses, and cross-lab note
+markers needed for analysis.
 
 The main helper file is:
 
