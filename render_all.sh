@@ -22,7 +22,9 @@ SCRIPTS=(
   "14_q17_deeper_dive.qmd"
   "15_q17_robustness.qmd"
   "16_exploratory_beliefs.qmd"
-  "17_results.qmd"
+  "17_composite_scoring.qmd"
+  "18_composite_correlations.qmd"
+  "results.qmd"
 )
 
 for script in "${SCRIPTS[@]}"; do

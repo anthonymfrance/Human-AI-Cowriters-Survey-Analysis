@@ -20,7 +20,9 @@ Start with:
 - `14_q17_deeper_dive.qmd`
 - `15_q17_robustness.qmd`
 - `16_exploratory_beliefs.qmd`
-- `17_results.qmd`
+- `17_composite_scoring.qmd`
+- `18_composite_correlations.qmd`
+- `results.qmd`
 
 These are the active Quarto files for the current audit, cleaning, triage, EFA export, EFA analysis, order-effects inference, interesting-findings exploratory plotting, the Q17 side analysis against Author Recognition, the ART-wide follow-up, participant profiling, the external profile-comparison pass, and the final results visualizer.
 
@@ -47,7 +49,10 @@ Key locations:
 - `02_efa_exports/` contains the rendered report plus `efa/`, `efa_diagnostics/`, `audit/`, and `Final_Master_Wide.csv`.
 - `03_efa_analysis/` contains the rendered report plus `efa_diagnostics/`, `audit/`, `EFA_Recommended_K.csv`, and `EFA_Final_Item_Map.csv`.
 - `04_beliefs_item_analysis/` through `16_exploratory_beliefs/` each contain their rendered report plus script-specific `csv/` and `plots/` outputs.
-- `17_results/` contains the final results report.
+- `17_composite_scoring/` contains read-only unit-weighted composite scoring outputs.
+- `18_composite_correlations/` contains read-only composite correlation outputs.
+- `18_composite_workbook/Composite_Workbook.xlsx` contains participant-level composites, assigned item scores, a color legend, and composite summaries.
+- `results.html` is the final results report.
 
 Important handoff files in the ordered pipeline:
 
@@ -96,5 +101,7 @@ XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 13_model_use_vs_fact
 XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 14_q17_deeper_dive.qmd --output-dir 14_q17_deeper_dive
 XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 15_q17_robustness.qmd --output-dir 15_q17_robustness
 XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 16_exploratory_beliefs.qmd --output-dir 16_exploratory_beliefs
-XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 17_results.qmd --output-dir 17_results
+XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 17_composite_scoring.qmd --output-dir 17_composite_scoring
+XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 18_composite_correlations.qmd --output-dir 18_composite_correlations
+XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render results.qmd --output-dir results
 ```

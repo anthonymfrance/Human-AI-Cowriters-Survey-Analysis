@@ -206,10 +206,10 @@ belief_factor_lookup <- tibble(
   factor = c("Beliefs_UtilityComfort", "Beliefs_FutureAIIntent", "Beliefs_ConcernHarms"),
   instrument = "BeliefsAboutAI",
   factor_num = 1:3,
-  proposed_name = c("Utility & Comfort", "Future AI Intent", "Concern & Harms"),
+  proposed_name = c("Utility & Comfort", "Future AI Orientation", "Concern & Harms"),
   display_label = c(
     "Beliefs F1 -> Utility & Comfort",
-    "Beliefs F2 -> Future AI Intent",
+    "Beliefs F2 -> Future AI Orientation",
     "Beliefs F3 -> Concern & Harms"
   )
 )
@@ -235,7 +235,7 @@ loading_factor_lookup <- tibble(
   factor_id = c("MR1", "MR2", "MR3"),
   factor_label = c(
     "F1: Utility & Comfort",
-    "F2: Future AI Intent",
+    "F2: Future AI Orientation",
     "F3: Low Concern / Low Harms"
   )
 )

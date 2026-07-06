@@ -1,0 +1,1288 @@
+---
+title: "18 - Composite Correlations"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+output-dir: "18_composite_correlations"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+# Purpose
+
+This companion report re-runs the downstream factor-correlation families
+using the unit-weighted composite scores from script `17`, rather than
+tenBerge EFA factor scores. It does not refit any EFA models.
+
+```{r setup}
+library(tidyverse)
+library(knitr)
+library(openxlsx)
+
+script_dir <- "18_composite_correlations"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+workbook_dir <- "18_composite_workbook"
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(workbook_dir, recursive = TRUE, showWarnings = FALSE)
+
+composite_scores_file <- file.path("17_composite_scoring", "csv", "Composite_Scores_Wide.csv")
+composite_specs_file <- file.path("17_composite_scoring", "csv", "Composite_Specs.csv")
+composite_item_membership_file <- file.path("17_composite_scoring", "csv", "Composite_Item_Membership.csv")
+unassigned_items_file <- file.path("17_composite_scoring", "csv", "Unassigned_Items.csv")
+art_scores_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
+q17_bucket_file <- file.path("14_q17_deeper_dive", "csv", "Q17_Likert_Buckets_PerParticipant.csv")
+named_model_file <- file.path("13_model_use_vs_factors_items", "csv", "Model_Use_Factor_Item_Merged.csv")
+workbook_file <- file.path(workbook_dir, "Composite_Workbook.xlsx")
+
+instrument_order <- c("IMI", "WritingEfficacy", "AIReflection", "BeliefsAboutAI")
+
+pal <- c(
+  "IMI" = "#4f79b7",
+  "WritingEfficacy" = "#c96b3b",
+  "AIReflection" = "#5a9367",
+  "BeliefsAboutAI" = "#8c6bb1",
+  "ART" = "#67717a",
+  "Q17" = "#2f7f77",
+  "ModelUse" = "#7c6aa3"
+)
+
+theme_corr <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1),
+      legend.position = "bottom"
+    )
+}
+
+sig_suffix <- function(p_bh, p_bonf) {
+  case_when(
+    !is.na(p_bonf) & p_bonf < 0.05 ~ "**",
+    !is.na(p_bh) & p_bh < 0.05 ~ "*",
+    TRUE ~ ""
+  )
+}
+
+safe_spearman <- function(df, x, y) {
+  d <- df |>
+    select(all_of(c(x, y))) |>
+    mutate(across(everything(), as.numeric)) |>
+    drop_na()
+
+  if (nrow(d) < 5L ||
+      dplyr::n_distinct(d[[x]]) < 2L ||
+      dplyr::n_distinct(d[[y]]) < 2L) {
+    return(tibble(n = nrow(d), rho = NA_real_, p = NA_real_))
+  }
+
+  ct <- suppressWarnings(cor.test(d[[x]], d[[y]], method = "spearman", exact = FALSE))
+  tibble(n = nrow(d), rho = unname(ct$estimate), p = ct$p.value)
+}
+
+run_corr_grid <- function(df, xs, ys, family) {
+  crossing(x = xs, y = ys) |>
+    mutate(result = map2(x, y, ~ safe_spearman(df, .x, .y))) |>
+    unnest(result) |>
+    mutate(
+      abs_rho = abs(rho),
+      p_bh = p.adjust(p, method = "BH"),
+      p_bonf = p.adjust(p, method = "bonferroni"),
+      survives_bh = !is.na(p_bh) & p_bh < 0.05,
+      survives_bonferroni = !is.na(p_bonf) & p_bonf < 0.05,
+      family = family
+    ) |>
+    arrange(p_bh, desc(abs_rho))
+}
+
+adjust_within <- function(df, group_col) {
+  df |>
+    group_by(across(all_of(group_col))) |>
+    mutate(
+      p_bh = p.adjust(p, method = "BH"),
+      p_bonf = p.adjust(p, method = "bonferroni"),
+      survives_bh = !is.na(p_bh) & p_bh < 0.05,
+      survives_bonferroni = !is.na(p_bonf) & p_bonf < 0.05
+    ) |>
+    ungroup()
+}
+```
+
+# Inputs
+
+```{r inputs}
+composite_scores <- read_csv(composite_scores_file, show_col_types = FALSE)
+composite_lookup <- read_csv(composite_specs_file, show_col_types = FALSE) |>
+  select(instrument, factor, factor_id, factor_num, proposed_name, display_label, n_items) |>
+  mutate(
+    instrument_order = match(instrument, instrument_order),
+    factor_num = as.integer(factor_num)
+  ) |>
+  arrange(instrument_order, factor_num)
+
+composite_cols <- composite_lookup$factor
+missing_composites <- setdiff(composite_cols, names(composite_scores))
+if (length(missing_composites) > 0) {
+  stop(
+    paste0("Composite score file is missing columns: ", paste(missing_composites, collapse = ", ")),
+    call. = FALSE
+  )
+}
+
+factor_levels <- composite_lookup$display_label
+
+composite_scores |>
+  summarise(n_participants = n(), across(all_of(composite_cols), ~ sum(!is.na(.x)), .names = "{.col}_n")) |>
+  pivot_longer(-n_participants, names_to = "factor_n_col", values_to = "n_nonmissing") |>
+  slice_head(n = 6) |>
+  kable(caption = "Composite score availability preview")
+```
+
+# Composite x Composite Correlations
+
+```{r cross-composite-correlations}
+factor_pairs <- combn(composite_cols, 2, simplify = FALSE) |>
+  map_dfr(~ tibble(factor_x = .x[1], factor_y = .x[2]))
+
+composite_corr_unique <- factor_pairs |>
+  mutate(result = map2(factor_x, factor_y, ~ safe_spearman(composite_scores, .x, .y))) |>
+  unnest(result) |>
+  mutate(
+    abs_rho = abs(rho),
+    p_bh = p.adjust(p, method = "BH"),
+    p_bonf = p.adjust(p, method = "bonferroni"),
+    survives_bh = !is.na(p_bh) & p_bh < 0.05,
+    survives_bonferroni = !is.na(p_bonf) & p_bonf < 0.05
+  ) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_x = factor, instrument_x = instrument, label_x = display_label),
+    by = "factor_x"
+  ) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_y = factor, instrument_y = instrument, label_y = display_label),
+    by = "factor_y"
+  ) |>
+  arrange(p_bh, desc(abs_rho))
+
+composite_corr_diag <- tibble(
+  factor_x = composite_cols,
+  factor_y = composite_cols,
+  rho = 1,
+  p = NA_real_,
+  n = map_int(composite_cols, ~ sum(!is.na(composite_scores[[.x]]))),
+  abs_rho = 1,
+  p_bh = NA_real_,
+  p_bonf = NA_real_,
+  survives_bh = NA,
+  survives_bonferroni = NA
+) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_x = factor, instrument_x = instrument, label_x = display_label),
+    by = "factor_x"
+  ) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_y = factor, instrument_y = instrument, label_y = display_label),
+    by = "factor_y"
+  )
+
+composite_corr_heat <- bind_rows(
+  composite_corr_unique,
+  composite_corr_unique |>
+    transmute(
+      factor_x = factor_y,
+      factor_y = factor_x,
+      rho, p, n, abs_rho, p_bh, p_bonf, survives_bh, survives_bonferroni,
+      instrument_x = instrument_y,
+      instrument_y = instrument_x,
+      label_x = label_y,
+      label_y = label_x
+    ),
+  composite_corr_diag
+)
+
+write_csv(
+  composite_corr_unique,
+  file.path(csv_dir, "Composite_Cross_Factor_Correlations_Unique.csv")
+)
+write_csv(
+  composite_corr_heat,
+  file.path(csv_dir, "Composite_Cross_Factor_Heatmap_Matrix.csv")
+)
+
+composite_corr_unique |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  slice_head(n = 20) |>
+  kable(caption = "Top composite x composite Spearman correlations")
+```
+
+```{r cross-composite-heatmap, fig.width=12, fig.height=9}
+cross_heat_df <- composite_corr_heat |>
+  mutate(
+    label_x = factor(label_x, levels = factor_levels),
+    label_y = factor(label_y, levels = rev(factor_levels)),
+    cell_label = case_when(
+      factor_x == factor_y ~ "",
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_cross_heat <- ggplot(cross_heat_df, aes(x = label_x, y = label_y, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#b3584b",
+    mid = "white",
+    high = "#3f6fa8",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "rho"
+  ) +
+  labs(
+    title = "Cross-Instrument Composite Correlation Heatmap",
+    subtitle = "* BH < .05; ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_corr(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 8, angle = 35, hjust = 1)
+  )
+
+ggsave(
+  file.path(plot_dir, "Composite_Cross_Factor_Heatmap.png"),
+  p_cross_heat,
+  width = 12,
+  height = 9,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Composite_Cross_Factor_Heatmap.pdf"),
+  p_cross_heat,
+  width = 12,
+  height = 9,
+  units = "in",
+  bg = "white"
+)
+
+p_cross_heat
+```
+
+# ART vs Composites
+
+```{r art-correlations}
+art_metric_lookup <- tibble(
+  art_metric = c(
+    "art_total_selected",
+    "art_real_hits",
+    "art_fake_false_alarms",
+    "art_neutral_selected",
+    "art_unknown_selected",
+    "art_net_real_minus_fake",
+    "art_hit_rate",
+    "art_false_alarm_rate"
+  ),
+  art_label = c(
+    "Total selected",
+    "Real hits",
+    "False alarms",
+    "Neutral selected",
+    "Unknown selected",
+    "ART net",
+    "Hit rate",
+    "False-alarm rate"
+  )
+)
+
+art_scores <- read_csv(art_scores_file, show_col_types = FALSE)
+
+art_df <- art_scores |>
+  select(participant_id, all_of(art_metric_lookup$art_metric)) |>
+  inner_join(composite_scores, by = "participant_id")
+
+art_corrs <- run_corr_grid(
+  art_df,
+  art_metric_lookup$art_metric,
+  composite_cols,
+  "art_vs_composites"
+) |>
+  rename(art_metric = x, factor = y) |>
+  left_join(art_metric_lookup, by = "art_metric") |>
+  left_join(composite_lookup, by = "factor") |>
+  arrange(p_bh, desc(abs_rho))
+
+art_ranking_primary <- art_corrs |>
+  filter(art_metric == "art_net_real_minus_fake") |>
+  arrange(desc(abs_rho), p_bh, p_bonf)
+
+write_csv(art_corrs, file.path(csv_dir, "ART_vs_Composites_Correlations.csv"))
+write_csv(art_ranking_primary, file.path(csv_dir, "ART_Net_vs_Composites_Ranked.csv"))
+
+art_corrs |>
+  select(art_label, instrument, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  slice_head(n = 20) |>
+  kable(caption = "ART metrics vs composite scores")
+```
+
+```{r art-heatmap, fig.width=10, fig.height=7}
+art_heat_df <- art_corrs |>
+  mutate(
+    art_label = factor(art_label, levels = art_metric_lookup$art_label),
+    display_label = factor(display_label, levels = rev(factor_levels)),
+    cell_label = case_when(
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_art_heat <- ggplot(art_heat_df, aes(x = art_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "ART vs Composite Scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 15, hjust = 1),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  file.path(plot_dir, "ART_vs_Composites_Heatmap.png"),
+  p_art_heat,
+  width = 10,
+  height = 7,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "ART_vs_Composites_Heatmap.pdf"),
+  p_art_heat,
+  width = 10,
+  height = 7,
+  units = "in",
+  bg = "white"
+)
+
+p_art_heat
+```
+
+# Q17 AI-Use vs Composites
+
+```{r q17-correlations}
+q17_bucket <- read_csv(q17_bucket_file, show_col_types = FALSE)
+
+q17_metric_lookup <- tibble(
+  q17_metric = c(
+    "q17_p_1",
+    "q17_p_2",
+    "q17_p_3",
+    "q17_p_4",
+    "q17_p_5",
+    "q17_mean_use",
+    "q17_n_3",
+    "q17_n_4",
+    "q17_n_5"
+  ),
+  q17_label = c(
+    "Prop. never heard",
+    "Prop. heard, never used",
+    "Prop. rarely use",
+    "Prop. regularly use",
+    "Prop. often use",
+    "Mean use score",
+    "Count rarely use",
+    "Count regularly use",
+    "Count often use"
+  )
+)
+
+q17_df <- q17_bucket |>
+  select(participant_id, all_of(q17_metric_lookup$q17_metric)) |>
+  inner_join(composite_scores, by = "participant_id")
+
+q17_corrs <- crossing(
+  q17_metric = q17_metric_lookup$q17_metric,
+  factor = composite_cols
+) |>
+  mutate(result = map2(factor, q17_metric, ~ safe_spearman(q17_df, .x, .y))) |>
+  unnest(result) |>
+  mutate(abs_rho = abs(rho), family = "q17_vs_composites") |>
+  adjust_within("q17_metric") |>
+  left_join(q17_metric_lookup, by = "q17_metric") |>
+  left_join(composite_lookup, by = "factor") |>
+  arrange(q17_metric, p_bh, desc(abs_rho))
+
+write_csv(q17_corrs, file.path(csv_dir, "Q17_AI_Use_vs_Composites_Correlations.csv"))
+
+q17_corrs |>
+  select(q17_label, instrument, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  slice_head(n = 20) |>
+  kable(caption = "Q17 AI-use metrics vs composite scores")
+```
+
+```{r q17-heatmap, fig.width=12, fig.height=7.5}
+q17_heat_metrics <- c("q17_p_1", "q17_p_2", "q17_p_3", "q17_p_4", "q17_p_5", "q17_mean_use")
+
+q17_heat_df <- q17_corrs |>
+  filter(q17_metric %in% q17_heat_metrics) |>
+  mutate(
+    q17_label = factor(
+      q17_label,
+      levels = q17_metric_lookup |>
+        filter(q17_metric %in% q17_heat_metrics) |>
+        pull(q17_label)
+    ),
+    display_label = factor(display_label, levels = factor_levels),
+    cell_label = case_when(
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_q17_heat <- ggplot(q17_heat_df, aes(x = q17_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "Q17 Familiarity Buckets vs Composite Scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05  |  BH corrected within each Q17 metric",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.png"),
+  p_q17_heat,
+  width = 12,
+  height = 7.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.pdf"),
+  p_q17_heat,
+  width = 12,
+  height = 7.5,
+  units = "in",
+  bg = "white"
+)
+
+p_q17_heat
+```
+
+# Named Model Use vs Composites
+
+```{r named-model-correlations}
+model_lookup <- tibble(
+  model_label = c("ChatGPT", "Claude", "Gemini", "Copilot")
+)
+
+model_scores <- read_csv(named_model_file, show_col_types = FALSE) |>
+  select(participant_id, all_of(model_lookup$model_label))
+
+model_df <- model_scores |>
+  inner_join(composite_scores, by = "participant_id")
+
+model_corrs <- crossing(
+  model_label = model_lookup$model_label,
+  factor = composite_cols
+) |>
+  mutate(result = map2(model_label, factor, ~ safe_spearman(model_df, .x, .y))) |>
+  unnest(result) |>
+  mutate(abs_rho = abs(rho), family = "named_model_use_vs_composites") |>
+  adjust_within("model_label") |>
+  left_join(composite_lookup, by = "factor") |>
+  arrange(model_label, p_bh, desc(abs_rho))
+
+write_csv(model_corrs, file.path(csv_dir, "Named_Model_Use_vs_Composites_Correlations.csv"))
+
+model_corrs |>
+  select(model_label, instrument, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  kable(caption = "Named model use vs composite scores")
+```
+
+```{r named-model-heatmap, fig.width=10, fig.height=6.5}
+model_heat_df <- model_corrs |>
+  mutate(
+    model_label = factor(model_label, levels = model_lookup$model_label),
+    display_label = factor(display_label, levels = factor_levels),
+    cell_label = case_when(
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_model_heat <- ggplot(model_heat_df, aes(x = model_label, y = display_label, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = cell_label), size = 3) +
+  scale_fill_gradient2(
+    low = "#c73e3a",
+    mid = "#f7f7f7",
+    high = "#4f79b7",
+    midpoint = 0,
+    limits = c(-1, 1),
+    name = "Spearman rho"
+  ) +
+  labs(
+    title = "Named Model Use vs Composite Scores",
+    subtitle = "* BH < .05   ** Bonferroni < .05  |  BH corrected within each model",
+    x = "Primary AI model use score predictor",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(
+  file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.png"),
+  p_model_heat,
+  width = 10,
+  height = 6.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.pdf"),
+  p_model_heat,
+  width = 10,
+  height = 6.5,
+  units = "in",
+  bg = "white"
+)
+
+p_model_heat
+```
+
+# Combined Ranked Output
+
+```{r combined-ranked}
+all_ranked_correlations <- bind_rows(
+  composite_corr_unique |>
+    transmute(
+      source = "composite_x_composite",
+      predictor = label_x,
+      outcome = label_y,
+      n,
+      rho,
+      p,
+      p_bh,
+      p_bonf,
+      abs_rho
+    ),
+  art_corrs |>
+    transmute(
+      source = "art_vs_composites",
+      predictor = art_label,
+      outcome = display_label,
+      n,
+      rho,
+      p,
+      p_bh,
+      p_bonf,
+      abs_rho
+    ),
+  q17_corrs |>
+    transmute(
+      source = "q17_vs_composites",
+      predictor = q17_label,
+      outcome = display_label,
+      n,
+      rho,
+      p,
+      p_bh,
+      p_bonf,
+      abs_rho
+    ),
+  model_corrs |>
+    transmute(
+      source = "named_model_use_vs_composites",
+      predictor = model_label,
+      outcome = display_label,
+      n,
+      rho,
+      p,
+      p_bh,
+      p_bonf,
+      abs_rho
+    )
+) |>
+  arrange(p_bh, desc(abs_rho))
+
+write_csv(
+  all_ranked_correlations,
+  file.path(csv_dir, "Composite_All_Correlations_Ranked.csv")
+)
+```
+
+# Composite Workbook
+
+```{r composite-workbook}
+item_membership <- read_csv(composite_item_membership_file, show_col_types = FALSE) |>
+  mutate(
+    instrument_order = match(instrument, instrument_order),
+    factor_num = as.integer(factor_num),
+    item_id = as.integer(item_id),
+    item_col = paste0(instrument, "_Q", item_id),
+    item_header_base = str_squish(item_text),
+    item_reference = paste0(instrument, " Q", item_id),
+    item_header = paste0(item_header_base, "\n", item_reference)
+  ) |>
+  arrange(instrument_order, factor_num, item_id)
+
+unassigned_items <- read_csv(unassigned_items_file, show_col_types = FALSE)
+
+read_clean_item_scores <- function(instrument_name, path, item_col_name) {
+  read_csv(path, show_col_types = FALSE) |>
+    transmute(
+      instrument = instrument_name,
+      participant_id,
+      item_id = as.integer(.data[[item_col_name]]),
+      score = as.numeric(score)
+    )
+}
+
+item_scores_long <- bind_rows(
+  read_clean_item_scores(
+    "IMI",
+    file.path("01_audit_cleaning", "cleaned", "IMI_cleaned.csv"),
+    "item_code"
+  ),
+  read_clean_item_scores(
+    "WritingEfficacy",
+    file.path("01_audit_cleaning", "cleaned", "WritingEfficacy_cleaned.csv"),
+    "item_code"
+  ) |>
+    mutate(score = (score / 25) + 1),
+  read_clean_item_scores(
+    "AIReflection",
+    file.path("01_audit_cleaning", "cleaned", "AI_Reflection_cleaned.csv"),
+    "item_num"
+  ),
+  read_clean_item_scores(
+    "BeliefsAboutAI",
+    file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv"),
+    "item_num"
+  )
+)
+
+assigned_item_scores <- item_scores_long |>
+  inner_join(
+    item_membership |>
+      select(instrument, item_id, factor, factor_id, factor_num, item_col),
+    by = c("instrument", "item_id")
+  ) |>
+  mutate(
+    score = if_else(factor == "Beliefs_ConcernHarms", 6 - score, score)
+  )
+
+item_cols <- item_membership$item_col
+
+item_scores_wide <- assigned_item_scores |>
+  select(participant_id, item_col, score) |>
+  distinct() |>
+  pivot_wider(names_from = item_col, values_from = score)
+
+format_likert_range <- function(item_ids) {
+  ids <- sort(unique(as.integer(item_ids)))
+  if (length(ids) > 1L && all(diff(ids) == 1L)) {
+    return(paste0("Likerts Q", min(ids), "-Q", max(ids)))
+  }
+  paste0("Likerts ", paste0("Q", ids, collapse = ", "))
+}
+
+factor_item_ranges <- item_membership |>
+  group_by(factor) |>
+  summarise(
+    likert_range = format_likert_range(item_id),
+    .groups = "drop"
+  )
+
+composite_workbook_lookup <- composite_lookup |>
+  left_join(factor_item_ranges, by = "factor")
+
+workbook_column_map <- bind_rows(
+  composite_workbook_lookup |>
+    transmute(
+      source_column = factor,
+      workbook_column = paste0(proposed_name, "\n", instrument, " ", factor_id, "\n", likert_range),
+      column_type = "composite"
+    ),
+  item_membership |>
+    transmute(
+      source_column = item_col,
+      workbook_column = item_header,
+      column_type = "assigned_item"
+    )
+)
+
+participant_scores_internal <- composite_scores |>
+  select(participant_id, all_of(composite_cols)) |>
+  left_join(item_scores_wide, by = "participant_id") |>
+  select(participant_id, all_of(composite_cols), all_of(item_cols)) |>
+  mutate(
+    base_sample = if_all(
+      all_of(c("IMI_MR1", "WSE_MR1", "AIRefl_MR1")),
+      ~ !is.na(.x)
+    )
+  ) |>
+  arrange(desc(base_sample), participant_id) |>
+  select(-base_sample)
+
+participant_scores_workbook <- participant_scores_internal |>
+  rename_with(
+    ~ if_else(
+      .x %in% workbook_column_map$source_column,
+      workbook_column_map$workbook_column[match(.x, workbook_column_map$source_column)],
+      .x
+    )
+  )
+
+participant_source_to_display <- tibble(
+  source_column = names(participant_scores_internal),
+  display_column = names(participant_scores_workbook),
+  col_index = seq_along(participant_scores_workbook)
+)
+
+base_sample_order_check <- composite_scores |>
+  transmute(
+    participant_id,
+    base_sample = if_all(
+      all_of(c("IMI_MR1", "WSE_MR1", "AIRefl_MR1")),
+      ~ !is.na(.x)
+    )
+  ) |>
+  count(base_sample, name = "n_participants")
+
+summary_workbook <- composite_scores |>
+  pivot_longer(all_of(composite_cols), names_to = "factor", values_to = "score") |>
+  group_by(factor) |>
+  summarise(
+    n_nonmissing = sum(!is.na(score)),
+    mean = mean(score, na.rm = TRUE),
+    sd = sd(score, na.rm = TRUE),
+    median = median(score, na.rm = TRUE),
+    min = min(score, na.rm = TRUE),
+    max = max(score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(
+    composite_lookup |>
+      select(instrument, factor, factor_id, factor_num, proposed_name, display_label),
+    by = "factor"
+  ) |>
+  arrange(match(instrument, instrument_order), factor_num) |>
+  select(instrument, factor, factor_id, factor_num, proposed_name, display_label, everything())
+
+factor_fill_lookup <- tribble(
+  ~instrument,        ~factor_num, ~fill,
+  "IMI",             1L,          "#1D4ED8",
+  "IMI",             2L,          "#3B82F6",
+  "IMI",             3L,          "#93C5FD",
+  "WritingEfficacy", 1L,          "#B45309",
+  "WritingEfficacy", 2L,          "#F59E0B",
+  "WritingEfficacy", 3L,          "#FCD34D",
+  "AIReflection",    1L,          "#047857",
+  "AIReflection",    2L,          "#34D399",
+  "BeliefsAboutAI",  1L,          "#6D28D9",
+  "BeliefsAboutAI",  2L,          "#A855F7",
+  "BeliefsAboutAI",  3L,          "#C084FC"
+)
+
+item_fill_lookup <- tibble(
+  instrument = instrument_order,
+  item_fill = c("#DBEAFE", "#FEF3C7", "#D1FAE5", "#EDE9FE")
+)
+
+neutral_unassigned_fill <- "#D9D9D9"
+header_fill <- "#F3F4F6"
+cell_border_colour <- "#7A7A7A"
+
+composite_color_legend <- composite_workbook_lookup |>
+  left_join(factor_fill_lookup, by = c("instrument", "factor_num")) |>
+  transmute(
+    entry_type = "Composite factor column",
+    source_column = factor,
+    column_name = paste0(proposed_name, "\n", instrument, " ", factor_id, "\n", likert_range),
+    fill_hex = fill,
+    instrument,
+    factor = factor,
+    factor_label = display_label,
+    factor_name = proposed_name,
+    item_id = NA_integer_,
+    item_text = NA_character_,
+    scale_note = case_when(
+      factor == "Beliefs_ConcernHarms" ~
+        "Composite is on the higher concern/harms scale.",
+      TRUE ~ "Composite is the row mean of assigned clean items."
+    )
+  )
+
+item_color_legend <- item_membership |>
+  left_join(factor_fill_lookup, by = c("instrument", "factor_num")) |>
+  transmute(
+    entry_type = "Assigned raw item column",
+    source_column = item_col,
+    column_name = item_header,
+    fill_hex = fill,
+    instrument,
+    factor,
+    factor_label = display_label,
+    factor_name = proposed_name,
+    item_id,
+    item_text,
+    scale_note = case_when(
+      instrument == "WritingEfficacy" ~
+        "Shown on converted (x/25)+1 scale, not original 0-100 slider.",
+      factor == "Beliefs_ConcernHarms" ~
+        "Shown on higher concern/harms item scale (6 - upstream reverse-scored item), matching the composite orientation.",
+      TRUE ~ "Shown on the scored item scale used for composite averaging."
+    )
+  )
+
+unassigned_color_legend <- if (nrow(unassigned_items) > 0) {
+  unassigned_items |>
+    mutate(
+      source_column = paste0(instrument, "_Q", as.integer(item_id)),
+      column_name = str_squish(item_text),
+      factor = primary_factor_id
+    ) |>
+    transmute(
+      entry_type = "Unassigned item, not shown on Participant Scores",
+      source_column,
+      column_name,
+      fill_hex = neutral_unassigned_fill,
+      instrument,
+      factor,
+      factor_label = NA_character_,
+      factor_name = NA_character_,
+      item_id = as.integer(item_id),
+      item_text,
+      scale_note = paste0("Failed script 17 clean-item rule: ", unassigned_reason)
+    )
+} else {
+  tibble(
+    entry_type = character(),
+    source_column = character(),
+    column_name = character(),
+    fill_hex = character(),
+    instrument = character(),
+    factor = character(),
+    factor_label = character(),
+    factor_name = character(),
+    item_id = integer(),
+    item_text = character(),
+    scale_note = character()
+  )
+}
+
+legend_workbook <- bind_rows(
+  composite_color_legend,
+  item_color_legend,
+  unassigned_color_legend
+) |>
+  arrange(
+    match(instrument, instrument_order),
+    entry_type != "Composite factor column",
+    factor,
+    item_id
+  )
+
+wb <- openxlsx::createWorkbook()
+openxlsx::addWorksheet(wb, "Participant Scores")
+openxlsx::addWorksheet(wb, "Legend")
+openxlsx::addWorksheet(wb, "Summary")
+
+openxlsx::writeData(
+  wb,
+  "Participant Scores",
+  as.data.frame(t(names(participant_scores_workbook))),
+  colNames = FALSE
+)
+openxlsx::writeData(
+  wb,
+  "Participant Scores",
+  participant_scores_workbook,
+  startRow = 2,
+  colNames = FALSE
+)
+openxlsx::writeData(wb, "Legend", legend_workbook)
+openxlsx::writeData(wb, "Summary", summary_workbook)
+
+header_style <- openxlsx::createStyle(
+  fgFill = header_fill,
+  textDecoration = "bold",
+  border = "TopBottomLeftRight",
+  borderColour = cell_border_colour,
+  halign = "center",
+  valign = "top",
+  wrapText = TRUE
+)
+participant_id_style <- openxlsx::createStyle(
+  fgFill = "#FFFFFF",
+  textDecoration = "bold",
+  border = "TopBottomLeftRight",
+  borderColour = cell_border_colour
+)
+wrap_top_style <- openxlsx::createStyle(wrapText = TRUE, valign = "top")
+
+openxlsx::addStyle(
+  wb,
+  "Participant Scores",
+  header_style,
+  rows = 1,
+  cols = seq_along(participant_scores_workbook),
+  gridExpand = TRUE,
+  stack = TRUE
+)
+
+composite_display_cols <- participant_source_to_display |>
+  filter(source_column %in% composite_cols) |>
+  pull(col_index)
+
+item_display_cols <- participant_source_to_display |>
+  filter(source_column %in% item_cols) |>
+  pull(col_index)
+openxlsx::addStyle(
+  wb,
+  "Participant Scores",
+  participant_id_style,
+  rows = 1:(nrow(participant_scores_workbook) + 1),
+  cols = 1,
+  gridExpand = TRUE,
+  stack = TRUE
+)
+
+composite_column_styles <- composite_lookup |>
+  left_join(factor_fill_lookup, by = c("instrument", "factor_num")) |>
+  transmute(source_column = factor, fill_hex = fill) |>
+  left_join(participant_source_to_display, by = "source_column") |>
+  filter(!is.na(col_index))
+
+item_column_styles <- item_membership |>
+  left_join(factor_fill_lookup, by = c("instrument", "factor_num")) |>
+  transmute(source_column = item_col, fill_hex = fill) |>
+  distinct() |>
+  left_join(participant_source_to_display, by = "source_column") |>
+  filter(!is.na(col_index))
+
+walk2(composite_column_styles$col_index, composite_column_styles$fill_hex, function(col_i, fill_i) {
+  openxlsx::addStyle(
+    wb,
+    "Participant Scores",
+    openxlsx::createStyle(
+      fgFill = fill_i,
+      border = "TopBottomLeftRight",
+      borderColour = cell_border_colour
+    ),
+    rows = 2:(nrow(participant_scores_workbook) + 1),
+    cols = col_i,
+    gridExpand = TRUE,
+    stack = TRUE
+  )
+})
+
+walk2(item_column_styles$col_index, item_column_styles$fill_hex, function(col_i, fill_i) {
+  openxlsx::addStyle(
+    wb,
+    "Participant Scores",
+    openxlsx::createStyle(
+      fgFill = fill_i,
+      border = "TopBottomLeftRight",
+      borderColour = cell_border_colour
+    ),
+    rows = 2:(nrow(participant_scores_workbook) + 1),
+    cols = col_i,
+    gridExpand = TRUE,
+    stack = TRUE
+  )
+})
+
+legend_fill_cols <- match("fill_hex", names(legend_workbook))
+if (!is.na(legend_fill_cols) && nrow(legend_workbook) > 0) {
+  walk(seq_len(nrow(legend_workbook)), function(row_i) {
+    fill_i <- legend_workbook$fill_hex[[row_i]]
+    openxlsx::addStyle(
+      wb,
+      "Legend",
+      openxlsx::createStyle(fgFill = fill_i),
+      rows = row_i + 1,
+      cols = legend_fill_cols,
+      gridExpand = TRUE,
+      stack = TRUE
+    )
+  })
+}
+
+for (sheet_name in c("Participant Scores", "Legend", "Summary")) {
+  sheet_cols <- switch(
+    sheet_name,
+    "Participant Scores" = seq_along(participant_scores_workbook),
+    "Legend" = seq_along(legend_workbook),
+    "Summary" = seq_along(summary_workbook)
+  )
+  openxlsx::addStyle(
+    wb,
+    sheet_name,
+    header_style,
+    rows = 1,
+    cols = sheet_cols,
+    gridExpand = TRUE,
+    stack = TRUE
+  )
+  openxlsx::freezePane(wb, sheet_name, firstRow = TRUE)
+  openxlsx::addFilter(wb, sheet_name, row = 1, cols = sheet_cols)
+}
+
+openxlsx::setColWidths(wb, "Participant Scores", cols = 1, widths = 18)
+openxlsx::setColWidths(
+  wb,
+  "Participant Scores",
+  cols = composite_display_cols,
+  widths = 18
+)
+openxlsx::setColWidths(
+  wb,
+  "Participant Scores",
+  cols = item_display_cols,
+  widths = 42
+)
+openxlsx::setRowHeights(wb, "Participant Scores", rows = 1, heights = 140)
+
+openxlsx::setColWidths(wb, "Legend", cols = 1:ncol(legend_workbook), widths = "auto")
+openxlsx::setColWidths(wb, "Legend", cols = match("column_name", names(legend_workbook)), widths = 60)
+openxlsx::setColWidths(wb, "Legend", cols = match("item_text", names(legend_workbook)), widths = 70)
+openxlsx::setColWidths(wb, "Legend", cols = match("scale_note", names(legend_workbook)), widths = 55)
+openxlsx::addStyle(
+  wb,
+  "Legend",
+  wrap_top_style,
+  rows = 1:(nrow(legend_workbook) + 1),
+  cols = c(
+    match("column_name", names(legend_workbook)),
+    match("item_text", names(legend_workbook)),
+    match("scale_note", names(legend_workbook))
+  ),
+  gridExpand = TRUE,
+  stack = TRUE
+)
+openxlsx::setColWidths(wb, "Summary", cols = 1:ncol(summary_workbook), widths = "auto")
+
+openxlsx::saveWorkbook(wb, workbook_file, overwrite = TRUE)
+
+workbook_check <- tibble(
+  workbook_path = workbook_file,
+  file_exists = file.exists(workbook_file),
+  file_size_bytes = file.info(workbook_file)$size,
+  sheet_names = paste(openxlsx::getSheetNames(workbook_file), collapse = "; "),
+  base_sample_rows_first = base_sample_order_check |>
+    filter(base_sample) |>
+    pull(n_participants),
+  additional_rows_after_base = base_sample_order_check |>
+    filter(!base_sample) |>
+    pull(n_participants),
+  google_sheets_note = "Not uploaded from this environment; openxlsx xlsx formatting generally survives Google Sheets import, but verify fills after upload."
+)
+
+write_csv(workbook_check, file.path(csv_dir, "Composite_Workbook_Check.csv"))
+
+workbook_participant_readback <- openxlsx::read.xlsx(
+  workbook_file,
+  sheet = "Participant Scores",
+  sep.names = " "
+)
+
+expected_workbook_headers <- names(participant_scores_workbook) |>
+  str_replace_all("\\n", " ")
+base_sample_readback_cols <- expected_workbook_headers[
+  match(c("IMI_MR1", "WSE_MR1", "AIRefl_MR1"), names(participant_scores_internal))
+]
+
+header_mismatch_count <- sum(names(workbook_participant_readback) != expected_workbook_headers)
+participant_id_mismatch_count <- sum(
+  workbook_participant_readback$participant_id != participant_scores_workbook$participant_id,
+  na.rm = TRUE
+)
+
+numeric_mismatch_count <- map_int(2:ncol(participant_scores_workbook), function(col_i) {
+  expected <- suppressWarnings(as.numeric(participant_scores_workbook[[col_i]]))
+  observed <- suppressWarnings(as.numeric(workbook_participant_readback[[col_i]]))
+  both_na <- is.na(expected) & is.na(observed)
+  different <- abs(expected - observed) > 1e-10
+  sum(!both_na & (is.na(different) | different))
+}) |>
+  sum()
+
+workbook_audit <- tibble(
+  audit_check = c(
+    "expected_sheets_present",
+    "participant_scores_dimensions_match",
+    "participant_scores_headers_match",
+    "participant_ids_match",
+    "participant_numeric_cells_match",
+    "base_sample_rows_are_first_82",
+    "additional_rows_are_last_9"
+  ),
+  pass = c(
+    identical(
+      openxlsx::getSheetNames(workbook_file),
+      c("Participant Scores", "Legend", "Summary")
+    ),
+    identical(dim(workbook_participant_readback), dim(participant_scores_workbook)),
+    header_mismatch_count == 0,
+    participant_id_mismatch_count == 0,
+    numeric_mismatch_count == 0,
+    all(complete.cases(
+      workbook_participant_readback[1:82, base_sample_readback_cols]
+    )),
+    all(!complete.cases(
+      workbook_participant_readback[83:nrow(workbook_participant_readback), base_sample_readback_cols]
+    ))
+  ),
+  detail = c(
+    paste(openxlsx::getSheetNames(workbook_file), collapse = "; "),
+    paste(dim(workbook_participant_readback), collapse = " x "),
+    paste0(header_mismatch_count, " header mismatches"),
+    paste0(participant_id_mismatch_count, " participant_id mismatches"),
+    paste0(numeric_mismatch_count, " numeric cell mismatches"),
+    "Rows 1-82 have nonmissing IMI F1, WritingEfficacy F1, and AIReflection F1",
+    "Rows 83-91 are the additional Beliefs-only participants"
+  )
+)
+
+write_csv(workbook_audit, file.path(csv_dir, "Composite_Workbook_Audit.csv"))
+
+if (!all(workbook_audit$pass)) {
+  stop(
+    paste(
+      "Composite workbook audit failed:",
+      paste(workbook_audit$audit_check[!workbook_audit$pass], collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+workbook_check |>
+  kable(caption = "Composite workbook local open check")
+```
+
+# Output Manifest
+
+```{r manifest}
+manifest <- tibble(
+  output_type = c(
+    "cross_composite_correlations",
+    "cross_composite_heatmap_matrix",
+    "cross_composite_heatmap_png",
+    "cross_composite_heatmap_pdf",
+    "art_correlations",
+    "art_net_ranked",
+    "art_heatmap_png",
+    "art_heatmap_pdf",
+    "q17_correlations",
+    "q17_heatmap_png",
+    "q17_heatmap_pdf",
+    "named_model_correlations",
+    "named_model_heatmap_png",
+    "named_model_heatmap_pdf",
+    "all_ranked_correlations",
+    "composite_workbook",
+    "composite_workbook_check",
+    "composite_workbook_audit"
+  ),
+  path = c(
+    file.path(csv_dir, "Composite_Cross_Factor_Correlations_Unique.csv"),
+    file.path(csv_dir, "Composite_Cross_Factor_Heatmap_Matrix.csv"),
+    file.path(plot_dir, "Composite_Cross_Factor_Heatmap.png"),
+    file.path(plot_dir, "Composite_Cross_Factor_Heatmap.pdf"),
+    file.path(csv_dir, "ART_vs_Composites_Correlations.csv"),
+    file.path(csv_dir, "ART_Net_vs_Composites_Ranked.csv"),
+    file.path(plot_dir, "ART_vs_Composites_Heatmap.png"),
+    file.path(plot_dir, "ART_vs_Composites_Heatmap.pdf"),
+    file.path(csv_dir, "Q17_AI_Use_vs_Composites_Correlations.csv"),
+    file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.png"),
+    file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.pdf"),
+    file.path(csv_dir, "Named_Model_Use_vs_Composites_Correlations.csv"),
+    file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.png"),
+    file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.pdf"),
+    file.path(csv_dir, "Composite_All_Correlations_Ranked.csv"),
+    workbook_file,
+    file.path(csv_dir, "Composite_Workbook_Check.csv"),
+    file.path(csv_dir, "Composite_Workbook_Audit.csv")
+  ),
+  description = c(
+    "Unique Spearman correlations among all unit-weighted composite scores",
+    "Full symmetric matrix for the composite x composite heatmap",
+    "Heatmap of cross-instrument composite correlations",
+    "PDF version of the cross-instrument composite heatmap",
+    "Spearman correlations between ART metrics and composite scores",
+    "ART net correlations ranked by absolute rho",
+    "Heatmap of ART metrics vs composite scores",
+    "PDF version of the ART vs composite heatmap",
+    "Spearman correlations between Q17 AI-use metrics and composite scores",
+    "Heatmap of Q17 AI-use metrics vs composite scores",
+    "PDF version of the Q17 vs composite heatmap",
+    "Spearman correlations between named-model use and composite scores",
+    "Heatmap of named-model use vs composite scores",
+    "PDF version of the named-model use vs composite heatmap",
+    "Combined ranked table across composite, ART, Q17, and named-model families",
+    "Three-tab XLSX workbook with participant scores, color legend, and composite summary",
+    "Local check that the XLSX file exists and exposes the expected sheets",
+    "Readback audit comparing saved workbook participant scores against generated source values"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "Composite_Correlations_Manifest.csv"))
+manifest |>
+  kable(caption = "Composite correlations output manifest")
+```

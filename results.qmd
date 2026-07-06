@@ -10,6 +10,7 @@ format:
     fig-height: 5
     embed-resources: true
     css: styles.css
+output-dir: "results"
 execute:
   echo: false
   warning: false
@@ -202,7 +203,17 @@ beliefs_factor_lookup <- beliefs_factor_lookup |>
     factor_num = as.integer(factor_num),
     factor_id = paste0("MR", factor_num),
     short_factor = paste0("F", factor_num),
-    factor_label = paste0("Beliefs F", factor_num)
+    factor_label = paste0("Beliefs F", factor_num),
+    proposed_name = if_else(
+      factor == "Beliefs_FutureAIIntent",
+      "Future AI Orientation",
+      proposed_name
+    ),
+    display_label = if_else(
+      factor == "Beliefs_FutureAIIntent",
+      "Beliefs F2 -> Future AI Orientation",
+      display_label
+    )
   ) |>
   select(factor, instrument, factor_id, factor_num, proposed_name, short_factor, factor_label, display_label)
 

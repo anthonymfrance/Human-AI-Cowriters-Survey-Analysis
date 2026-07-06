@@ -1,0 +1,559 @@
+---
+title: "17 - Composite Scoring from Locked Item Maps"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+output-dir: "17_composite_scoring"
+execute:
+  echo: false
+  warning: false
+  message: false
+editor:
+  markdown:
+    wrap: 72
+---
+
+# Purpose
+
+This companion report computes unit-weighted composite scores from existing
+locked item-map and loading exports. It does not refit any EFA models.
+
+```{r setup}
+library(tidyverse)
+library(psych)
+library(knitr)
+
+script_dir <- "17_composite_scoring"
+csv_dir <- file.path(script_dir, "csv")
+plot_dir <- file.path(script_dir, "plots")
+dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+salient_loading_cutoff <- 0.40
+cross_loading_cutoff <- 0.30
+loading_gap_cutoff <- 0.15
+min_clean_items_per_factor <- 3L
+
+final_item_map_file <- file.path("03_efa_analysis", "EFA_Final_Item_Map.csv")
+beliefs_loadings_file <- file.path(
+  "16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Loadings.csv"
+)
+existing_factor_scores_file <- file.path(
+  "05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"
+)
+existing_factor_lookup_file <- file.path(
+  "05_interesting_findings", "csv", "Factor_Name_Map.csv"
+)
+beliefs_factor_scores_file <- file.path(
+  "16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Scores.csv"
+)
+beliefs_factor_lookup_file <- file.path(
+  "16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Lookup.csv"
+)
+
+cleaned_files <- tribble(
+  ~instrument,        ~path,
+  "IMI",             file.path("01_audit_cleaning", "cleaned", "IMI_cleaned.csv"),
+  "WritingEfficacy", file.path("01_audit_cleaning", "cleaned", "WritingEfficacy_cleaned.csv"),
+  "AIReflection",    file.path("01_audit_cleaning", "cleaned", "AI_Reflection_cleaned.csv")
+)
+
+assert_required_cols <- function(df, required_cols, context) {
+  missing_cols <- setdiff(required_cols, names(df))
+  if (length(missing_cols) > 0) {
+    stop(
+      paste0(context, " is missing required columns: ", paste(missing_cols, collapse = ", ")),
+      call. = FALSE
+    )
+  }
+}
+
+safe_alpha <- function(df) {
+  item_df <- df |> mutate(across(everything(), as.numeric))
+  keep_cols <- names(item_df)[map_lgl(item_df, ~ sd(.x, na.rm = TRUE) > 0)]
+
+  if (length(keep_cols) < 2L) {
+    return(tibble(raw_alpha = NA_real_, std_alpha = NA_real_, alpha_n_items = length(keep_cols)))
+  }
+
+  alpha_result <- suppressWarnings(psych::alpha(item_df[, keep_cols, drop = FALSE], warnings = FALSE))
+
+  tibble(
+    raw_alpha = unname(alpha_result$total$raw_alpha),
+    std_alpha = unname(alpha_result$total$std.alpha),
+    alpha_n_items = length(keep_cols)
+  )
+}
+
+safe_spearman_pair <- function(df, x, y) {
+  d <- df |>
+    select(all_of(c(x, y))) |>
+    mutate(across(everything(), as.numeric)) |>
+    drop_na()
+
+  if (nrow(d) < 5L || sd(d[[x]]) == 0 || sd(d[[y]]) == 0) {
+    return(tibble(n = nrow(d), rho = NA_real_, p = NA_real_))
+  }
+
+  ct <- suppressWarnings(cor.test(d[[x]], d[[y]], method = "spearman", exact = FALSE))
+  tibble(n = nrow(d), rho = unname(ct$estimate), p = ct$p.value)
+}
+
+row_mean_score <- function(df, item_cols) {
+  rowMeans(df[, item_cols, drop = FALSE], na.rm = TRUE)
+}
+```
+
+# Inputs
+
+```{r read-inputs}
+final_item_map <- read_csv(final_item_map_file, show_col_types = FALSE)
+assert_required_cols(
+  final_item_map,
+  c("instrument", "factor_id", "item_id", "item_text", "loading", "abs_loading"),
+  final_item_map_file
+)
+
+existing_factor_lookup <- read_csv(existing_factor_lookup_file, show_col_types = FALSE)
+existing_factor_scores <- read_csv(existing_factor_scores_file, show_col_types = FALSE)
+beliefs_factor_lookup <- read_csv(beliefs_factor_lookup_file, show_col_types = FALSE)
+beliefs_factor_scores <- read_csv(beliefs_factor_scores_file, show_col_types = FALSE) |>
+  select(participant_id, Beliefs_UtilityComfort, Beliefs_FutureAIIntent, Beliefs_ConcernHarms)
+
+factor_lookup <- bind_rows(
+  existing_factor_lookup |>
+    transmute(
+      factor,
+      instrument,
+      factor_id = short_factor,
+      factor_num = as.integer(factor_num),
+      proposed_name,
+      display_label
+    ),
+  beliefs_factor_lookup |>
+    transmute(
+      factor,
+      instrument,
+      factor_id = paste0("F", as.integer(factor_num)),
+      factor_num = as.integer(factor_num),
+      proposed_name,
+      display_label
+    )
+) |>
+  mutate(
+    proposed_name = if_else(
+      factor == "Beliefs_FutureAIIntent",
+      "Future AI Orientation",
+      proposed_name
+    ),
+    display_label = if_else(
+      factor == "Beliefs_FutureAIIntent",
+      "Beliefs F2 -> Future AI Orientation",
+      display_label
+    )
+  )
+
+cleaned_long <- cleaned_files |>
+  mutate(data = map(path, ~ read_csv(.x, show_col_types = FALSE))) |>
+  mutate(
+    data = map2(data, instrument, function(df, instrument_name) {
+      item_col <- case_when(
+        "item_code" %in% names(df) ~ "item_code",
+        "item_num" %in% names(df) ~ "item_num",
+        TRUE ~ NA_character_
+      )
+
+      if (is.na(item_col)) {
+        stop(paste0(instrument_name, " cleaned file has no item_code or item_num column."), call. = FALSE)
+      }
+
+      assert_required_cols(df, c("participant_id", item_col, "score"), instrument_name)
+
+      normalized <- tibble(
+          instrument = instrument_name,
+          participant_id = df$participant_id,
+          item_id = as.integer(df[[item_col]]),
+          score = as.numeric(df$score)
+        )
+
+      normalized |>
+        mutate(
+          score = if_else(instrument == "WritingEfficacy", (score / 25) + 1, score)
+        )
+    })
+  ) |>
+  select(data) |>
+  unnest(data)
+
+beliefs_raw <- read_csv(
+  file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv"),
+  show_col_types = FALSE
+)
+assert_required_cols(beliefs_raw, c("participant_id", "item_num", "score"), "Beliefs EFA primary file")
+
+beliefs_long <- beliefs_raw |>
+  transmute(
+    instrument = "BeliefsAboutAI",
+    participant_id,
+    item_id = as.integer(item_num),
+    score = as.numeric(score)
+  )
+```
+
+# Item Assignments
+
+```{r locked-assignments}
+locked_membership <- final_item_map |>
+  filter(instrument %in% c("IMI", "WritingEfficacy", "AIReflection")) |>
+  transmute(
+    instrument,
+    factor_id,
+    factor_num = as.integer(str_remove(factor_id, "^F")),
+    item_id = as.integer(item_id),
+    item_text,
+    loading,
+    abs_loading
+  ) |>
+  distinct() |>
+  left_join(
+    factor_lookup |> filter(instrument %in% c("IMI", "WritingEfficacy", "AIReflection")),
+    by = c("instrument", "factor_id", "factor_num")
+  ) |>
+  mutate(source = "03_efa_analysis/EFA_Final_Item_Map.csv")
+
+beliefs_loadings <- read_csv(beliefs_loadings_file, show_col_types = FALSE)
+assert_required_cols(beliefs_loadings, c("item_id", "item_text", "MR1", "MR2", "MR3"), beliefs_loadings_file)
+
+beliefs_clean_tests <- beliefs_loadings |>
+  mutate(item_id = as.integer(item_id)) |>
+  rowwise() |>
+  mutate(
+    loading_values = list(c(MR1 = MR1, MR2 = MR2, MR3 = MR3)),
+    abs_values = list(abs(unlist(loading_values))),
+    primary_factor_id = names(abs_values)[which.max(abs_values)],
+    primary_loading = unlist(loading_values)[primary_factor_id],
+    primary_abs_loading = max(abs_values),
+    secondary_abs_loading = sort(abs_values, decreasing = TRUE)[2],
+    loading_gap = primary_abs_loading - secondary_abs_loading,
+    salient_loading = primary_abs_loading >= salient_loading_cutoff,
+    cross_loading = secondary_abs_loading >= cross_loading_cutoff &
+      loading_gap < loading_gap_cutoff,
+    clean_item = salient_loading & !cross_loading
+  ) |>
+  ungroup() |>
+  select(
+    item_id,
+    item_text,
+    primary_factor_id,
+    primary_loading,
+    primary_abs_loading,
+    secondary_abs_loading,
+    loading_gap,
+    salient_loading,
+    cross_loading,
+    clean_item
+  )
+
+beliefs_factor_counts <- beliefs_clean_tests |>
+  filter(clean_item) |>
+  count(primary_factor_id, name = "clean_item_count") |>
+  right_join(tibble(primary_factor_id = paste0("MR", 1:3)), by = "primary_factor_id") |>
+  mutate(
+    clean_item_count = replace_na(clean_item_count, 0L),
+    clean_factor = clean_item_count >= min_clean_items_per_factor
+  )
+
+beliefs_membership <- beliefs_clean_tests |>
+  left_join(beliefs_factor_counts, by = "primary_factor_id") |>
+  mutate(
+    trust_composite = clean_item & clean_factor,
+    factor_num = as.integer(str_remove(primary_factor_id, "^MR")),
+    factor_id = paste0("F", factor_num),
+    instrument = "BeliefsAboutAI"
+  ) |>
+  filter(trust_composite) |>
+  transmute(
+    instrument,
+    factor_id,
+    factor_num,
+    item_id,
+    item_text,
+    loading = primary_loading,
+    abs_loading = primary_abs_loading,
+    source = "16_exploratory_beliefs/csv/Beliefs_Exploratory_Loadings.csv"
+  ) |>
+  left_join(
+    factor_lookup |> filter(instrument == "BeliefsAboutAI"),
+    by = c("instrument", "factor_id", "factor_num")
+  )
+
+beliefs_unassigned <- beliefs_clean_tests |>
+  left_join(beliefs_factor_counts, by = "primary_factor_id") |>
+  mutate(
+    clean_item_count = replace_na(clean_item_count, 0L),
+    clean_factor = replace_na(clean_factor, FALSE),
+    unassigned_reason = case_when(
+      !salient_loading ~ "primary_loading_below_salient_cutoff",
+      cross_loading ~ "cross_loading",
+      clean_item & !clean_factor ~ "factor_has_fewer_than_3_clean_items",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(unassigned_reason)) |>
+  transmute(
+    instrument = "BeliefsAboutAI",
+    item_id,
+    item_text,
+    primary_factor_id,
+    primary_loading,
+    primary_abs_loading,
+    secondary_abs_loading,
+    loading_gap,
+    salient_loading_cutoff,
+    cross_loading_cutoff,
+    loading_gap_cutoff,
+    clean_item,
+    clean_factor,
+    clean_item_count,
+    unassigned_reason
+  )
+
+composite_membership <- bind_rows(locked_membership, beliefs_membership) |>
+  arrange(instrument, factor_num, item_id) |>
+  mutate(
+    factor = case_when(
+      instrument == "IMI" ~ paste0("IMI_MR", factor_num),
+      instrument == "WritingEfficacy" ~ paste0("WSE_MR", factor_num),
+      instrument == "AIReflection" ~ paste0("AIRefl_MR", factor_num),
+      instrument == "BeliefsAboutAI" ~ factor,
+      TRUE ~ factor
+    )
+  ) |>
+  relocate(factor, display_label, proposed_name, .after = factor_num)
+
+write_csv(composite_membership, file.path(csv_dir, "Composite_Item_Membership.csv"))
+write_csv(beliefs_unassigned, file.path(csv_dir, "Unassigned_Items.csv"))
+```
+
+# Composite Scores and Reliability
+
+```{r score-composites}
+score_long <- bind_rows(cleaned_long, beliefs_long)
+
+composite_specs <- composite_membership |>
+  group_by(instrument, factor, factor_id, factor_num, proposed_name, display_label) |>
+  summarise(
+    item_ids = list(sort(unique(item_id))),
+    n_items = n_distinct(item_id),
+    source = paste(unique(source), collapse = "; "),
+    rowmeans_na_rm = TRUE,
+    .groups = "drop"
+  )
+
+score_wide_by_instrument <- score_long |>
+  semi_join(composite_membership, by = c("instrument", "item_id")) |>
+  mutate(item_col = paste0("item_", item_id)) |>
+  select(instrument, participant_id, item_col, score) |>
+  distinct() |>
+  pivot_wider(names_from = item_col, values_from = score)
+
+alpha_table <- map_dfr(seq_len(nrow(composite_specs)), function(i) {
+  spec <- composite_specs[i, ]
+  item_cols <- paste0("item_", spec$item_ids[[1]])
+  instrument_scores <- score_wide_by_instrument |>
+    filter(instrument == spec$instrument) |>
+    select(all_of(item_cols))
+
+  safe_alpha(instrument_scores) |>
+    mutate(
+      instrument = spec$instrument,
+      factor = spec$factor,
+      factor_id = spec$factor_id,
+      factor_num = spec$factor_num,
+      proposed_name = spec$proposed_name,
+      display_label = spec$display_label,
+      n_items = spec$n_items,
+      .before = 1
+    )
+})
+
+participant_ids <- score_long |> distinct(participant_id)
+
+composite_scores <- reduce(
+  seq_len(nrow(composite_specs)),
+  .init = participant_ids,
+  .f = function(acc, i) {
+    spec <- composite_specs[i, ]
+    item_cols <- paste0("item_", spec$item_ids[[1]])
+    factor_name <- spec$factor
+
+    instrument_scores <- score_wide_by_instrument |>
+      filter(instrument == spec$instrument) |>
+      mutate("{factor_name}" := row_mean_score(pick(everything()), item_cols)) |>
+      select(participant_id, all_of(factor_name))
+
+    if (factor_name == "Beliefs_ConcernHarms") {
+      instrument_scores[[factor_name]] <- 6 - instrument_scores[[factor_name]]
+    }
+
+    left_join(acc, instrument_scores, by = "participant_id")
+  }
+) |>
+  arrange(participant_id)
+
+composite_summary <- composite_scores |>
+  pivot_longer(-participant_id, names_to = "factor", values_to = "composite_score") |>
+  group_by(factor) |>
+  summarise(
+    n_nonmissing = sum(!is.na(composite_score)),
+    mean = mean(composite_score, na.rm = TRUE),
+    sd = sd(composite_score, na.rm = TRUE),
+    median = median(composite_score, na.rm = TRUE),
+    min = min(composite_score, na.rm = TRUE),
+    max = max(composite_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(composite_specs |> select(factor, instrument, proposed_name, display_label), by = "factor") |>
+  relocate(instrument, proposed_name, display_label, .after = factor)
+
+write_csv(composite_specs, file.path(csv_dir, "Composite_Specs.csv"))
+write_csv(composite_scores, file.path(csv_dir, "Composite_Scores_Wide.csv"))
+write_csv(alpha_table, file.path(csv_dir, "Cronbach_Alpha_By_Factor.csv"))
+write_csv(composite_summary, file.path(csv_dir, "Composite_Score_Summary.csv"))
+```
+
+# Validity Check Against Existing Factor Scores
+
+```{r validity-check}
+existing_scores_all <- existing_factor_scores |>
+  left_join(beliefs_factor_scores, by = "participant_id")
+
+validity_pairs <- composite_specs |>
+  transmute(
+    instrument,
+    factor,
+    proposed_name,
+    display_label,
+    composite_col = factor,
+    existing_factor_score_col = factor
+  )
+
+validity_df <- composite_scores |>
+  rename_with(~ paste0("composite__", .x), -participant_id) |>
+  inner_join(existing_scores_all, by = "participant_id")
+
+validity_check <- validity_pairs |>
+  mutate(
+    result = map2(
+      paste0("composite__", composite_col),
+      existing_factor_score_col,
+      ~ safe_spearman_pair(validity_df, .x, .y)
+    )
+  ) |>
+  unnest(result) |>
+  mutate(
+    abs_rho = abs(rho),
+    p_bh = p.adjust(p, method = "BH")
+  ) |>
+  arrange(instrument, factor)
+
+write_csv(validity_check, file.path(csv_dir, "Composite_vs_FactorScore_Spearman.csv"))
+```
+
+```{r validity-plot, fig.width=9.5, fig.height=5.5}
+validity_plot <- validity_check |>
+  mutate(
+    plot_label = fct_reorder(display_label, rho),
+    instrument = factor(instrument, levels = c("IMI", "WritingEfficacy", "AIReflection", "BeliefsAboutAI"))
+  ) |>
+  ggplot(aes(x = rho, y = plot_label, fill = instrument)) +
+  geom_col(width = 0.72) +
+  geom_vline(xintercept = 0, linewidth = 0.3, color = "grey35") +
+  scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, 0.25)) +
+  scale_fill_manual(
+    values = c(
+      "IMI" = "#4f79b7",
+      "WritingEfficacy" = "#c96b3b",
+      "AIReflection" = "#5a9367",
+      "BeliefsAboutAI" = "#8c6bb1"
+    )
+  ) +
+  labs(
+    title = "Composite Scores vs Existing tenBerge Factor Scores",
+    x = "Spearman rho",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+
+ggsave(
+  file.path(plot_dir, "Composite_vs_FactorScore_Spearman.png"),
+  validity_plot,
+  width = 9.5,
+  height = 5.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "Composite_vs_FactorScore_Spearman.pdf"),
+  validity_plot,
+  width = 9.5,
+  height = 5.5,
+  units = "in",
+  bg = "white"
+)
+
+validity_plot
+```
+
+# Output Manifest
+
+```{r manifest}
+manifest <- tibble(
+  output_type = c(
+    "composite_scores",
+    "composite_specs",
+    "composite_item_membership",
+    "unassigned_items",
+    "cronbach_alpha",
+    "composite_summary",
+    "validity_check",
+    "validity_plot_png",
+    "validity_plot_pdf"
+  ),
+  path = c(
+    file.path(csv_dir, "Composite_Scores_Wide.csv"),
+    file.path(csv_dir, "Composite_Specs.csv"),
+    file.path(csv_dir, "Composite_Item_Membership.csv"),
+    file.path(csv_dir, "Unassigned_Items.csv"),
+    file.path(csv_dir, "Cronbach_Alpha_By_Factor.csv"),
+    file.path(csv_dir, "Composite_Score_Summary.csv"),
+    file.path(csv_dir, "Composite_vs_FactorScore_Spearman.csv"),
+    file.path(plot_dir, "Composite_vs_FactorScore_Spearman.png"),
+    file.path(plot_dir, "Composite_vs_FactorScore_Spearman.pdf")
+  ),
+  description = c(
+    "Wide unit-weighted composite scores by participant using clean locked items",
+    "Composite definitions, item counts, display labels, and source exports",
+    "Item-level membership for every computed composite",
+    "BeliefsAboutAI items 6-22 that failed the clean-item or clean-factor rule",
+    "Cronbach alpha for each composite's clean item set",
+    "Descriptive summary of each computed composite score",
+    "Spearman correlations between composites and matching existing tenBerge factor scores",
+    "Bar plot of composite versus tenBerge Spearman correlations",
+    "PDF version of the composite versus tenBerge correlation plot"
+  )
+)
+
+write_csv(manifest, file.path(csv_dir, "Composite_Scoring_Manifest.csv"))
+manifest |>
+  kable(caption = "Composite scoring output manifest")
+```

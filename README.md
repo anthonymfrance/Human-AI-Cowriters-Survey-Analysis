@@ -81,10 +81,12 @@ The active numbered scripts are:
 14. `14_q17_deeper_dive.qmd`
 15. `15_q17_robustness.qmd`
 16. `16_exploratory_beliefs.qmd`
-17. `17_results.qmd`
+17. `17_composite_scoring.qmd`
+18. `18_composite_correlations.qmd`
+19. `results.qmd`
 
-`render_all.sh` is a convenience wrapper for this same order, but the
-numbering is intended to be the source of truth.
+`render_all.sh` is a convenience wrapper for this same order. Numbered
+scripts run first, followed by the unnumbered final `results.qmd` report.
 
 ## Output Conventions
 
@@ -539,7 +541,49 @@ Important outputs:
 - `13_model_use_vs_factors_items/plots/Model_Use_vs_Items_BH_Signal.png`
 - `13_model_use_vs_factors_items/plots/PrimaryModel_Factor_Distributions.png`
 
-### `17_results.qmd`
+### `17_composite_scoring.qmd`
+
+Purpose:
+
+- Computes read-only unit-weighted composite scores from existing locked item-map and loading exports.
+- Does not refit EFA models.
+- Compares each composite with the corresponding existing tenBerge factor score.
+
+Output folder:
+
+- `17_composite_scoring/`
+
+Important outputs:
+
+- `17_composite_scoring/csv/Composite_Scores_Wide.csv`
+- `17_composite_scoring/csv/Cronbach_Alpha_By_Factor.csv`
+- `17_composite_scoring/csv/Composite_vs_FactorScore_Spearman.csv`
+- `17_composite_scoring/csv/Composite_Scoring_Manifest.csv`
+- `17_composite_scoring/plots/Composite_vs_FactorScore_Spearman.png`
+
+### `18_composite_correlations.qmd`
+
+Purpose:
+
+- Recreates downstream correlation families using unit-weighted composite scores from script `17`.
+- Produces cross-instrument composite, ART, Q17 AI-use, and named-model-use Spearman correlations.
+- Uses BH correction and heatmap styling consistent with the prior factor-score scripts.
+
+Output folder:
+
+- `18_composite_correlations/`
+
+Important outputs:
+
+- `18_composite_correlations/csv/Composite_Cross_Factor_Correlations_Unique.csv`
+- `18_composite_correlations/csv/ART_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Q17_AI_Use_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Named_Model_Use_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Composite_Correlations_Manifest.csv`
+- `18_composite_correlations/plots/Composite_Cross_Factor_Heatmap.png`
+- `18_composite_workbook/Composite_Workbook.xlsx`
+
+### `results.qmd`
 
 Purpose:
 
@@ -556,15 +600,15 @@ Key methods:
 
 Render note:
 
-- Although it keeps the script number `13` for continuity, render it after scripts `14`, `15`, and `16` when building the full final report because it may consume those downstream exploratory/robustness outputs.
+- Render it after the numbered analysis scripts when building the full final report because it consumes downstream exploratory/robustness outputs.
 
 Output folder:
 
-- `17_results/`
+- `results/` is reserved for any final-report side outputs.
 
 Important outputs:
 
-- `17_results/17_results.html`
+- `results.html`
 
 ### `14_q17_deeper_dive.qmd`
 
@@ -649,7 +693,7 @@ Key methods:
 - reads `02_efa_exports/efa/BeliefsAboutAI_EFA_Primary.csv`
 - fits a three-factor ordinal EFA with polychoric correlations, `minres` extraction, and `oblimin` rotation
 - scores exploratory factors with tenBerge scores
-- labels the factors as Utility & Comfort, Future AI Intent, and Concern & Harms
+- labels the factors as Utility & Comfort, Future AI Orientation, and Concern & Harms
 - correlates exploratory Beliefs factors with existing factor scores, ART metrics, Q17 participant-level use profiles, and named model use
 - includes concern-focused follow-ups for aggregate Q17 use and individual Q17 tool frequency
 
