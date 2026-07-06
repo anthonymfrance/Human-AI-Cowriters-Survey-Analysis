@@ -63,7 +63,7 @@ The code treats manual salvage differently by stage:
 
 ## Render Order
 
-The active numbered scripts are:
+The active render sequence is:
 
 1. `01_audit_cleaning.qmd`
 2. `02_efa_exports.qmd`
@@ -83,7 +83,10 @@ The active numbered scripts are:
 16. `16_exploratory_beliefs.qmd`
 17. `17_composite_scoring.qmd`
 18. `18_composite_correlations.qmd`
-19. `results.qmd`
+
+After the numbered scripts, render the final unnumbered report:
+
+- `results.qmd`
 
 `render_all.sh` is a convenience wrapper for this same order. Numbered
 scripts run first, followed by the unnumbered final `results.qmd` report.
@@ -213,41 +216,6 @@ Important outputs:
 - `03_efa_analysis/efa_diagnostics/EFA_Analysis_Manifest.csv`
 - `03_efa_analysis/audit/Beliefs_Variance_Ranked.csv`
 
-### `06_order_effects.qmd`
-
-Purpose:
-
-- Tests whether task order or topic order affects the main survey composites.
-- Builds analysis-ready participant records with order, topic, and composite scores.
-- Produces item-level and composite-level order comparisons.
-
-Key methods:
-
-- creates unit-weighted composite means from `EFA_Final_Item_Map.csv`
-- uses Wilcoxon rank-sum tests for order-group comparisons
-- reports rank-biserial effect sizes
-- runs mixed ANOVA models for tool-by-order checks
-- applies BH and Bonferroni corrections
-- exports order-stratified correlations for follow-up checks
-
-Output folder:
-
-- `06_order_effects/`
-
-Important outputs:
-
-- `06_order_effects/csv/Order_Effects_Analysis_Ready.csv`
-- `06_order_effects/csv/Composite_Item_Membership.csv`
-- `06_order_effects/csv/Composite_Specs.csv`
-- `06_order_effects/csv/Composite_Score_Summary.csv`
-- `06_order_effects/csv/Mann_Whitney_Order_Comparisons.csv`
-- `06_order_effects/csv/Item_Level_Order_Comparisons.csv`
-- `06_order_effects/csv/Mixed_ANOVA_Tool_Order_Results.csv`
-- `06_order_effects/csv/Tool_Order_Interaction_Summary.csv`
-- `06_order_effects/csv/Factor_Factor_Order_Stratified_Correlations.csv`
-- `06_order_effects/csv/Beliefs_Factor_Order_Stratified_Correlations.csv`
-- `06_order_effects/plots/`
-
 ### `04_beliefs_item_analysis.qmd`
 
 Purpose:
@@ -310,6 +278,41 @@ Important outputs:
 - `05_interesting_findings/csv/Item_Item_Order_Stratified_Correlations.csv`
 - `05_interesting_findings/csv/Interesting_Findings_Export_Manifest.csv`
 - `05_interesting_findings/plots/`
+
+### `06_order_effects.qmd`
+
+Purpose:
+
+- Tests whether task order or topic order affects the main survey composites.
+- Builds analysis-ready participant records with order, topic, and composite scores.
+- Produces item-level and composite-level order comparisons.
+
+Key methods:
+
+- creates unit-weighted composite means from `EFA_Final_Item_Map.csv`
+- uses Wilcoxon rank-sum tests for order-group comparisons
+- reports rank-biserial effect sizes
+- runs mixed ANOVA models for tool-by-order checks
+- applies BH and Bonferroni corrections
+- exports order-stratified correlations for follow-up checks
+
+Output folder:
+
+- `06_order_effects/`
+
+Important outputs:
+
+- `06_order_effects/csv/Order_Effects_Analysis_Ready.csv`
+- `06_order_effects/csv/Composite_Item_Membership.csv`
+- `06_order_effects/csv/Composite_Specs.csv`
+- `06_order_effects/csv/Composite_Score_Summary.csv`
+- `06_order_effects/csv/Mann_Whitney_Order_Comparisons.csv`
+- `06_order_effects/csv/Item_Level_Order_Comparisons.csv`
+- `06_order_effects/csv/Mixed_ANOVA_Tool_Order_Results.csv`
+- `06_order_effects/csv/Tool_Order_Interaction_Summary.csv`
+- `06_order_effects/csv/Factor_Factor_Order_Stratified_Correlations.csv`
+- `06_order_effects/csv/Beliefs_Factor_Order_Stratified_Correlations.csv`
+- `06_order_effects/plots/`
 
 ### `07_art_vs_all_factors_items.qmd`
 
@@ -541,75 +544,6 @@ Important outputs:
 - `13_model_use_vs_factors_items/plots/Model_Use_vs_Items_BH_Signal.png`
 - `13_model_use_vs_factors_items/plots/PrimaryModel_Factor_Distributions.png`
 
-### `17_composite_scoring.qmd`
-
-Purpose:
-
-- Computes read-only unit-weighted composite scores from existing locked item-map and loading exports.
-- Does not refit EFA models.
-- Compares each composite with the corresponding existing tenBerge factor score.
-
-Output folder:
-
-- `17_composite_scoring/`
-
-Important outputs:
-
-- `17_composite_scoring/csv/Composite_Scores_Wide.csv`
-- `17_composite_scoring/csv/Cronbach_Alpha_By_Factor.csv`
-- `17_composite_scoring/csv/Composite_vs_FactorScore_Spearman.csv`
-- `17_composite_scoring/csv/Composite_Scoring_Manifest.csv`
-- `17_composite_scoring/plots/Composite_vs_FactorScore_Spearman.png`
-
-### `18_composite_correlations.qmd`
-
-Purpose:
-
-- Recreates downstream correlation families using unit-weighted composite scores from script `17`.
-- Produces cross-instrument composite, ART, Q17 AI-use, and named-model-use Spearman correlations.
-- Uses BH correction and heatmap styling consistent with the prior factor-score scripts.
-
-Output folder:
-
-- `18_composite_correlations/`
-
-Important outputs:
-
-- `18_composite_correlations/csv/Composite_Cross_Factor_Correlations_Unique.csv`
-- `18_composite_correlations/csv/ART_vs_Composites_Correlations.csv`
-- `18_composite_correlations/csv/Q17_AI_Use_vs_Composites_Correlations.csv`
-- `18_composite_correlations/csv/Named_Model_Use_vs_Composites_Correlations.csv`
-- `18_composite_correlations/csv/Composite_Correlations_Manifest.csv`
-- `18_composite_correlations/plots/Composite_Cross_Factor_Heatmap.png`
-- `18_composite_workbook/Composite_Workbook.xlsx`
-
-### `results.qmd`
-
-Purpose:
-
-- Builds a compiled visual report from upstream outputs.
-- Uses already-created CSV files and plots them in a consolidated Quarto document.
-- Serves as the final human-facing synthesis pass when the full pipeline is being rendered.
-
-Key methods:
-
-- reads ranked ART, item-correlation, order-effect, and profile outputs
-- uses Fisher-z intervals for selected correlation displays
-- creates figures from existing upstream outputs rather than replacing the upstream analyses
-- renders with embedded resources for a self-contained HTML report
-
-Render note:
-
-- Render it after the numbered analysis scripts when building the full final report because it consumes downstream exploratory/robustness outputs.
-
-Output folder:
-
-- `results/` is reserved for any final-report side outputs.
-
-Important outputs:
-
-- `results.html`
-
 ### `14_q17_deeper_dive.qmd`
 
 Purpose:
@@ -643,7 +577,6 @@ Important outputs:
 - `14_q17_deeper_dive/plots/Q17_Proportions_vs_Factors_Heatmap.png`
 - `14_q17_deeper_dive/plots/Q17_Counts_vs_Factors_Heatmap.png`
 - `14_q17_deeper_dive/plots/Q17_AllBuckets_TopCorr_Unified_Ranked.png`
-- `14_q17_deeper_dive/plots/`
 
 ### `15_q17_robustness.qmd`
 
@@ -715,6 +648,99 @@ Important outputs:
 - `16_exploratory_beliefs/plots/ART_vs_Beliefs_Exploratory_Factors_Heatmap.png`
 - `16_exploratory_beliefs/plots/Q17_vs_Beliefs_Exploratory_Factors_Heatmap.png`
 - `16_exploratory_beliefs/plots/Q17_ChatGPT_Use_Bucket_vs_Beliefs_ConcernHarms.png`
+
+### `17_composite_scoring.qmd`
+
+Purpose:
+
+- Computes read-only unit-weighted composite scores from existing locked item-map and loading exports.
+- Does not refit EFA models.
+- Compares each composite with the corresponding existing tenBerge factor score.
+
+Key methods:
+
+- reads clean item assignments from `03_efa_analysis/EFA_Final_Item_Map.csv` for `IMI`, `WritingEfficacy`, and `AIReflection`
+- rebuilds clean item assignments for exploratory `BeliefsAboutAI` factors from script `16` loadings
+- converts `WritingEfficacy` items from `0/25/50/75/100` anchors to `(x / 25) + 1` before averaging
+- computes Cronbach alpha for each composite item set
+- sign-orients `Beliefs_ConcernHarms` so higher values mean more concern/harms endorsement while preserving a Likert-like scale
+
+Output folder:
+
+- `17_composite_scoring/`
+
+Important outputs:
+
+- `17_composite_scoring/csv/Composite_Scores_Wide.csv`
+- `17_composite_scoring/csv/Composite_Item_Membership.csv`
+- `17_composite_scoring/csv/Unassigned_Items.csv`
+- `17_composite_scoring/csv/Cronbach_Alpha_By_Factor.csv`
+- `17_composite_scoring/csv/Composite_vs_FactorScore_Spearman.csv`
+- `17_composite_scoring/csv/Composite_Scoring_Manifest.csv`
+- `17_composite_scoring/plots/Composite_vs_FactorScore_Spearman.png`
+
+### `18_composite_correlations.qmd`
+
+Purpose:
+
+- Recreates downstream correlation families using unit-weighted composite scores from script `17`.
+- Produces cross-instrument composite, ART, Q17 AI-use, and named-model-use Spearman correlations.
+- Writes a color-coded workbook for participant-level composite and assigned-item scores.
+
+Key methods:
+
+- uses Spearman correlations with BH correction, matching prior factor-score correlation scripts
+- builds heatmaps for composite-by-composite, ART, Q17, and named-model-use families
+- creates `Composite_Workbook.xlsx` with `Participant Scores`, `Legend`, and `Summary` sheets
+- keeps the base sample first in the workbook and appends additional participants afterward
+- audits the saved workbook by reading it back and checking headers, participant IDs, dimensions, row ordering, and every numeric cell
+
+Output folder:
+
+- `18_composite_correlations/`
+- `18_composite_workbook/`
+
+Important outputs:
+
+- `18_composite_correlations/csv/Composite_Cross_Factor_Correlations_Unique.csv`
+- `18_composite_correlations/csv/ART_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Q17_AI_Use_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Named_Model_Use_vs_Composites_Correlations.csv`
+- `18_composite_correlations/csv/Composite_All_Correlations_Ranked.csv`
+- `18_composite_correlations/csv/Composite_Workbook_Audit.csv`
+- `18_composite_correlations/csv/Composite_Correlations_Manifest.csv`
+- `18_composite_correlations/plots/Composite_Cross_Factor_Heatmap.png`
+- `18_composite_correlations/plots/ART_vs_Composites_Heatmap.png`
+- `18_composite_correlations/plots/Q17_AI_Use_vs_Composites_Heatmap.png`
+- `18_composite_correlations/plots/Named_Model_Use_vs_Composites_Heatmap.png`
+- `18_composite_workbook/Composite_Workbook.xlsx`
+
+### `results.qmd`
+
+Purpose:
+
+- Builds a compiled visual report from upstream outputs.
+- Uses already-created CSV files and plots them in a consolidated Quarto document.
+- Serves as the final human-facing synthesis pass when the full pipeline is being rendered.
+
+Key methods:
+
+- reads ranked ART, item-correlation, order-effect, and profile outputs
+- uses Fisher-z intervals for selected correlation displays
+- creates figures from existing upstream outputs rather than replacing the upstream analyses
+- renders with embedded resources for a self-contained HTML report
+
+Render note:
+
+- Render it after the numbered analysis scripts when building the full final report because it consumes downstream exploratory/robustness outputs.
+
+Output folder:
+
+- `results/` is reserved for any final-report side outputs.
+
+Important outputs:
+
+- `results.html`
 
 ## Legacy And Non-Active Files
 
