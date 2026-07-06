@@ -1,10 +1,10 @@
 ---
-title: "Profile Comparisons — Continuous Factor Approach (Script 11b)"
+title: "Profile Comparisons — Continuous Factor Approach (Script 12)"
 format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "11_profile_external_comparisons"
+output-dir: "12_continuous_factor_analysis"
 execute:
   echo: false
   warning: false
@@ -28,9 +28,8 @@ continuous analysis strategies:
     k-selection is defensible. Falls back gracefully if `tidyLPA` is not
     installed.
 
-All outputs go to `11_profile_external_comparisons/csv/` and
-`11_profile_external_comparisons/plots/` to sit alongside script 11
-outputs.
+All outputs go to `12_continuous_factor_analysis/csv/` and
+`12_continuous_factor_analysis/plots/`.
 
 ```{r setup}
 library(tidyverse)
@@ -45,8 +44,8 @@ if (lpa_available) library(tidyLPA)
 ## Setup
 
 ```{r config}
-# Output dirs shared with script 11
-script_dir  <- "11_profile_external_comparisons"
+# Output dirs for script 12
+script_dir  <- "12_continuous_factor_analysis"
 csv_dir     <- file.path(script_dir, "csv")
 plot_dir    <- file.path(script_dir, "plots")
 dir.create(csv_dir,  recursive = TRUE, showWarnings = FALSE)
@@ -67,7 +66,7 @@ required_files <- c(
 missing_files <- required_files[!file.exists(required_files)]
 if (length(missing_files) > 0) {
   stop(
-    paste0("11b missing required inputs: ", paste(missing_files, collapse = ", ")),
+    paste0("12 missing required inputs: ", paste(missing_files, collapse = ", ")),
     call. = FALSE
   )
 }
@@ -83,7 +82,7 @@ theme_order <- c(
   "Future Integration"
 )
 
-# Colour palette — instrument-coded (matches script 13)
+# Colour palette — instrument-coded (matches script 17)
 pal <- c(
   IMI             = "#4f79b7",
   WritingEfficacy = "#2ca02c",
@@ -117,9 +116,12 @@ theme_cowriters <- function(base_size = 12) {
 ## Load Data
 
 ```{r load-data}
+master_wide    <- read_csv(master_wide_file,      show_col_types = FALSE) |>
+  mutate(participant_id = as.character(participant_id))
+
 factor_scores  <- read_csv(factor_scores_file, show_col_types = FALSE) |>
   mutate(participant_id = as.character(participant_id)) |>
-  filter(participant_id %in% as.character(master_wide$participant_id))  # add this
+  filter(participant_id %in% master_wide$participant_id)
 
 factor_lookup  <- read_csv(factor_lookup_file,    show_col_types = FALSE)
 
@@ -129,9 +131,6 @@ art_scores     <- read_csv(art_scored_file,       show_col_types = FALSE) |>
          art_real_hits, art_fake_false_alarms)
 
 q17_index      <- read_csv(q17_index_file,        show_col_types = FALSE) |>
-  mutate(participant_id = as.character(participant_id))
-
-master_wide    <- read_csv(master_wide_file,      show_col_types = FALSE) |>
   mutate(participant_id = as.character(participant_id))
 
 beliefs_meta   <- read_csv(beliefs_metadata_file, show_col_types = FALSE) |>
@@ -225,7 +224,7 @@ Replaces cluster-based Kruskal-Wallis with direct bivariate Spearman
 correlations. More powerful for continuous data; no grouping artefact.
 
 ```{r spearman-helpers}
-safe_spearman_11b <- function(df, x_col, y_col) {
+safe_spearman_12 <- function(df, x_col, y_col) {
   dat <- df |>
     select(x = all_of(x_col), y = all_of(y_col)) |>
     filter(!is.na(x), !is.na(y))
@@ -260,7 +259,7 @@ factor_art_corr <- crossing(
   x_col = factor_cols,
   y_col = art_metrics
 ) |>
-  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_12(analysis_df, .x, .y))) |>
   pull(result) |>
   bind_rows() |>
   left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
@@ -274,7 +273,7 @@ factor_art_corr <- crossing(
   ) |>
   arrange(p_bh, p_value, desc(abs_rho))
 
-write_csv(factor_art_corr, file.path(csv_dir, "11b_Factor_ART_Spearman.csv"))
+write_csv(factor_art_corr, file.path(csv_dir, "12_Factor_ART_Spearman.csv"))
 
 factor_art_corr |>
   filter(y_col == "art_net_real_minus_fake") |>
@@ -293,7 +292,7 @@ factor_q17_corr <- crossing(
   x_col = factor_cols,
   y_col = q17_metrics
 ) |>
-  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df_q17, .x, .y))) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_12(analysis_df_q17, .x, .y))) |>
   pull(result) |>
   bind_rows() |>
   left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
@@ -307,7 +306,7 @@ factor_q17_corr <- crossing(
   ) |>
   arrange(p_bh, p_value, desc(abs_rho))
 
-write_csv(factor_q17_corr, file.path(csv_dir, "11b_Factor_Q17_Spearman.csv"))
+write_csv(factor_q17_corr, file.path(csv_dir, "12_Factor_Q17_Spearman.csv"))
 
 factor_q17_corr |>
   filter(y_col == "ai_use_mean") |>
@@ -323,7 +322,7 @@ factor_beliefs_corr <- crossing(
   x_col = factor_cols,
   y_col = beliefs_theme_cols
 ) |>
-  mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+  mutate(result = map2(x_col, y_col, ~ safe_spearman_12(analysis_df, .x, .y))) |>
   pull(result) |>
   bind_rows() |>
   left_join(factor_lookup |> select(factor, instrument, display_label, proposed_name),
@@ -339,7 +338,7 @@ factor_beliefs_corr <- crossing(
   ) |>
   arrange(p_bh, p_value, desc(abs_rho))
 
-write_csv(factor_beliefs_corr, file.path(csv_dir, "11b_Factor_BeliefsTheme_Spearman.csv"))
+write_csv(factor_beliefs_corr, file.path(csv_dir, "12_Factor_BeliefsTheme_Spearman.csv"))
 
 factor_beliefs_corr |>
   filter(sig_bh) |>
@@ -412,9 +411,9 @@ corr_heatmap <- ggplot(heatmap_long,
     strip.text   = element_text(face = "bold")
   )
 
-ggsave(file.path(plot_dir, "11b_Factor_External_Corr_Heatmap.png"),
+ggsave(file.path(plot_dir, "12_Factor_External_Corr_Heatmap.png"),
        corr_heatmap, width = 12, height = 10, dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "11b_Factor_External_Corr_Heatmap.pdf"),
+ggsave(file.path(plot_dir, "12_Factor_External_Corr_Heatmap.pdf"),
        corr_heatmap, width = 12, height = 10, bg = "white")
 
 corr_heatmap
@@ -480,7 +479,7 @@ regression_results <- map_dfr(factor_cols, ~ run_ols(analysis_df_q17, .x, regres
   ) |>
   arrange(outcome, predictor)
 
-write_csv(regression_results, file.path(csv_dir, "11b_Factor_OLS_Regression.csv"))
+write_csv(regression_results, file.path(csv_dir, "12_Factor_OLS_Regression.csv"))
 
 regression_results |>
   select(instrument, display_label, predictor, beta, se, t_value, p_value, p_bh, sig_bh, r_sq, adj_r_sq, n) |>
@@ -529,9 +528,9 @@ reg_plot <- ggplot(reg_plot_df,
   ) +
   theme_cowriters()
 
-ggsave(file.path(plot_dir, "11b_Factor_OLS_Coefficients.png"),
+ggsave(file.path(plot_dir, "12_Factor_OLS_Coefficients.png"),
        reg_plot, width = 11, height = 6, dpi = 300, bg = "white")
-ggsave(file.path(plot_dir, "11b_Factor_OLS_Coefficients.pdf"),
+ggsave(file.path(plot_dir, "12_Factor_OLS_Coefficients.pdf"),
        reg_plot, width = 11, height = 6, bg = "white")
 
 reg_plot
@@ -577,7 +576,7 @@ if (!lpa_available) {
       select(Model, Classes, AIC, BIC, Entropy, n_min, n_max) |>
       rename(k = Classes)
 
-    write_csv(lpa_stats, file.path(csv_dir, "11b_LPA_Fit_Statistics.csv"))
+    write_csv(lpa_stats, file.path(csv_dir, "12_LPA_Fit_Statistics.csv"))
     knitr::kable(lpa_stats, caption = "LPA fit statistics (Model 1: equal variances)")
 
     # Extract best k by BIC
@@ -596,7 +595,7 @@ if (!lpa_available) {
         lpa_class = factor(lpa_class)
       )
 
-    write_csv(lpa_assignments, file.path(csv_dir, "11b_LPA_Profile_Assignments.csv"))
+    write_csv(lpa_assignments, file.path(csv_dir, "12_LPA_Profile_Assignments.csv"))
 
     cat(glue("\nBest LPA solution: k = {best_lpa_k} (lowest BIC)\n"))
     cat(glue("Entropy = {round(lpa_stats$Entropy[lpa_stats$k == best_lpa_k], 3)}\n"))
@@ -618,7 +617,11 @@ differences.
 
 ```{r beliefs-items-continuous}
 # Load script 11 omnibus results if they exist
-beliefs_omnibus_file <- file.path(csv_dir, "Beliefs_Item_Profile_Kruskal_Results.csv")
+beliefs_omnibus_file <- file.path(
+  "11_profile_external_comparisons",
+  "csv",
+  "Beliefs_Item_Profile_Kruskal_Results.csv"
+)
 
 if (file.exists(beliefs_omnibus_file)) {
 
@@ -640,7 +643,7 @@ if (file.exists(beliefs_omnibus_file)) {
         x_col = factor_cols,
         y_col = sig_items_present
       ) |>
-        mutate(result = map2(x_col, y_col, ~ safe_spearman_11b(analysis_df, .x, .y))) |>
+        mutate(result = map2(x_col, y_col, ~ safe_spearman_12(analysis_df, .x, .y))) |>
         pull(result) |>
         bind_rows() |>
         left_join(factor_lookup |> select(factor, instrument, display_label),
@@ -657,7 +660,7 @@ if (file.exists(beliefs_omnibus_file)) {
         arrange(p_bh, p_value, desc(abs_rho))
 
       write_csv(beliefs_factor_corr,
-                file.path(csv_dir, "11b_SigBeliefs_Factor_Spearman.csv"))
+                file.path(csv_dir, "12_SigBeliefs_Factor_Spearman.csv"))
 
       beliefs_factor_corr |>
         filter(sig_bh) |>
@@ -709,7 +712,7 @@ summary_tbl <- tibble(
   )
 )
 
-write_csv(summary_tbl, file.path(csv_dir, "11b_Analysis_Summary.csv"))
+write_csv(summary_tbl, file.path(csv_dir, "12_Analysis_Summary.csv"))
 knitr::kable(summary_tbl)
 ```
 
@@ -728,14 +731,14 @@ manifest <- tibble(
     "analysis_summary"
   ),
   file = c(
-    "11b_Factor_ART_Spearman.csv",
-    "11b_Factor_Q17_Spearman.csv",
-    "11b_Factor_BeliefsTheme_Spearman.csv",
-    "11b_Factor_OLS_Regression.csv",
-    "11b_LPA_Fit_Statistics.csv",
-    "11b_LPA_Profile_Assignments.csv",
-    "11b_SigBeliefs_Factor_Spearman.csv",
-    "11b_Analysis_Summary.csv"
+    "12_Factor_ART_Spearman.csv",
+    "12_Factor_Q17_Spearman.csv",
+    "12_Factor_BeliefsTheme_Spearman.csv",
+    "12_Factor_OLS_Regression.csv",
+    "12_LPA_Fit_Statistics.csv",
+    "12_LPA_Profile_Assignments.csv",
+    "12_SigBeliefs_Factor_Spearman.csv",
+    "12_Analysis_Summary.csv"
   ),
   notes = c(
     "All factor x ART metric Spearman rho + BH/Bonferroni correction",
@@ -749,6 +752,6 @@ manifest <- tibble(
   )
 )
 
-write_csv(manifest, file.path(csv_dir, "11b_Manifest.csv"))
+write_csv(manifest, file.path(csv_dir, "12_Manifest.csv"))
 knitr::kable(manifest)
 ```

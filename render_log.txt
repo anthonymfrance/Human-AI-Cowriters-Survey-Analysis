@@ -1,0 +1,201 @@
+nohup: ignoring input
+=== Rendering 01_audit_cleaning.qmd ===
+[31m
+
+processing file: 01_audit_cleaning.qmd
+[39m1/37                       
+2/37 [setup]               
+3/37                       
+4/37 [load-data]           
+5/37                       
+6/37 [inspect-llm]         
+7/37                       
+8/37 [clean-tracking]      
+9/37                       
+10/37 [audit-config]        
+11/37                       
+12/37 [diagnostic-audit]    
+13/37                       
+14/37 [pick-best-submission]
+15/37                       
+16/37 [clean-pids]          
+17/37                       
+18/37 [participant-triage]  
+19/37                       
+20/37 [efa-inclusion-config]
+21/37                       
+22/37 [instrument-audit]    
+23/37                       
+24/37 [clean-imi]           
+25/37                       
+26/37 [clean-efficacy]      
+27/37                       
+28/37 [clean-art]           
+29/37                       
+30/37 [clean-reflection]    
+31/37                       
+32/37 [clean-beliefs]       
+33/37                       
+34/37 [sanity-checks]       
+35/37                       
+36/37 [export-long]         
+37/37                       
+[31moutput file: 01_audit_cleaning.knit.md
+
+[39m[1mpandoc [22m
+  to: html
+  output-file: 01_audit_cleaning.html
+  standalone: true
+  section-divs: true
+  html-math-method: mathjax
+  wrap: none
+  default-image-extension: png
+  variables: {}
+  
+[1mmetadata[22m
+  document-css: false
+  link-citations: true
+  date-format: long
+  lang: en
+  engines:
+    - path: /opt/quarto/share/extension-subtrees/julia-engine/_extensions/julia-engine/julia-engine.js
+  output-dir: 01_audit_cleaning
+  
+Output created: 01_audit_cleaning.html
+
+=== Rendering 02_efa_exports.qmd ===
+[31m
+
+processing file: 02_efa_exports.qmd
+[39m1/15                   
+2/15 [setup]           
+3/15                   
+4/15 [load-data]       
+5/15                   
+6/15 [paired-and-dedup]
+7/15                   
+8/15 [efa-inclusion]   
+9/15                   
+10/15 [export-efa]      
+11/15                   
+12/15 [phase3-wide]     
+13/15                   
+14/15 [output-manifest] 
+15/15                   
+[31moutput file: 02_efa_exports.knit.md
+
+[39m[1mpandoc [22m
+  to: html
+  output-file: 02_efa_exports.html
+  standalone: true
+  section-divs: true
+  html-math-method: mathjax
+  wrap: none
+  default-image-extension: png
+  variables: {}
+  
+[1mmetadata[22m
+  document-css: false
+  link-citations: true
+  date-format: long
+  lang: en
+  engines:
+    - path: /opt/quarto/share/extension-subtrees/julia-engine/_extensions/julia-engine/julia-engine.js
+  title: Cowriters Survey EFA and Analysis Exports
+  output-dir: 02_efa_exports
+  editor: visual
+  
+Output created: 02_efa_exports.html
+
+=== Rendering 03_efa_analysis.qmd ===
+[31m
+
+processing file: 03_efa_analysis.qmd
+[39m1/27                           
+2/27 [setup]                   
+3/27                           
+4/27 [config]                  
+5/27                           
+6/27 [helpers]                 
+7/27                           
+8/27 [run-analyses]            
+9/27                           
+10/27 [review-tables]           
+11/27                           
+12/27 [workflow-status]         
+13/27                           
+14/27 [primary-vs-sensitivity-k]
+15/27                           
+16/27 [scree-plots]             
+17/27                           
+18/27 [preview-heatmaps]        
+19/27                           
+20/27 [final-solutions]         
+21/27                           
+22/27 [locked-heatmaps]         
+23/27                           
+24/27 [export]                  
+25/27                           
+26/27 [unnamed-chunk-1]         
+27/27                           
+[31moutput file: 03_efa_analysis.knit.md
+
+[39m[1mpandoc [22m
+  to: html
+  output-file: 03_efa_analysis.html
+  standalone: true
+  section-divs: true
+  html-math-method: mathjax
+  wrap: none
+  default-image-extension: png
+  variables: {}
+  
+[1mmetadata[22m
+  document-css: false
+  link-citations: true
+  date-format: long
+  lang: en
+  engines:
+    - path: /opt/quarto/share/extension-subtrees/julia-engine/_extensions/julia-engine/julia-engine.js
+  title: Cowriters Survey EFA Analysis
+  output-dir: 03_efa_analysis
+  editor: visual
+  
+Output created: 03_efa_analysis.html
+
+=== Rendering 06_interesting_findings.qmd ===
+[31m
+
+processing file: 06_interesting_findings.qmd
+[39m1/33                             
+2/33 [setup]                     
+3/33                             
+4/33 [config]                    
+5/33                             
+6/33 [helpers]                   
+7/33                             
+8/33 [build-factor-scores]       
+[31mError in `pmap()`:
+ℹ In index: 3.
+Caused by error:
+! AIReflection factor_name_map: missing factor_name_map rows for AIReflection F3
+Backtrace:
+     ▆
+  1. ├─purrr::pmap(...)
+  2. │ └─purrr:::pmap_("list", .l, .f, ..., .progress = .progress)
+  3. │   ├─purrr:::with_indexed_errors(...)
+  4. │   │ └─base::withCallingHandlers(...)
+  5. │   ├─purrr:::call_with_cleanup(...)
+  6. │   └─global .f(...)
+  7. │     └─global build_factor_scores(...)
+  8. │       └─global assert_complete_factor_name_map(...)
+  9. │         └─base::stop(...)
+ 10. └─base::.handleSimpleError(...)
+ 11.   └─purrr (local) h(simpleError(msg, call))
+ 12.     └─cli::cli_abort(...)
+ 13.       └─rlang::abort(...)
+[39m[31m
+Quitting from 06_interesting_findings.qmd:345-403 [build-factor-scores]
+Execution halted
+[39m[33mWARN: Error encountered when rendering files[39m
+FAILED at 06_interesting_findings.qmd

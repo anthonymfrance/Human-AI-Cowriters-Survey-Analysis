@@ -1643,7 +1643,7 @@ efa_analysis_manifest <- tibble(
     "Locked recommended k per instrument; consumed by 05_beliefs and 06_findings",
     "Final factor loadings for locked solutions (primary + sensitivity samples)",
     "Tucker congruence coefficients comparing primary vs sensitivity solutions",
-    "Final locked item-to-factor map (instrument, factor_id, item_id); consumed by 04_order_effects"
+    "Final locked item-to-factor map (instrument, factor_id, item_id); consumed by 06_order_effects"
   )
 )
 

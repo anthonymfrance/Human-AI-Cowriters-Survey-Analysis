@@ -146,7 +146,7 @@ belief_cols <- c(
 )
 
 existing <- read_csv(
-  file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"),
+  file.path("05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"),
   show_col_types = FALSE
 )
 factor_cols <- setdiff(names(existing), "participant_id")

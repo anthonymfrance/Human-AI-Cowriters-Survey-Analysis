@@ -47,7 +47,7 @@ csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 art_clean_file <- file.path("01_audit_cleaning", "cleaned", "AuthorRecognition_cleaned.csv")
-order_effects_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
+order_effects_ready_file <- file.path("06_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -91,7 +91,7 @@ item_instrument_specs <- tribble(
 
 recommended_k_raw <- read_csv(recommended_k_file, show_col_types = FALSE)
 
-required_k_cols <- c("instrument", "recommended_k", "factorability_flag")
+required_k_cols <- c("instrument", "recommended_k", "manual_locked_k", "factorability_flag")
 missing_k_cols <- setdiff(required_k_cols, names(recommended_k_raw))
 if (length(missing_k_cols) > 0) {
   stop(
@@ -108,7 +108,7 @@ valid_factor_specs <- factor_instrument_specs |>
     recommended_k_raw |>
       transmute(
         instrument,
-        recommended_k = as.integer(recommended_k),
+        recommended_k = as.integer(coalesce(manual_locked_k, recommended_k)),
         factorability_flag = as.character(factorability_flag)
       ),
     by = "instrument"

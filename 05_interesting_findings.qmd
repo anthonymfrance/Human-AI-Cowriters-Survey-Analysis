@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "06_interesting_findings"
+output-dir: "05_interesting_findings"
 execute:
   echo: false
   warning: false
@@ -41,10 +41,10 @@ set.seed(42L)
 ## Setup
 
 ```{r config}
-script_dir <- "06_interesting_findings"
+script_dir <- "05_interesting_findings"
 csv_dir    <- file.path(script_dir, "csv")
 plot_dir   <- file.path(script_dir, "plots")
-order_effects_analysis_ready_file <- file.path("04_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
+strict_paired_ids_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -80,7 +80,7 @@ item_only_specs <- tribble(
 recommended_k_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 recommended_k_raw <- read_csv(recommended_k_file, show_col_types = FALSE)
 
-required_k_cols <- c("instrument", "recommended_k", "factorability_flag")
+required_k_cols <- c("instrument", "recommended_k", "manual_locked_k", "factorability_flag")
 missing_k_cols  <- setdiff(required_k_cols, names(recommended_k_raw))
 if (length(missing_k_cols) > 0) {
   stop(paste0(recommended_k_file, " is missing required columns: ",
@@ -90,7 +90,7 @@ if (length(missing_k_cols) > 0) {
 recommended_k <- recommended_k_raw |>
   transmute(
     instrument,
-    recommended_k      = as.integer(recommended_k),
+    recommended_k      = as.integer(coalesce(manual_locked_k, recommended_k)),
     factorability_flag
   )
 
@@ -380,26 +380,26 @@ factor_cols       <- names(all_factor_scores) |> setdiff("participant_id")
 assert_lookup_covers_factor_columns(
   factor_lookup = factor_lookup,
   factor_cols = factor_cols,
-  context_label = "Script 06 combined factor lookup"
+  context_label = "Script 05 combined factor lookup"
 )
 
 write_csv(factor_lookup,     file.path(csv_dir, "Factor_Name_Map.csv"))
 write_csv(all_factor_scores, file.path(csv_dir, "Factor_Scores_All_Instruments.csv"))
 
 strict_paired_ids <- read_csv(
-  order_effects_analysis_ready_file,
+  strict_paired_ids_file,
   show_col_types = FALSE
 ) |>
   transmute(participant_id = as.character(participant_id))
 
-assert_expected_count(nrow(strict_paired_ids), 82L, "Script 06 strict paired factor-heatmap IDs")
-assert_unique_pid_rows(strict_paired_ids, "participant_id", "Script 06 strict paired factor-heatmap IDs")
+assert_expected_count(nrow(strict_paired_ids), 82L, "Script 05 strict paired factor-heatmap IDs")
+assert_unique_pid_rows(strict_paired_ids, "participant_id", "Script 05 strict paired factor-heatmap IDs")
 
 factor_heatmap_scores <- all_factor_scores |>
   mutate(participant_id = as.character(participant_id)) |>
   semi_join(strict_paired_ids, by = "participant_id")
 
-assert_expected_count(nrow(factor_heatmap_scores), 82L, "Script 06 strict paired factor-heatmap scores")
+assert_expected_count(nrow(factor_heatmap_scores), 82L, "Script 05 strict paired factor-heatmap scores")
 ```
 
 ## Factor Name Map (Current Working Labels)
@@ -809,7 +809,7 @@ findings_manifest <- tibble(
 )
 
 write_csv(findings_manifest, file.path(csv_dir, "Interesting_Findings_Export_Manifest.csv"))
-kable(findings_manifest, caption = "06_interesting_findings.qmd â€” Output Manifest")
+kable(findings_manifest, caption = "05_interesting_findings.qmd â€” Output Manifest")
 ```
 
 ## Section: Order-Stratified Item Ã— Item Correlations
@@ -825,21 +825,21 @@ thousands of tests), this focuses on pairs that already survived
 Bonferroni correction in the full-sample analysis â€” the signal-rich
 subset where order moderation is most theoretically meaningful.
 
-**Same power caveat as Script 04 Section 8:** n=45 and n=37 per subgroup
+**Same power caveat as Script 06 Section 8:** n=45 and n=37 per subgroup
 reduces power. A subgroup rho going null alone is not evidence of
 moderation â€” use Fisher z p-value as the decision criterion.
 
 ```{r item-strat-setup}
 # --- Load order labels ---
-# participant_analysis is in scope if running inside 04_order_effects.qmd.
-# If running standalone, load Order_Effects_Analysis_Ready.csv instead.
+# participant_analysis is in scope if running inside 06_order_effects.qmd.
+# If running standalone, load strict paired order labels from Final_Master_Wide.
 order_labels_items <- if (exists("participant_analysis")) {
   participant_analysis |>
     select(participant_id, order) |>
     mutate(participant_id = as.character(participant_id))
 } else {
   read_csv(
-    order_effects_analysis_ready_file,
+    strict_paired_ids_file,
     show_col_types = FALSE
   ) |>
     select(participant_id, order) |>
@@ -886,7 +886,7 @@ cat(glue("Bonferroni-surviving pairs to stratify: {nrow(bonf_with_cols)}\n"))
 ```
 
 ```{r item-strat-helpers}
-# Reuse correlate_stratified() from Script 04 Section 8 if in scope,
+# Reuse correlate_stratified() from Script 06 Section 8 if in scope,
 # otherwise define it here.
 if (!exists("correlate_stratified")) {
 
@@ -1052,4 +1052,3 @@ write_csv(
 
 kable(item_strat_manifest_row)
 ```
-

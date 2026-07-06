@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 3
-output-dir: "12_model_use_vs_factors_items"
+output-dir: "13_model_use_vs_factors_items"
 execute:
   echo: false
   warning: false
@@ -41,7 +41,7 @@ set.seed(42L)
 ## Configuration
 
 ```{r config}
-script_dir    <- "12_model_use_vs_factors_items"
+script_dir    <- "13_model_use_vs_factors_items"
 csv_dir       <- file.path(script_dir, "csv")
 plot_dir      <- file.path(script_dir, "plots")
 q17_csv_dir   <- file.path("09_q17_ai_use", "csv")

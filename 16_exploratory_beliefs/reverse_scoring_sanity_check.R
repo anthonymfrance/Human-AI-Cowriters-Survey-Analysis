@@ -14,7 +14,7 @@ belief_scores <- read_csv(
   show_col_types = FALSE
 )
 factor_scores <- read_csv(
-  "06_interesting_findings/csv/Factor_Scores_All_Instruments.csv",
+  "05_interesting_findings/csv/Factor_Scores_All_Instruments.csv",
   show_col_types = FALSE
 )
 

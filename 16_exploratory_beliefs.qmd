@@ -343,12 +343,12 @@ This recreates the script `06` factor heatmap, now adding the three exploratory 
 
 ```{r cross-factor-correlations}
 existing_factor_scores <- read_csv(
-  file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"),
+  file.path("05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv"),
   show_col_types = FALSE
 )
 
 existing_factor_lookup <- read_csv(
-  file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv"),
+  file.path("05_interesting_findings", "csv", "Factor_Name_Map.csv"),
   show_col_types = FALSE
 ) |>
   transmute(

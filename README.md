@@ -16,7 +16,7 @@ Keep these source files at the repository root:
 - `authorkey.csv`
 
 The scheduling tracking files are sanitized inputs used by
-`04_order_effects.qmd` for the lab sensitivity analysis. They retain only
+`06_order_effects.qmd` for the lab sensitivity analysis. They retain only
 study IDs, anonymized schedule keys, session statuses, and cross-lab note
 markers needed for analysis.
 
@@ -68,23 +68,23 @@ The active numbered scripts are:
 1. `01_audit_cleaning.qmd`
 2. `02_efa_exports.qmd`
 3. `03_efa_analysis.qmd`
-4. `04_order_effects.qmd`
-5. `05_beliefs_item_analysis.qmd`
-6. `06_interesting_findings.qmd`
+4. `04_beliefs_item_analysis.qmd`
+5. `05_interesting_findings.qmd`
+6. `06_order_effects.qmd`
 7. `07_art_vs_all_factors_items.qmd`
 8. `08_ai_beliefs_items.qmd`
 9. `09_q17_ai_use.qmd`
 10. `10_participant_profiles.qmd`
 11. `11_profile_external_comparisons.qmd`
-12. `12_model_use_vs_factors_items.qmd`
-13. `13_results.qmd`
+12. `12_continuous_factor_analysis.qmd`
+13. `13_model_use_vs_factors_items.qmd`
 14. `14_q17_deeper_dive.qmd`
 15. `15_q17_robustness.qmd`
 16. `16_exploratory_beliefs.qmd`
+17. `17_results.qmd`
 
-There is also one companion script:
-
-- `11b_continuous_factor_analysis.qmd`, which writes into `11_profile_external_comparisons/` and should be treated as an optional extension to script `11`.
+`render_all.sh` is a convenience wrapper for this same order, but the
+numbering is intended to be the source of truth.
 
 ## Output Conventions
 
@@ -211,7 +211,7 @@ Important outputs:
 - `03_efa_analysis/efa_diagnostics/EFA_Analysis_Manifest.csv`
 - `03_efa_analysis/audit/Beliefs_Variance_Ranked.csv`
 
-### `04_order_effects.qmd`
+### `06_order_effects.qmd`
 
 Purpose:
 
@@ -230,23 +230,23 @@ Key methods:
 
 Output folder:
 
-- `04_order_effects/`
+- `06_order_effects/`
 
 Important outputs:
 
-- `04_order_effects/csv/Order_Effects_Analysis_Ready.csv`
-- `04_order_effects/csv/Composite_Item_Membership.csv`
-- `04_order_effects/csv/Composite_Specs.csv`
-- `04_order_effects/csv/Composite_Score_Summary.csv`
-- `04_order_effects/csv/Mann_Whitney_Order_Comparisons.csv`
-- `04_order_effects/csv/Item_Level_Order_Comparisons.csv`
-- `04_order_effects/csv/Mixed_ANOVA_Tool_Order_Results.csv`
-- `04_order_effects/csv/Tool_Order_Interaction_Summary.csv`
-- `04_order_effects/csv/Factor_Factor_Order_Stratified_Correlations.csv`
-- `04_order_effects/csv/Beliefs_Factor_Order_Stratified_Correlations.csv`
-- `04_order_effects/plots/`
+- `06_order_effects/csv/Order_Effects_Analysis_Ready.csv`
+- `06_order_effects/csv/Composite_Item_Membership.csv`
+- `06_order_effects/csv/Composite_Specs.csv`
+- `06_order_effects/csv/Composite_Score_Summary.csv`
+- `06_order_effects/csv/Mann_Whitney_Order_Comparisons.csv`
+- `06_order_effects/csv/Item_Level_Order_Comparisons.csv`
+- `06_order_effects/csv/Mixed_ANOVA_Tool_Order_Results.csv`
+- `06_order_effects/csv/Tool_Order_Interaction_Summary.csv`
+- `06_order_effects/csv/Factor_Factor_Order_Stratified_Correlations.csv`
+- `06_order_effects/csv/Beliefs_Factor_Order_Stratified_Correlations.csv`
+- `06_order_effects/plots/`
 
-### `05_beliefs_item_analysis.qmd`
+### `04_beliefs_item_analysis.qmd`
 
 Purpose:
 
@@ -263,20 +263,20 @@ Key methods:
 
 Output folder:
 
-- `05_beliefs_item_analysis/`
+- `04_beliefs_item_analysis/`
 
 Important outputs:
 
-- `05_beliefs_item_analysis/csv/Other_Instrument_Factor_Scores.csv`
-- `05_beliefs_item_analysis/csv/Other_Instrument_Factor_Model_Summary.csv`
-- `05_beliefs_item_analysis/csv/Other_Instrument_Factor_Correlations.csv`
-- `05_beliefs_item_analysis/csv/BeliefsAboutAI_Wide.csv`
-- `05_beliefs_item_analysis/csv/Beliefs_Item_vs_Other_Instrument_Factors_Correlations.csv`
-- `05_beliefs_item_analysis/csv/Beliefs_Export_Manifest.csv`
-- `05_beliefs_item_analysis/plots/Other_Instrument_Factor_Correlation_Heatmap.png`
-- `05_beliefs_item_analysis/plots/Beliefs_Items_vs_Other_Instrument_Factors_Heatmap.png`
+- `04_beliefs_item_analysis/csv/Other_Instrument_Factor_Scores.csv`
+- `04_beliefs_item_analysis/csv/Other_Instrument_Factor_Model_Summary.csv`
+- `04_beliefs_item_analysis/csv/Other_Instrument_Factor_Correlations.csv`
+- `04_beliefs_item_analysis/csv/BeliefsAboutAI_Wide.csv`
+- `04_beliefs_item_analysis/csv/Beliefs_Item_vs_Other_Instrument_Factors_Correlations.csv`
+- `04_beliefs_item_analysis/csv/Beliefs_Export_Manifest.csv`
+- `04_beliefs_item_analysis/plots/Other_Instrument_Factor_Correlation_Heatmap.png`
+- `04_beliefs_item_analysis/plots/Beliefs_Items_vs_Other_Instrument_Factors_Heatmap.png`
 
-### `06_interesting_findings.qmd`
+### `05_interesting_findings.qmd`
 
 Purpose:
 
@@ -294,20 +294,20 @@ Key methods:
 
 Output folder:
 
-- `06_interesting_findings/`
+- `05_interesting_findings/`
 
 Important outputs:
 
-- `06_interesting_findings/csv/Factor_Name_Map.csv`
-- `06_interesting_findings/csv/Factor_Scores_All_Instruments.csv`
-- `06_interesting_findings/csv/Factor_Correlations_Unique.csv`
-- `06_interesting_findings/csv/Factor_Correlations_Heatmap_Matrix.csv`
-- `06_interesting_findings/csv/Pairwise_Item_Correlation_Summary.csv`
-- `06_interesting_findings/csv/Pairwise_Item_Correlation_Top_Hits.csv`
-- `06_interesting_findings/csv/All_Pairwise_Correlations_Ranked.csv`
-- `06_interesting_findings/csv/Item_Item_Order_Stratified_Correlations.csv`
-- `06_interesting_findings/csv/Interesting_Findings_Export_Manifest.csv`
-- `06_interesting_findings/plots/`
+- `05_interesting_findings/csv/Factor_Name_Map.csv`
+- `05_interesting_findings/csv/Factor_Scores_All_Instruments.csv`
+- `05_interesting_findings/csv/Factor_Correlations_Unique.csv`
+- `05_interesting_findings/csv/Factor_Correlations_Heatmap_Matrix.csv`
+- `05_interesting_findings/csv/Pairwise_Item_Correlation_Summary.csv`
+- `05_interesting_findings/csv/Pairwise_Item_Correlation_Top_Hits.csv`
+- `05_interesting_findings/csv/All_Pairwise_Correlations_Ranked.csv`
+- `05_interesting_findings/csv/Item_Item_Order_Stratified_Correlations.csv`
+- `05_interesting_findings/csv/Interesting_Findings_Export_Manifest.csv`
+- `05_interesting_findings/plots/`
 
 ### `07_art_vs_all_factors_items.qmd`
 
@@ -479,31 +479,36 @@ Important outputs:
 - `11_profile_external_comparisons/plots/Profile_External_Medians_Heatmap.png`
 - `11_profile_external_comparisons/plots/Profile_Beliefs_Items_Top12_Heatmap.png`
 
-### `11b_continuous_factor_analysis.qmd`
+### `12_continuous_factor_analysis.qmd`
 
 Purpose:
 
 - Provides a continuous-factor companion analysis to script `11`.
 - Uses factor scores directly rather than relying only on discrete profile groups.
-- Writes outputs into the script `11` output folder.
+- Writes outputs into its own script `12` output folder.
 
 Key methods:
 
 - runs Spearman correlations between factor scores and external variables
 - runs multiple regression summaries for external predictors and factor scores
 - optionally attempts latent profile analysis if `tidyLPA` is available
-- shares output folders with `11_profile_external_comparisons.qmd`
+- reads profile-comparison inputs from script `11`
 
 Output folder:
 
-- `11_profile_external_comparisons/`
+- `12_continuous_factor_analysis/`
 
 Important outputs:
 
-- additional CSV files in `11_profile_external_comparisons/csv/`
-- additional plots in `11_profile_external_comparisons/plots/`
+- `12_continuous_factor_analysis/csv/12_Factor_ART_Spearman.csv`
+- `12_continuous_factor_analysis/csv/12_Factor_Q17_Spearman.csv`
+- `12_continuous_factor_analysis/csv/12_Factor_BeliefsTheme_Spearman.csv`
+- `12_continuous_factor_analysis/csv/12_Factor_OLS_Regression.csv`
+- `12_continuous_factor_analysis/csv/12_Analysis_Summary.csv`
+- `12_continuous_factor_analysis/plots/12_Factor_External_Corr_Heatmap.png`
+- `12_continuous_factor_analysis/plots/12_Factor_OLS_Coefficients.png`
 
-### `12_model_use_vs_factors_items.qmd`
+### `13_model_use_vs_factors_items.qmd`
 
 Purpose:
 
@@ -520,21 +525,21 @@ Key methods:
 
 Output folder:
 
-- `12_model_use_vs_factors_items/`
+- `13_model_use_vs_factors_items/`
 
 Important outputs:
 
-- `12_model_use_vs_factors_items/csv/Model_Use_Factor_Item_Merged.csv`
-- `12_model_use_vs_factors_items/csv/Model_Use_vs_Factors_Correlations.csv`
-- `12_model_use_vs_factors_items/csv/Model_Use_vs_Items_Correlations.csv`
-- `12_model_use_vs_factors_items/csv/Model_Use_vs_Items_Top10_Per_Model.csv`
-- `12_model_use_vs_factors_items/csv/PrimaryModel_KW_Factors.csv`
-- `12_model_use_vs_factors_items/csv/Manifest.csv`
-- `12_model_use_vs_factors_items/plots/Model_Use_vs_Factors_Heatmap.png`
-- `12_model_use_vs_factors_items/plots/Model_Use_vs_Items_BH_Signal.png`
-- `12_model_use_vs_factors_items/plots/PrimaryModel_Factor_Distributions.png`
+- `13_model_use_vs_factors_items/csv/Model_Use_Factor_Item_Merged.csv`
+- `13_model_use_vs_factors_items/csv/Model_Use_vs_Factors_Correlations.csv`
+- `13_model_use_vs_factors_items/csv/Model_Use_vs_Items_Correlations.csv`
+- `13_model_use_vs_factors_items/csv/Model_Use_vs_Items_Top10_Per_Model.csv`
+- `13_model_use_vs_factors_items/csv/PrimaryModel_KW_Factors.csv`
+- `13_model_use_vs_factors_items/csv/Manifest.csv`
+- `13_model_use_vs_factors_items/plots/Model_Use_vs_Factors_Heatmap.png`
+- `13_model_use_vs_factors_items/plots/Model_Use_vs_Items_BH_Signal.png`
+- `13_model_use_vs_factors_items/plots/PrimaryModel_Factor_Distributions.png`
 
-### `13_results.qmd`
+### `17_results.qmd`
 
 Purpose:
 
@@ -555,11 +560,11 @@ Render note:
 
 Output folder:
 
-- `13_results/`
+- `17_results/`
 
 Important outputs:
 
-- `13_results/13_results.html`
+- `17_results/17_results.html`
 
 ### `14_q17_deeper_dive.qmd`
 

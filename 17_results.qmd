@@ -26,14 +26,14 @@ efa_export_summary_file <- file.path("02_efa_exports", "efa_diagnostics", "EFA_E
 efa_recommended_file <- file.path("03_efa_analysis", "EFA_Recommended_K.csv")
 efa_diagnostics_file <- file.path("03_efa_analysis", "efa_diagnostics", "EFA_Diagnostics_Summary.csv")
 efa_sensitivity_file <- file.path("03_efa_analysis", "efa_diagnostics", "EFA_Sensitivity_Comparison.csv")
-order_comparison_file <- file.path("04_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
-anova_file <- file.path("04_order_effects", "csv", "TwoWay_ANOVA_Order_Effects.csv")
-tool_order_file <- file.path("04_order_effects", "csv", "Tool_Order_Interaction_Summary.csv")
-script6_factor_corr_file <- file.path("06_interesting_findings", "csv", "Factor_Correlations_Unique.csv")
-script6_pair_summary_file <- file.path("06_interesting_findings", "csv", "Pairwise_Item_Correlation_Summary.csv")
-script6_all_pairs_file <- file.path("06_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
-factor_scores_file <- file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
-factor_lookup_file <- file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv")
+order_comparison_file <- file.path("06_order_effects", "csv", "Mann_Whitney_Order_Comparisons.csv")
+anova_file <- file.path("06_order_effects", "csv", "TwoWay_ANOVA_Order_Effects.csv")
+tool_order_file <- file.path("06_order_effects", "csv", "Tool_Order_Interaction_Summary.csv")
+script5_factor_corr_file <- file.path("05_interesting_findings", "csv", "Factor_Correlations_Unique.csv")
+script5_pair_summary_file <- file.path("05_interesting_findings", "csv", "Pairwise_Item_Correlation_Summary.csv")
+script5_all_pairs_file <- file.path("05_interesting_findings", "csv", "All_Pairwise_Correlations_Ranked.csv")
+factor_scores_file <- file.path("05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
+factor_lookup_file <- file.path("05_interesting_findings", "csv", "Factor_Name_Map.csv")
 art_factor_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_vs_Factors_Correlations.csv")
 art_scored_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
 ai_primary_efa_file <- file.path("02_efa_exports", "efa", "AI_Reflection_EFA_Primary.csv")
@@ -47,7 +47,7 @@ script16_art_file <- file.path("16_exploratory_beliefs", "csv", "ART_vs_Beliefs_
 script16_q17_file <- file.path("16_exploratory_beliefs", "csv", "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv")
 fit_comparison_file <- file.path("16_exploratory_beliefs", "csv", "All_Instruments_Fit_Comparison.csv")
 
-plot_primary_factor <- file.path("06_interesting_findings", "plots", "Factor_Heatmap_Across_3_Instruments.png")
+plot_primary_factor <- file.path("05_interesting_findings", "plots", "Factor_Heatmap_Across_3_Instruments.png")
 plot_beliefs_loadings <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Loadings_Heatmap.png")
 plot_beliefs_four_family <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Cross_Factor_Heatmap.png")
 
@@ -561,7 +561,7 @@ include_if_exists(plot_primary_factor)
 ```
 
 ```{r primary-factor-table}
-factor_corrs <- read_or_empty(script6_factor_corr_file)
+factor_corrs <- read_or_empty(script5_factor_corr_file)
 
 if (nrow(factor_corrs) > 0) {
   factor_corrs |>

@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "05_beliefs_item_analysis"
+output-dir: "04_beliefs_item_analysis"
 execute:
   echo: false
   warning: false
@@ -43,7 +43,7 @@ set.seed(42L)
 ## Setup
 
 ```{r}
-script_dir <- "05_beliefs_item_analysis"
+script_dir <- "04_beliefs_item_analysis"
 csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
 dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
@@ -73,7 +73,7 @@ instrument_specs <- tribble(
 
 recommended_k_raw <- read_csv(recommended_k_file, show_col_types = FALSE)
 
-required_k_cols <- c("instrument", "recommended_k", "factorability_flag",
+required_k_cols <- c("instrument", "recommended_k", "manual_locked_k", "factorability_flag",
                      "recommendation_status", "recommendation_reason")
 missing_k_cols  <- setdiff(required_k_cols, names(recommended_k_raw))
 if (length(missing_k_cols) > 0) {
@@ -84,7 +84,7 @@ if (length(missing_k_cols) > 0) {
 recommended_k <- recommended_k_raw |>
   transmute(
     instrument,
-    recommended_k = as.integer(recommended_k),
+    recommended_k = as.integer(coalesce(manual_locked_k, recommended_k)),
     factorability_flag,
     recommendation_status,
     recommendation_reason
@@ -218,7 +218,7 @@ build_factor_scores <- function(instrument, file, item_id_col, score_transform, 
   set.seed(42L)
 
   # Conditional rotation: no rotation for single-factor solutions (matches
-  # Script 03 and Script 06 convention).
+  # Script 03 and Script 05 convention).
   fa_fit <- suppressWarnings(
     psych::fa(
       r = poly_out$rho,
@@ -628,7 +628,7 @@ combined <- beliefs_wide |>
 # are available for ~91 participants while IMI/WritingEfficacy scores are only
 # available for 82, making AIReflection rhos non-comparable to the others in
 # the same table. Filtering here ensures all factor correlations use a
-# consistent participant base and Full_rho values match Script 04's strat output.
+# consistent participant base and Full_rho values match Script 06's strat output.
 valid_pids <- read_csv(master_wide_file, show_col_types = FALSE) |>
   pull(participant_id) |>
   as.character()
@@ -845,5 +845,5 @@ beliefs_manifest <- tibble(
 )
 
 write_csv(beliefs_manifest, file.path(csv_dir, "Beliefs_Export_Manifest.csv"))
-kable(beliefs_manifest, caption = "05_beliefs_item_analysis.qmd — Output Manifest")
+kable(beliefs_manifest, caption = "04_beliefs_item_analysis.qmd — Output Manifest")
 ```

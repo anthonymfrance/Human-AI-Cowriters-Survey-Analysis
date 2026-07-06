@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     toc-depth: 2
-output-dir: "04_order_effects"
+output-dir: "06_order_effects"
 execute:
   echo: false
   warning: false
@@ -39,14 +39,14 @@ order_levels <- c("Traditional_First", "AI_First")
 topic_levels <- c("Metaphor", "Category")
 adjustment_methods <- c("BH", "bonferroni")
 
-script_dir <- "04_order_effects"
+script_dir <- "06_order_effects"
 csv_dir <- file.path(script_dir, "csv")
 plot_dir <- file.path(script_dir, "plots")
 master_wide_file <- file.path("02_efa_exports", "Final_Master_Wide.csv")
 final_item_map_file <- file.path("03_efa_analysis", "EFA_Final_Item_Map.csv")
-factor_scores_all_file <- file.path("06_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
-beliefs_wide_file <- file.path("05_beliefs_item_analysis", "csv", "BeliefsAboutAI_Wide.csv")
-factor_name_map_file <- file.path("06_interesting_findings", "csv", "Factor_Name_Map.csv")
+factor_scores_all_file <- file.path("05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
+beliefs_wide_file <- file.path("04_beliefs_item_analysis", "csv", "BeliefsAboutAI_Wide.csv")
+factor_name_map_file <- file.path("05_interesting_findings", "csv", "Factor_Name_Map.csv")
 beliefs_long_file <- file.path("02_efa_exports", "efa", "BeliefsAboutAI_EFA_Primary.csv")
 schedule_lab_files <- tribble(
   ~lab_source,   ~path,
@@ -1598,7 +1598,7 @@ kable(export_manifest)
 
 Then we need to come up with a quick way to understand what we like. All of this should be one or two sentences describing what we did for the script and then one or two graphs. Ideally just one graph for these early scripts.
 
-For script 4 we should say, "This builds the composite scores from locked EFA item map, compares traditional first versus AI first participants, and tests tool times ordered interactions with a secondary topic controlled model." We should show some table or graph that shows the results of that.## Section 8: Order-Stratified Correlation Analysis
+For script 6 we should say, "This builds the composite scores from locked EFA item map, compares traditional first versus AI first participants, and tests tool times ordered interactions with a secondary topic controlled model." We should show some table or graph that shows the results of that.## Section 8: Order-Stratified Correlation Analysis
 
 This section asks whether key cross-instrument factor correlations and
 Beliefs item correlations differ depending on which session participants
@@ -1616,14 +1616,14 @@ judge differences.
 library(psych)  # for paired.r()
 
 # --- Load inputs ---
-# Factor scores: use the file produced by Script 06 (or 05 — same scores)
+# Factor scores: use the file produced by Script 05.
 factor_scores_all <- read_csv(
   factor_scores_all_file,
   show_col_types = FALSE
 ) |>
   mutate(participant_id = as.character(participant_id))
 
-# Beliefs item wide: produced by Script 05
+# Beliefs item wide: produced by Script 04.
 beliefs_wide <- read_csv(
   beliefs_wide_file,
   show_col_types = FALSE
@@ -1724,7 +1724,7 @@ factor_name_map_loaded <- read_csv(
 assert_lookup_covers_factor_columns(
   factor_lookup = factor_name_map_loaded,
   factor_cols = factor_cols_strat,
-  context_label = "Script 04 factor-name-map handoff"
+  context_label = "Script 06 factor-name-map handoff"
 )
 
 factor_label_lookup_strat <- factor_name_map_loaded |>
@@ -1770,7 +1770,7 @@ factor_strat_wide |>
 
 ```{r beliefs-factor-stratified}
 # --- Beliefs Item × Factor stratified correlations ---
-# Focus on items that survived BH correction in Script 05 full-sample analysis.
+# Focus on items that survived BH correction in Script 04 full-sample analysis.
 # Defined here explicitly so this section is self-contained.
 # Update this vector if your significant item list changes.
 
@@ -1997,28 +1997,18 @@ exploratory_beliefs_lookup_file <- file.path(
   "Beliefs_Exploratory_Factor_Lookup.csv"
 )
 
-if (!file.exists(exploratory_beliefs_factor_file)) {
-  stop(
-    paste0(
-      "Missing exploratory Beliefs factor scores: ",
-      exploratory_beliefs_factor_file,
-      ". Render 16_exploratory_beliefs.qmd first."
-    ),
-    call. = FALSE
+run_exploratory_beliefs_order <- file.exists(exploratory_beliefs_factor_file) &&
+  file.exists(exploratory_beliefs_lookup_file)
+
+if (!run_exploratory_beliefs_order) {
+  cat(
+    "Skipping exploratory Beliefs 6-22 order addendum because script 16 outputs are not present yet. ",
+    "Render 16_exploratory_beliefs.qmd and rerender this script to refresh that optional addendum.\n",
+    sep = ""
   )
 }
 
-if (!file.exists(exploratory_beliefs_lookup_file)) {
-  stop(
-    paste0(
-      "Missing exploratory Beliefs factor lookup: ",
-      exploratory_beliefs_lookup_file,
-      ". Render 16_exploratory_beliefs.qmd first."
-    ),
-    call. = FALSE
-  )
-}
-
+if (run_exploratory_beliefs_order) {
 new_beliefs_factor_cols <- c(
   "Beliefs_UtilityComfort",
   "Beliefs_FutureAIIntent",
@@ -2170,9 +2160,10 @@ write_csv(
 exploratory_beliefs_mw |>
   mutate(across(where(is.numeric), ~ round(.x, 3))) |>
   kable(caption = "Exploratory Beliefs 6-22 factor scores compared by order group. Positive rank-biserial means Traditional-First tends higher.")
+}
 ```
 
-```{r exploratory-beliefs-factor-stratified}
+```{r exploratory-beliefs-factor-stratified, eval=run_exploratory_beliefs_order}
 strat_base_ext <- strat_base |>
   left_join(exploratory_beliefs_scores, by = "participant_id")
 
@@ -2738,7 +2729,7 @@ exploratory_beliefs_strat_wide |>
   kable(caption = "Exploratory Beliefs 6-22 factor correlations stratified by order group. fisher_p tests whether Traditional-First rho differs from AI-First rho.")
 ```
 
-```{r order-strat-exports}
+```{r order-strat-exports, eval=run_exploratory_beliefs_order}
 strat_export_manifest <- tibble(
   file = c(
     "Factor_Factor_Order_Stratified_Correlations.csv",
