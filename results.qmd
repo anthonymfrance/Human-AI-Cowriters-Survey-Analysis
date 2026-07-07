@@ -47,10 +47,21 @@ script16_cross_factor_file <- file.path("16_exploratory_beliefs", "csv", "Belief
 script16_art_file <- file.path("16_exploratory_beliefs", "csv", "ART_vs_Beliefs_Exploratory_Factors.csv")
 script16_q17_file <- file.path("16_exploratory_beliefs", "csv", "Q17_Buckets_vs_Beliefs_Exploratory_Factors.csv")
 fit_comparison_file <- file.path("16_exploratory_beliefs", "csv", "All_Instruments_Fit_Comparison.csv")
+composite_cross_diff_file <- file.path("18_composite_correlations", "csv", "EFA_vs_Composite_Cross_Factor_Differences.csv")
+composite_order_file <- file.path("18_composite_correlations", "csv", "Composite_Factor_Order_Stratified_Correlations.csv")
+order_scoring_diff_file <- file.path("18_composite_correlations", "csv", "EFA_vs_Composite_Order_Effect_Differences.csv")
+composite_art_diff_file <- file.path("18_composite_correlations", "csv", "EFA_vs_Composite_ART_Differences.csv")
+composite_q17_diff_file <- file.path("18_composite_correlations", "csv", "EFA_vs_Composite_Q17_Filtered_Bucket_Count_Differences.csv")
+q17_retained_tools_file <- file.path("18_composite_correlations", "csv", "Q17_Filtered_Retained_Tools.csv")
 
 plot_primary_factor <- file.path("05_interesting_findings", "plots", "Factor_Heatmap_Across_3_Instruments.png")
 plot_beliefs_loadings <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Loadings_Heatmap.png")
 plot_beliefs_four_family <- file.path("16_exploratory_beliefs", "plots", "Beliefs_Exploratory_Cross_Factor_Heatmap.png")
+plot_scoring_cross_compare <- file.path("18_composite_correlations", "plots", "EFA_vs_Composite_Cross_Factor_Heatmap.png")
+plot_composite_order_diff <- file.path("18_composite_correlations", "plots", "Composite_Factor_Order_Rho_Diff_Ranked.png")
+plot_order_scoring_compare <- file.path("18_composite_correlations", "plots", "EFA_vs_Composite_Order_Effects_Trad_AI_Rho_SideBySide.png")
+plot_scoring_art_compare <- file.path("18_composite_correlations", "plots", "EFA_vs_Composite_ART_Heatmap.png")
+plot_scoring_q17_compare <- file.path("18_composite_correlations", "plots", "EFA_vs_Composite_Q17_Filtered_Bucket_Counts_Heatmap.png")
 
 read_or_empty <- function(path) {
   if (file.exists(path)) {
@@ -191,6 +202,12 @@ ai_primary_efa_ids <- read_or_empty(ai_primary_efa_file) |>
   distinct(participant_id)
 q17_long_raw <- read_or_empty(q17_long_file) |>
   mutate(use_score = as.numeric(use_score))
+cross_scoring_diff <- read_or_empty(composite_cross_diff_file)
+composite_order_pairs <- read_or_empty(composite_order_file)
+order_scoring_diff <- read_or_empty(order_scoring_diff_file)
+art_scoring_diff <- read_or_empty(composite_art_diff_file)
+q17_scoring_diff <- read_or_empty(composite_q17_diff_file)
+q17_retained_tools <- read_or_empty(q17_retained_tools_file)
 q17_unreviewed_ids <- setdiff(unique(q17_long_raw$participant_id), ai_primary_efa_ids$participant_id)
 q17_long <- q17_long_raw |>
   semi_join(ai_primary_efa_ids, by = "participant_id")
@@ -602,9 +619,112 @@ if (nrow(factor_corrs) > 0) {
 **Interpretation:** Traditional-session perceived competence clusters with writing self-efficacy. Cross-session links between traditional-writing factors and AIReflection are weaker, suggesting that students' traditional writing confidence and AI-session reflections were related but not interchangeable constructs.
 :::
 
+## EFA vs Simple Mean Scoring
+
+Script 18 reruns the same survey-factor correlation families using simple row-mean composites from the locked item memberships. The side-by-side plot below compares those composite scores with the EFA factor-score version.
+
+```{r scoring-cross-factor-comparison, fig.cap="Survey factor x factor correlations scored two ways: EFA factor scores versus simple mean composites."}
+include_if_exists(plot_scoring_cross_compare)
+```
+
+```{r scoring-cross-factor-difference-table}
+if (nrow(cross_scoring_diff) > 0) {
+  cross_scoring_diff |>
+    slice_head(n = 10) |>
+    transmute(
+      `Factor 1` = label_x,
+      `Factor 2` = label_y,
+      `EFA rho` = fmt_rho(efa_rho),
+      `Composite rho` = fmt_rho(composite_rho),
+      `Composite - EFA` = fmt_num(rho_difference_composite_minus_efa, 2),
+      `Sign changed` = direction_change
+    ) |>
+    kable(caption = "Largest survey factor x factor differences between scoring methods.")
+}
+```
+
+::: plain-callout
+**Scoring interpretation:** The two scoring paths usually tell the same directional story when a factor is clean and internally coherent. The biggest differences identify factors where EFA weighting, cross-loadings, or item filtering matter most; those rows are the ones to discuss cautiously if the composite and EFA plots disagree.
+:::
+
+### Order-Sensitive Composite Relationships
+
+Simple-mean composites also show order-sensitive factor x factor relationships. This is a moderation check: it asks whether the relationship between two constructs differs depending on whether students completed the traditional-writing task first or the AI-assisted task first.
+
+```{r composite-order-difference-plot, fig.cap="Composite factor x factor order sensitivity. Positive values mean the relationship was stronger in the traditional-first group; negative values mean it was stronger in the AI-first group."}
+include_if_exists(plot_composite_order_diff)
+```
+
+```{r composite-order-difference-table}
+if (nrow(composite_order_pairs) > 0) {
+  composite_order_pairs |>
+    slice_head(n = 10) |>
+    transmute(
+      `Factor 1` = label_x,
+      `Factor 2` = label_y,
+      `Traditional-first rho` = fmt_rho(Traditional_First_rho),
+      `AI-first rho` = fmt_rho(AI_First_rho),
+      `Trad - AI` = fmt_num(rho_diff, 2),
+      `Fisher p` = fmt_p(fisher_p),
+      `BH p` = fmt_p(fisher_p_bh),
+      `Correction strength` = fisher_sig
+    ) |>
+    kable(caption = "Largest composite factor x factor order differences.")
+}
+```
+
+::: plain-callout
+**Order interpretation:** The strongest composite order effect links traditional-task interest/enjoyment with future AI orientation. In the traditional-first group the relationship is negative, while in the AI-first group it is positive. This supports the idea that task sequence can shape how students connect traditional writing experience with AI attitudes.
+:::
+
+```{r order-scoring-comparison-plot, fig.cap="Matched EFA vs composite order effects. Dots show Traditional-first and AI-first rho values for the same factor pair."}
+include_if_exists(plot_order_scoring_compare)
+```
+
+```{r order-scoring-comparison-table}
+if (nrow(order_scoring_diff) > 0) {
+  order_scoring_diff |>
+    slice_head(n = 10) |>
+    transmute(
+      `Factor pair` = pair_label,
+      `EFA Trad-AI` = fmt_num(`rho_diff_EFA factor scores`, 2),
+      `Composite Trad-AI` = fmt_num(`rho_diff_Simple mean composites`, 2),
+      `Composite - EFA` = fmt_num(rho_diff_change_composite_minus_efa, 2),
+      `Same direction` = same_order_direction,
+      `EFA BH p` = fmt_p(`fisher_p_bh_EFA factor scores`),
+      `Composite BH p` = fmt_p(`fisher_p_bh_Simple mean composites`)
+    ) |>
+    kable(caption = "Matched EFA vs composite order-effect differences.")
+}
+```
+
+::: plain-callout
+**Scoring sensitivity:** The main order-effect story is not an artifact of EFA scoring. The strongest order-sensitive pair, traditional interest/enjoyment with future AI orientation, is nearly identical under EFA and simple-mean composite scoring.
+:::
+
 ## Reading Breadth: ART Net
 
 The Author Recognition Test (ART) is included as an external reading-breadth anchor rather than another AI attitude measure. The primary ART score is **ART net**, computed as real author hits minus false-alarm selections.
+
+```{r scoring-art-comparison, fig.cap="ART net, false alarms, and real hits correlations scored two ways: EFA factor scores versus simple mean composites."}
+include_if_exists(plot_scoring_art_compare)
+```
+
+```{r scoring-art-difference-table}
+if (nrow(art_scoring_diff) > 0) {
+  art_scoring_diff |>
+    slice_head(n = 10) |>
+    transmute(
+      `ART metric` = art_label,
+      Factor = display_label,
+      `EFA rho` = fmt_rho(efa_rho),
+      `Composite rho` = fmt_rho(composite_rho),
+      `Composite - EFA` = fmt_num(rho_difference_composite_minus_efa, 2),
+      `Sign changed` = direction_change
+    ) |>
+    kable(caption = "Largest ART differences between scoring methods.")
+}
+```
 
 ```{r art-primary-heatmap, fig.width=5.8, fig.height=5.7, fig.cap="ART net correlations with primary locked factor scores."}
 plot_anchor_heatmap(
@@ -715,6 +835,8 @@ if (nrow(q17_long) > 0) {
 
 For the inferential summaries, the primary Q17 metric is **regular-use breadth**: the number of tools a participant rated 4 or 5, meaning sometimes or often used. The sensitivity metric is **filtered mean use**: the mean 1-5 score after retaining only tools with at least 10% ever-used prevalence in this sample, where ever-used means a score of 3, 4, or 5. This retained `r length(q17_eligible_tools)` tools: `r q17_eligible_tool_label`.
 
+Script 18 also implements a more literal bucket-count scoring version after filtering out low-recognition/low-use tools. For example, a participant who selected "often use" for 9 retained tools receives a `Count often use` score of 9, with separate count scores for the other response buckets.
+
 ```{r q17-tool-popularity-plot, fig.width=8.5, fig.height=5.8, fig.cap="Q17 tool popularity by ever-used and regular-use rates."}
 if (nrow(q17_tool_summary) > 0) {
   q17_tool_summary |>
@@ -752,6 +874,37 @@ if (nrow(q17_tool_summary) > 0) {
     )
 }
 ```
+
+```{r scoring-q17-bucket-comparison, fig.cap="Filtered Q17 bucket-count correlations scored two ways: EFA factor scores versus simple mean composites."}
+include_if_exists(plot_scoring_q17_compare)
+```
+
+```{r scoring-q17-difference-table}
+if (nrow(q17_scoring_diff) > 0) {
+  q17_scoring_diff |>
+    filter(q17_metric %in% c(
+      "q17_filtered_n_3",
+      "q17_filtered_n_4",
+      "q17_filtered_n_5",
+      "q17_filtered_regular_or_often",
+      "q17_filtered_ever_used"
+    )) |>
+    slice_head(n = 10) |>
+    transmute(
+      `Q17 bucket score` = q17_label,
+      Factor = display_label,
+      `EFA rho` = fmt_rho(efa_rho),
+      `Composite rho` = fmt_rho(composite_rho),
+      `Composite - EFA` = fmt_num(rho_difference_composite_minus_efa, 2),
+      `Sign changed` = direction_change
+    ) |>
+    kable(caption = "Largest filtered Q17 bucket-count differences between scoring methods.")
+}
+```
+
+::: stats-detail
+The filtered bucket-count graph retains `r if (nrow(q17_retained_tools) > 0) nrow(q17_retained_tools) else "missing"` tools with at least 10% ever-used prevalence and nonzero response variation. It emphasizes interpretable participant-level counts over all-tool means.
+:::
 
 ```{r q17-primary-heatmap, fig.width=5.8, fig.height=5.7, fig.cap="Regular-use breadth correlations with primary locked factor scores."}
 plot_anchor_heatmap(

@@ -25,6 +25,7 @@ tenBerge EFA factor scores. It does not refit any EFA models.
 library(tidyverse)
 library(knitr)
 library(openxlsx)
+source("scoring_helpers.R", local = knitr::knit_global())
 
 script_dir <- "18_composite_correlations"
 csv_dir <- file.path(script_dir, "csv")
@@ -39,8 +40,18 @@ composite_specs_file <- file.path("17_composite_scoring", "csv", "Composite_Spec
 composite_item_membership_file <- file.path("17_composite_scoring", "csv", "Composite_Item_Membership.csv")
 unassigned_items_file <- file.path("17_composite_scoring", "csv", "Unassigned_Items.csv")
 art_scores_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_Scored.csv")
+efa_art_primary_file <- file.path("07_art_vs_all_factors_items", "csv", "ART_vs_Factors_Correlations.csv")
+efa_art_beliefs_file <- file.path("16_exploratory_beliefs", "csv", "ART_vs_Beliefs_Exploratory_Factors.csv")
 q17_bucket_file <- file.path("14_q17_deeper_dive", "csv", "Q17_Likert_Buckets_PerParticipant.csv")
+q17_long_file <- file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv")
 named_model_file <- file.path("13_model_use_vs_factors_items", "csv", "Model_Use_Factor_Item_Merged.csv")
+order_ready_file <- file.path("06_order_effects", "csv", "Order_Effects_Analysis_Ready.csv")
+efa_order_file <- file.path("06_order_effects", "csv", "All_Factors_With_Exploratory_Beliefs_Order_Stratified_Correlations.csv")
+efa_factor_scores_file <- file.path("05_interesting_findings", "csv", "Factor_Scores_All_Instruments.csv")
+efa_factor_lookup_file <- file.path("05_interesting_findings", "csv", "Factor_Name_Map.csv")
+efa_beliefs_scores_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Scores.csv")
+efa_beliefs_lookup_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Factor_Lookup.csv")
+efa_cross_factor_file <- file.path("16_exploratory_beliefs", "csv", "Beliefs_Exploratory_Cross_Factor_Heatmap_Matrix.csv")
 workbook_file <- file.path(workbook_dir, "Composite_Workbook.xlsx")
 
 instrument_order <- c("IMI", "WritingEfficacy", "AIReflection", "BeliefsAboutAI")
@@ -114,6 +125,134 @@ adjust_within <- function(df, group_col) {
       survives_bonferroni = !is.na(p_bonf) & p_bonf < 0.05
     ) |>
     ungroup()
+}
+
+read_efa_scores_lookup <- function() {
+  efa_scores <- read_csv(efa_factor_scores_file, show_col_types = FALSE) |>
+    inner_join(
+      read_csv(efa_beliefs_scores_file, show_col_types = FALSE) |>
+        select(participant_id, Beliefs_UtilityComfort, Beliefs_FutureAIIntent, Beliefs_ConcernHarms),
+      by = "participant_id"
+    )
+
+  efa_lookup <- bind_rows(
+    read_csv(efa_factor_lookup_file, show_col_types = FALSE) |>
+      transmute(
+        factor,
+        instrument,
+        factor_id = short_factor,
+        factor_num = as.integer(factor_num),
+        proposed_name,
+        display_label
+      ),
+    read_csv(efa_beliefs_lookup_file, show_col_types = FALSE) |>
+      transmute(
+        factor,
+        instrument,
+        factor_id = paste0("F", as.integer(factor_num)),
+        factor_num = as.integer(factor_num),
+        proposed_name,
+        display_label
+      )
+  ) |>
+    mutate(
+      proposed_name = if_else(
+        factor == "Beliefs_FutureAIIntent",
+        "Future AI Orientation",
+        proposed_name
+      ),
+      display_label = if_else(
+        factor == "Beliefs_FutureAIIntent",
+        "Beliefs F2 -> Future AI Orientation",
+        display_label
+      ),
+      instrument_order = match(instrument, instrument_order)
+    ) |>
+    arrange(instrument_order, factor_num)
+
+  list(scores = efa_scores, lookup = efa_lookup)
+}
+
+plot_side_by_side_heatmap <- function(plot_df, x_col, y_col, label_col, facet_col, title, subtitle, width, height, filename_base) {
+  p <- ggplot(plot_df, aes(x = .data[[x_col]], y = .data[[y_col]], fill = rho)) +
+    geom_tile(color = "white", linewidth = 0.55) +
+    geom_text(aes(label = .data[[label_col]]), size = 2.8) +
+    facet_wrap(as.formula(paste("~", facet_col)), nrow = 1) +
+    scale_fill_gradient2(
+      low = "#b3584b",
+      mid = "white",
+      high = "#3f6fa8",
+      midpoint = 0,
+      limits = c(-1, 1),
+      name = "rho"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = NULL,
+      y = NULL
+    ) +
+    theme_corr(base_size = 10) +
+    theme(
+      strip.text = element_text(face = "bold"),
+      axis.text.x = element_text(size = 7.5, angle = 35, hjust = 1),
+      axis.text.y = element_text(size = 7.5)
+    )
+
+  ggsave(file.path(plot_dir, paste0(filename_base, ".png")), p, width = width, height = height, units = "in", dpi = 300, bg = "white")
+  ggsave(file.path(plot_dir, paste0(filename_base, ".pdf")), p, width = width, height = height, units = "in", bg = "white")
+  p
+}
+
+fisher_z_compare <- function(rho_a, n_a, rho_b, n_b) {
+  if (any(is.na(c(rho_a, n_a, rho_b, n_b))) || n_a <= 3L || n_b <= 3L) {
+    return(NA_real_)
+  }
+
+  rho_a <- pmin(pmax(rho_a, -0.999999), 0.999999)
+  rho_b <- pmin(pmax(rho_b, -0.999999), 0.999999)
+  z <- (atanh(rho_a) - atanh(rho_b)) / sqrt((1 / (n_a - 3)) + (1 / (n_b - 3)))
+  2 * pnorm(-abs(z))
+}
+
+safe_spearman_value <- function(df, x, y) {
+  safe_spearman(df, x, y) |>
+    select(n, rho, p)
+}
+
+order_stratified_pair <- function(df, factor_x, factor_y) {
+  full <- safe_spearman_value(df, factor_x, factor_y)
+  traditional_first <- safe_spearman_value(
+    df |> filter(order == "Traditional_First"),
+    factor_x,
+    factor_y
+  )
+  ai_first <- safe_spearman_value(
+    df |> filter(order == "AI_First"),
+    factor_x,
+    factor_y
+  )
+
+  tibble(
+    factor_x,
+    factor_y,
+    Full_n = full$n,
+    Traditional_First_n = traditional_first$n,
+    AI_First_n = ai_first$n,
+    Full_rho = full$rho,
+    Traditional_First_rho = traditional_first$rho,
+    AI_First_rho = ai_first$rho,
+    Full_p = full$p,
+    Traditional_First_p = traditional_first$p,
+    AI_First_p = ai_first$p,
+    fisher_p = fisher_z_compare(
+      traditional_first$rho,
+      traditional_first$n,
+      ai_first$rho,
+      ai_first$n
+    ),
+    rho_diff = traditional_first$rho - ai_first$rho
+  )
 }
 ```
 
@@ -284,29 +423,484 @@ ggsave(
 p_cross_heat
 ```
 
+# EFA vs Composite: Survey Factor x Factor
+
+```{r efa-composite-cross-factor-comparison, fig.width=16, fig.height=8.5}
+efa_bundle <- read_efa_scores_lookup()
+efa_factor_lookup <- efa_bundle$lookup
+efa_factor_cols <- efa_factor_lookup$factor
+efa_factor_levels <- efa_factor_lookup$display_label
+
+efa_cross_heat <- read_csv(efa_cross_factor_file, show_col_types = FALSE) |>
+  mutate(scoring = "EFA factor scores")
+
+composite_cross_heat_compare <- composite_corr_heat |>
+  mutate(scoring = "Simple mean composites")
+
+cross_compare_df <- bind_rows(
+  efa_cross_heat,
+  composite_cross_heat_compare
+) |>
+  mutate(
+    scoring = factor(scoring, levels = c("EFA factor scores", "Simple mean composites")),
+    label_x = factor(label_x, levels = efa_factor_levels),
+    label_y = factor(label_y, levels = rev(efa_factor_levels)),
+    cell_label = case_when(
+      factor_x == factor_y ~ "",
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_cross_compare <- plot_side_by_side_heatmap(
+  cross_compare_df,
+  x_col = "label_x",
+  y_col = "label_y",
+  label_col = "cell_label",
+  facet_col = "scoring",
+  title = "Survey Factor x Factor Correlations: EFA vs Simple Mean Scoring",
+  subtitle = "* BH < .05; ** Bonferroni < .05",
+  width = 16,
+  height = 8.5,
+  filename_base = "EFA_vs_Composite_Cross_Factor_Heatmap"
+)
+
+efa_unique_for_diff <- efa_cross_heat |>
+  filter(factor_x < factor_y) |>
+  transmute(
+    factor_x,
+    factor_y,
+    label_x,
+    label_y,
+    efa_rho = rho,
+    efa_p_bh = p_bh,
+    efa_p_bonf = p_bonf
+  )
+
+composite_unique_for_diff <- composite_corr_unique |>
+  transmute(
+    factor_x,
+    factor_y,
+    composite_rho = rho,
+    composite_p_bh = p_bh,
+    composite_p_bonf = p_bonf
+  )
+
+cross_scoring_diff <- efa_unique_for_diff |>
+  inner_join(composite_unique_for_diff, by = c("factor_x", "factor_y")) |>
+  mutate(
+    rho_difference_composite_minus_efa = composite_rho - efa_rho,
+    abs_difference = abs(rho_difference_composite_minus_efa),
+    direction_change = sign(efa_rho) != sign(composite_rho)
+  ) |>
+  arrange(desc(abs_difference))
+
+write_csv(cross_scoring_diff, file.path(csv_dir, "EFA_vs_Composite_Cross_Factor_Differences.csv"))
+
+p_cross_compare
+```
+
+```{r efa-composite-cross-factor-difference-table}
+cross_scoring_diff |>
+  slice_head(n = 15) |>
+  mutate(across(c(efa_rho, composite_rho, rho_difference_composite_minus_efa, efa_p_bh, composite_p_bh), ~ round(.x, 3))) |>
+  transmute(
+    `Factor 1` = label_x,
+    `Factor 2` = label_y,
+    `EFA rho` = efa_rho,
+    `Composite rho` = composite_rho,
+    `Composite - EFA` = rho_difference_composite_minus_efa,
+    `Sign changed` = direction_change,
+    `EFA BH p` = efa_p_bh,
+    `Composite BH p` = composite_p_bh
+  ) |>
+  kable(caption = "Largest factor x factor differences between EFA factor scores and simple mean composites")
+```
+
+# Composite Factor x Factor Order Effects
+
+```{r composite-order-stratified-correlations}
+order_lookup <- read_csv(order_ready_file, show_col_types = FALSE) |>
+  distinct(participant_id, order) |>
+  mutate(order = factor(order, levels = c("Traditional_First", "AI_First")))
+
+composite_order_df <- composite_scores |>
+  inner_join(order_lookup, by = "participant_id")
+
+composite_order_pairs <- combn(composite_cols, 2, simplify = FALSE) |>
+  map_dfr(~ order_stratified_pair(composite_order_df, .x[1], .x[2])) |>
+  mutate(
+    fisher_p_bh = p.adjust(fisher_p, method = "BH"),
+    fisher_p_bonf = p.adjust(fisher_p, method = "bonferroni"),
+    fisher_sig = case_when(
+      !is.na(fisher_p_bonf) & fisher_p_bonf < 0.05 ~ "Bonferroni p < .05",
+      !is.na(fisher_p_bh) & fisher_p_bh < 0.05 ~ "BH p < .05",
+      !is.na(fisher_p) & fisher_p < 0.05 ~ "raw p < .05",
+      TRUE ~ "not significant"
+    )
+  ) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_x = factor, instrument_x = instrument, label_x = display_label),
+    by = "factor_x"
+  ) |>
+  left_join(
+    composite_lookup |>
+      transmute(factor_y = factor, instrument_y = instrument, label_y = display_label),
+    by = "factor_y"
+  ) |>
+  mutate(
+    pair_label = paste(label_x, label_y, sep = " x "),
+    comparison_family = case_when(
+      instrument_x == "BeliefsAboutAI" | instrument_y == "BeliefsAboutAI" ~
+        "Includes exploratory Beliefs composite",
+      TRUE ~ "Locked IMI/WritingEfficacy/AIReflection composites"
+    )
+  ) |>
+  arrange(fisher_p_bh, fisher_p, desc(abs(rho_diff)))
+
+write_csv(
+  composite_order_pairs,
+  file.path(csv_dir, "Composite_Factor_Order_Stratified_Correlations.csv")
+)
+
+composite_order_pairs |>
+  slice_head(n = 20) |>
+  mutate(across(c(
+    Full_rho,
+    Traditional_First_rho,
+    AI_First_rho,
+    rho_diff,
+    fisher_p,
+    fisher_p_bh,
+    fisher_p_bonf
+  ), ~ round(.x, 3))) |>
+  transmute(
+    `Factor 1` = label_x,
+    `Factor 2` = label_y,
+    `Full rho` = Full_rho,
+    `Traditional-first rho` = Traditional_First_rho,
+    `AI-first rho` = AI_First_rho,
+    `Trad - AI` = rho_diff,
+    `Fisher p` = fisher_p,
+    `BH p` = fisher_p_bh,
+    `Bonf p` = fisher_p_bonf,
+    `Multiplicity` = fisher_sig
+  ) |>
+  kable(caption = "Composite factor x factor correlations stratified by task order")
+```
+
+# EFA vs Composite: Factor x Factor Order Effects
+
+```{r efa-composite-order-effect-comparison, fig.width=18, fig.height=11}
+make_pair_id <- function(x, y) {
+  map2_chr(x, y, ~ paste(sort(c(.x, .y)), collapse = "__"))
+}
+
+pair_label_lookup <- composite_order_pairs |>
+  mutate(pair_id = make_pair_id(factor_x, factor_y)) |>
+  distinct(pair_id, label_x, label_y, pair_label, comparison_family)
+
+efa_order_pairs <- read_csv(efa_order_file, show_col_types = FALSE) |>
+  transmute(
+    factor_x = col_x,
+    factor_y = col_y,
+    pair_id = make_pair_id(col_x, col_y),
+    scoring = "EFA factor scores",
+    Full_n,
+    Traditional_First_n,
+    AI_First_n,
+    Full_rho,
+    Traditional_First_rho,
+    AI_First_rho,
+    fisher_p,
+    fisher_p_bh,
+    fisher_p_bonf = fisher_p_bonferroni,
+    rho_diff
+  ) |>
+  left_join(pair_label_lookup, by = "pair_id")
+
+composite_order_compare_pairs <- composite_order_pairs |>
+  transmute(
+    factor_x,
+    factor_y,
+    pair_id = make_pair_id(factor_x, factor_y),
+    scoring = "Simple mean composites",
+    Full_n,
+    Traditional_First_n,
+    AI_First_n,
+    Full_rho,
+    Traditional_First_rho,
+    AI_First_rho,
+    fisher_p,
+    fisher_p_bh,
+    fisher_p_bonf,
+    rho_diff,
+    label_x,
+    label_y,
+    pair_label,
+    comparison_family
+  )
+
+order_scoring_compare_long <- bind_rows(
+  efa_order_pairs,
+  composite_order_compare_pairs
+) |>
+  mutate(
+    scoring = factor(scoring, levels = c("EFA factor scores", "Simple mean composites")),
+    significance = case_when(
+      !is.na(fisher_p_bonf) & fisher_p_bonf < 0.05 ~ "Bonferroni < .05",
+      !is.na(fisher_p_bh) & fisher_p_bh < 0.05 ~ "BH < .05",
+      !is.na(fisher_p) & fisher_p < 0.05 ~ "Nominal < .05",
+      TRUE ~ "Not significant"
+    ),
+    p_label = case_when(
+      !is.na(fisher_p_bonf) & fisher_p_bonf < 0.01 ~ "Bonf p < .01",
+      !is.na(fisher_p_bonf) & fisher_p_bonf < 0.05 ~ "Bonf p < .05",
+      !is.na(fisher_p_bh) & fisher_p_bh < 0.05 ~ "BH p < .05",
+      !is.na(fisher_p) & fisher_p < 0.05 ~ "p < .05",
+      TRUE ~ ""
+    )
+  )
+
+order_scoring_diff <- order_scoring_compare_long |>
+  select(
+    pair_id,
+    scoring,
+    label_x,
+    label_y,
+    pair_label,
+    comparison_family,
+    Traditional_First_rho,
+    AI_First_rho,
+    rho_diff,
+    fisher_p,
+    fisher_p_bh,
+    fisher_p_bonf,
+    significance,
+    p_label
+  ) |>
+  pivot_wider(
+    names_from = scoring,
+    values_from = c(
+      Traditional_First_rho,
+      AI_First_rho,
+      rho_diff,
+      fisher_p,
+      fisher_p_bh,
+      fisher_p_bonf,
+      significance,
+      p_label
+    ),
+    names_glue = "{.value}_{scoring}"
+  ) |>
+  mutate(
+    rho_diff_change_composite_minus_efa =
+      `rho_diff_Simple mean composites` - `rho_diff_EFA factor scores`,
+    abs_rho_diff_change = abs(rho_diff_change_composite_minus_efa),
+    same_order_direction = sign(`rho_diff_EFA factor scores`) ==
+      sign(`rho_diff_Simple mean composites`)
+  ) |>
+  arrange(
+    pmin(`fisher_p_bh_EFA factor scores`, `fisher_p_bh_Simple mean composites`, na.rm = TRUE),
+    desc(pmax(abs(`rho_diff_EFA factor scores`), abs(`rho_diff_Simple mean composites`), na.rm = TRUE))
+  )
+
+write_csv(
+  order_scoring_compare_long,
+  file.path(csv_dir, "EFA_vs_Composite_Order_Effects_Long.csv")
+)
+write_csv(
+  order_scoring_diff,
+  file.path(csv_dir, "EFA_vs_Composite_Order_Effect_Differences.csv")
+)
+
+belief_order_pair_levels <- order_scoring_diff |>
+  filter(comparison_family == "Includes exploratory Beliefs composite") |>
+  arrange(`rho_diff_EFA factor scores`) |>
+  mutate(pair_label_wrapped = str_wrap(pair_label, width = 50)) |>
+  pull(pair_label_wrapped)
+
+order_compare_plot_df <- order_scoring_compare_long |>
+  filter(comparison_family == "Includes exploratory Beliefs composite") |>
+  mutate(
+    pair_label_wrapped = str_wrap(pair_label, width = 50),
+    pair_label_wrapped = factor(pair_label_wrapped, levels = belief_order_pair_levels),
+    significance = factor(
+      significance,
+      levels = c("Bonferroni < .05", "BH < .05", "Nominal < .05", "Not significant")
+    ),
+    hjust_label = if_else(rho_diff >= 0, -0.08, 1.08)
+  )
+
+# Right-edge "table" region: per-row Traditional-first and AI-first rho values
+rho_col_trad_x <- 1.08
+rho_col_ai_x <- 1.32
+rho_table_divider_x <- 0.94
+rho_table_header_y <- length(belief_order_pair_levels) + 1.6
+rho_col_trad_color <- "#a15c22"
+rho_col_ai_color <- "#0f766e"
+
+order_rho_table_df <- order_compare_plot_df |>
+  select(scoring, pair_label_wrapped, Traditional_First_rho, AI_First_rho) |>
+  pivot_longer(
+    c(Traditional_First_rho, AI_First_rho),
+    names_to = "order_group",
+    values_to = "group_rho"
+  ) |>
+  mutate(
+    col_x = if_else(order_group == "Traditional_First_rho", rho_col_trad_x, rho_col_ai_x),
+    col_color = if_else(
+      order_group == "Traditional_First_rho",
+      rho_col_trad_color,
+      rho_col_ai_color
+    ),
+    rho_label = if_else(
+      is.na(group_rho),
+      "--",
+      scales::number(group_rho, accuracy = 0.01, style_negative = "minus")
+    )
+  )
+
+order_rho_header_df <- tibble(
+  col_x = c(rho_col_trad_x, rho_col_ai_x),
+  col_y = rho_table_header_y,
+  header_label = c("Trad-first\nrho", "AI-first\nrho"),
+  col_color = c(rho_col_trad_color, rho_col_ai_color)
+)
+
+p_order_scoring_side_by_side <- ggplot(
+  order_compare_plot_df,
+  aes(x = rho_diff, y = pair_label_wrapped, fill = significance)
+) +
+  geom_vline(xintercept = 0, color = "#bdbdbd", linewidth = 0.8) +
+  geom_col(width = 0.72, alpha = 0.95) +
+  geom_text(
+    data = \(d) filter(d, p_label != ""),
+    aes(label = p_label, hjust = hjust_label),
+    size = 3.1,
+    color = "#3f3f3f"
+  ) +
+  annotate(
+    "segment",
+    x = rho_table_divider_x,
+    xend = rho_table_divider_x,
+    y = 0.4,
+    yend = rho_table_header_y - 0.5,
+    color = "#d9d9d9",
+    linewidth = 0.5
+  ) +
+  geom_text(
+    data = order_rho_table_df,
+    aes(x = col_x, y = pair_label_wrapped, label = rho_label, color = col_color),
+    inherit.aes = FALSE,
+    size = 2.9
+  ) +
+  geom_text(
+    data = order_rho_header_df,
+    aes(x = col_x, y = col_y, label = header_label, color = col_color),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.1,
+    lineheight = 0.9
+  ) +
+  scale_color_identity() +
+  facet_wrap(vars(scoring), nrow = 1) +
+  scale_fill_manual(
+    values = c(
+      "Bonferroni < .05" = "#7b2cbf",
+      "BH < .05" = "#1b9e77",
+      "Nominal < .05" = "#e69500",
+      "Not significant" = "#b8b8b8"
+    ),
+    drop = FALSE
+  ) +
+  scale_x_continuous(
+    limits = c(min(c(order_compare_plot_df$rho_diff, -0.95), na.rm = TRUE), 1.44),
+    breaks = seq(-0.8, 0.8, by = 0.2),
+    labels = scales::number_format(accuracy = 0.01)
+  ) +
+  scale_y_discrete(expand = expansion(add = c(0.6, 2.4))) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Order-group rho differences involving exploratory Beliefs factors",
+    subtitle = paste(
+      "Bars show Traditional-First rho minus AI-First rho;",
+      "panels compare EFA factor scores with simple mean composites.",
+      "Right columns list each order group's Spearman rho."
+    ),
+    x = "rho difference",
+    y = NULL,
+    fill = NULL,
+    caption = paste(
+      "Fisher z p-values compare order groups within each scoring method.",
+      "Multiplicity corrections are applied within the 27 exploratory-Beliefs pair family."
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold", size = 12),
+    axis.text.y = element_text(size = 7.6),
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 11, color = "#666666"),
+    plot.caption = element_text(size = 9.5, color = "#7a7a7a"),
+    plot.margin = margin(12, 70, 12, 12)
+  )
+
+ggsave(
+  file.path(plot_dir, "EFA_vs_Composite_Beliefs_Order_Rho_Diff_SideBySide.png"),
+  p_order_scoring_side_by_side,
+  width = 18,
+  height = 11,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "EFA_vs_Composite_Beliefs_Order_Rho_Diff_SideBySide.pdf"),
+  p_order_scoring_side_by_side,
+  width = 18,
+  height = 11,
+  units = "in",
+  bg = "white"
+)
+
+order_scoring_diff |>
+  slice_head(n = 15) |>
+  mutate(across(
+    where(is.numeric),
+    ~ round(.x, 3)
+  )) |>
+  transmute(
+    `Factor pair` = pair_label,
+    `EFA Trad-AI` = `rho_diff_EFA factor scores`,
+    `Composite Trad-AI` = `rho_diff_Simple mean composites`,
+    `Composite - EFA` = rho_diff_change_composite_minus_efa,
+    `Same direction` = same_order_direction,
+    `EFA BH p` = `fisher_p_bh_EFA factor scores`,
+    `Composite BH p` = `fisher_p_bh_Simple mean composites`
+  ) |>
+  kable(caption = "EFA vs composite order-effect differences for matched factor pairs")
+
+p_order_scoring_side_by_side
+```
+
 # ART vs Composites
 
 ```{r art-correlations}
 art_metric_lookup <- tibble(
   art_metric = c(
-    "art_total_selected",
     "art_real_hits",
     "art_fake_false_alarms",
-    "art_neutral_selected",
-    "art_unknown_selected",
-    "art_net_real_minus_fake",
-    "art_hit_rate",
-    "art_false_alarm_rate"
+    "art_net_real_minus_fake"
   ),
   art_label = c(
-    "Total selected",
     "Real hits",
     "False alarms",
-    "Neutral selected",
-    "Unknown selected",
-    "ART net",
-    "Hit rate",
-    "False-alarm rate"
+    "ART net"
   )
 )
 
@@ -395,6 +989,106 @@ ggsave(
 )
 
 p_art_heat
+```
+
+# EFA vs Composite: ART Anchors
+
+```{r efa-composite-art-comparison, fig.width=16, fig.height=7.5}
+efa_art_primary <- read_csv(efa_art_primary_file, show_col_types = FALSE) |>
+  transmute(
+    art_metric,
+    factor,
+    n,
+    rho,
+    p = p_value,
+    p_bh,
+    p_bonf = p_bonferroni,
+    art_label,
+    instrument,
+    factor_num = as.integer(factor_num),
+    proposed_name,
+    display_label
+  )
+
+efa_art_beliefs <- read_csv(efa_art_beliefs_file, show_col_types = FALSE) |>
+  transmute(
+    art_metric,
+    factor,
+    n,
+    rho,
+    p,
+    p_bh,
+    p_bonf,
+    art_label,
+    instrument,
+    factor_num = as.integer(factor_num),
+    proposed_name,
+    display_label
+  )
+
+efa_art_compare <- bind_rows(efa_art_primary, efa_art_beliefs) |>
+  filter(art_metric %in% art_metric_lookup$art_metric) |>
+  select(art_metric, factor, n, rho, p, p_bh, p_bonf) |>
+  left_join(
+    efa_factor_lookup |>
+      select(factor, instrument, factor_num, proposed_name, display_label),
+    by = "factor"
+  ) |>
+  left_join(art_metric_lookup, by = "art_metric") |>
+  mutate(scoring = "EFA factor scores")
+
+composite_art_compare <- art_corrs |>
+  filter(art_metric %in% art_metric_lookup$art_metric) |>
+  mutate(scoring = "Simple mean composites")
+
+art_compare_df <- bind_rows(efa_art_compare, composite_art_compare) |>
+  mutate(
+    art_label = recode(
+      art_metric,
+      art_net_real_minus_fake = "ART net",
+      art_fake_false_alarms = "False alarms",
+      art_real_hits = "Real hits",
+      .default = art_label
+    ),
+    art_label = factor(art_label, levels = c("ART net", "False alarms", "Real hits")),
+    display_label = factor(display_label, levels = rev(efa_factor_levels)),
+    scoring = factor(scoring, levels = c("EFA factor scores", "Simple mean composites")),
+    cell_label = case_when(
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_art_compare <- plot_side_by_side_heatmap(
+  art_compare_df,
+  x_col = "art_label",
+  y_col = "display_label",
+  label_col = "cell_label",
+  facet_col = "scoring",
+  title = "Survey Factors x ART Metrics: EFA vs Simple Mean Scoring",
+  subtitle = "Restricted to ART net, false alarms, and real hits. * BH < .05; ** Bonferroni < .05",
+  width = 16,
+  height = 7.5,
+  filename_base = "EFA_vs_Composite_ART_Heatmap"
+)
+
+art_scoring_diff <- efa_art_compare |>
+  select(art_metric, factor, art_label, display_label, efa_rho = rho, efa_p_bh = p_bh) |>
+  inner_join(
+    composite_art_compare |>
+      select(art_metric, factor, composite_rho = rho, composite_p_bh = p_bh),
+    by = c("art_metric", "factor")
+  ) |>
+  mutate(
+    rho_difference_composite_minus_efa = composite_rho - efa_rho,
+    abs_difference = abs(rho_difference_composite_minus_efa),
+    direction_change = sign(efa_rho) != sign(composite_rho)
+  ) |>
+  arrange(desc(abs_difference))
+
+write_csv(art_scoring_diff, file.path(csv_dir, "EFA_vs_Composite_ART_Differences.csv"))
+
+p_art_compare
 ```
 
 # Q17 AI-Use vs Composites
@@ -514,6 +1208,170 @@ ggsave(
 )
 
 p_q17_heat
+```
+
+# EFA vs Composite: Q17 Filtered Bucket Counts
+
+```{r q17-filtered-bucket-correlations}
+q17_long <- read_csv(q17_long_file, show_col_types = FALSE) |>
+  mutate(use_score = as.numeric(use_score))
+
+q17_tool_summary <- q17_long |>
+  group_by(tool) |>
+  summarise(
+    n_participants = n_distinct(participant_id),
+    heard_pct = mean(use_score >= 2, na.rm = TRUE),
+    ever_used_pct = mean(use_score >= 3, na.rm = TRUE),
+    regular_use_pct = mean(use_score >= 4, na.rm = TRUE),
+    often_use_pct = mean(use_score == 5, na.rm = TRUE),
+    sd_use = sd(use_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(ever_used_pct), desc(regular_use_pct), tool)
+
+q17_retained_tools <- q17_tool_summary |>
+  filter(ever_used_pct >= .10, sd_use > 0) |>
+  pull(tool)
+
+q17_filtered_counts <- q17_long |>
+  filter(tool %in% q17_retained_tools, !is.na(use_score)) |>
+  group_by(participant_id) |>
+  summarise(
+    q17_filtered_n_1 = sum(use_score == 1, na.rm = TRUE),
+    q17_filtered_n_2 = sum(use_score == 2, na.rm = TRUE),
+    q17_filtered_n_3 = sum(use_score == 3, na.rm = TRUE),
+    q17_filtered_n_4 = sum(use_score == 4, na.rm = TRUE),
+    q17_filtered_n_5 = sum(use_score == 5, na.rm = TRUE),
+    q17_filtered_regular_or_often = sum(use_score >= 4, na.rm = TRUE),
+    q17_filtered_ever_used = sum(use_score >= 3, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+q17_filtered_metric_lookup <- tibble(
+  q17_metric = c(
+    "q17_filtered_n_1",
+    "q17_filtered_n_2",
+    "q17_filtered_n_3",
+    "q17_filtered_n_4",
+    "q17_filtered_n_5",
+    "q17_filtered_regular_or_often",
+    "q17_filtered_ever_used"
+  ),
+  q17_label = c(
+    "Count never heard",
+    "Count heard only",
+    "Count rarely use",
+    "Count sometimes use",
+    "Count often use",
+    "Count sometimes/often",
+    "Count ever used"
+  )
+)
+
+run_q17_filtered_corrs <- function(score_df, lookup_df, scoring_label) {
+  merged_df <- q17_filtered_counts |>
+    inner_join(score_df |> select(participant_id, all_of(lookup_df$factor)), by = "participant_id")
+
+  run_corr_grid(
+    merged_df,
+    q17_filtered_metric_lookup$q17_metric,
+    lookup_df$factor,
+    paste0("q17_filtered_counts_", scoring_label)
+  ) |>
+    rename(q17_metric = x, factor = y) |>
+    left_join(q17_filtered_metric_lookup, by = "q17_metric") |>
+    left_join(lookup_df, by = "factor") |>
+    mutate(scoring = scoring_label) |>
+    arrange(q17_metric, p_bh, desc(abs_rho))
+}
+
+q17_filtered_efa_corrs <- run_q17_filtered_corrs(
+  efa_bundle$scores,
+  efa_factor_lookup,
+  "EFA factor scores"
+)
+
+q17_filtered_composite_corrs <- run_q17_filtered_corrs(
+  composite_scores,
+  composite_lookup,
+  "Simple mean composites"
+)
+
+q17_filtered_corrs <- bind_rows(q17_filtered_efa_corrs, q17_filtered_composite_corrs)
+
+write_csv(q17_tool_summary, file.path(csv_dir, "Q17_Filtered_Tool_Summary.csv"))
+write_csv(tibble(tool = q17_retained_tools), file.path(csv_dir, "Q17_Filtered_Retained_Tools.csv"))
+write_csv(q17_filtered_corrs, file.path(csv_dir, "Q17_Filtered_Bucket_Counts_vs_Factors_EFA_Composite.csv"))
+
+q17_filtered_corrs |>
+  filter(q17_metric %in% c("q17_filtered_n_3", "q17_filtered_n_4", "q17_filtered_n_5")) |>
+  select(scoring, q17_label, instrument, display_label, n, rho, p, p_bh, p_bonf) |>
+  mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
+  arrange(scoring, q17_label, p_bh) |>
+  slice_head(n = 24) |>
+  kable(caption = "Filtered Q17 bucket-count correlations for used-tool response levels")
+```
+
+```{r q17-filtered-bucket-heatmap, fig.width=16, fig.height=7.5}
+q17_filtered_heat_metrics <- c(
+  "q17_filtered_n_3",
+  "q17_filtered_n_4",
+  "q17_filtered_n_5",
+  "q17_filtered_regular_or_often",
+  "q17_filtered_ever_used"
+)
+
+q17_filtered_heat_df <- q17_filtered_corrs |>
+  filter(q17_metric %in% q17_filtered_heat_metrics) |>
+  mutate(
+    q17_label = factor(
+      q17_label,
+      levels = q17_filtered_metric_lookup |>
+        filter(q17_metric %in% q17_filtered_heat_metrics) |>
+        pull(q17_label)
+    ),
+    display_label = factor(display_label, levels = rev(efa_factor_levels)),
+    scoring = factor(scoring, levels = c("EFA factor scores", "Simple mean composites")),
+    cell_label = case_when(
+      is.na(rho) ~ "",
+      TRUE ~ paste0(formatC(rho, format = "f", digits = 2), sig_suffix(p_bh, p_bonf))
+    )
+  )
+
+p_q17_filtered_compare <- plot_side_by_side_heatmap(
+  q17_filtered_heat_df,
+  x_col = "q17_label",
+  y_col = "display_label",
+  label_col = "cell_label",
+  facet_col = "scoring",
+  title = "Survey Factors x Q17 Filtered Bucket Counts: EFA vs Simple Mean Scoring",
+  subtitle = paste0(
+    "Retained ",
+    length(q17_retained_tools),
+    " tools with ever-used rate >= 10%; bucket scores are participant-level counts. * BH < .05; ** Bonferroni < .05"
+  ),
+  width = 16,
+  height = 7.5,
+  filename_base = "EFA_vs_Composite_Q17_Filtered_Bucket_Counts_Heatmap"
+)
+
+q17_filtered_diff <- q17_filtered_efa_corrs |>
+  select(q17_metric, factor, q17_label, display_label, efa_rho = rho, efa_p_bh = p_bh) |>
+  inner_join(
+    q17_filtered_composite_corrs |>
+      select(q17_metric, factor, composite_rho = rho, composite_p_bh = p_bh),
+    by = c("q17_metric", "factor")
+  ) |>
+  mutate(
+    rho_difference_composite_minus_efa = composite_rho - efa_rho,
+    abs_difference = abs(rho_difference_composite_minus_efa),
+    direction_change = sign(efa_rho) != sign(composite_rho)
+  ) |>
+  arrange(desc(abs_difference))
+
+write_csv(q17_filtered_diff, file.path(csv_dir, "EFA_vs_Composite_Q17_Filtered_Bucket_Count_Differences.csv"))
+
+p_q17_filtered_compare
 ```
 
 # Named Model Use vs Composites
@@ -676,6 +1534,21 @@ item_membership <- read_csv(composite_item_membership_file, show_col_types = FAL
     item_col = paste0(instrument, "_Q", item_id),
     item_header_base = str_squish(item_text),
     item_reference = paste0(instrument, " Q", item_id),
+    reverse_scoring_note = case_when(
+      instrument == "IMI" & item_id %in% imi_reverse_items ~
+        "reverse scored: 8 - raw score; IMI uses 1-7, so min + max = 8",
+      instrument == "BeliefsAboutAI" & item_id %in% beliefs_reverse_items ~
+        paste(
+          "reverse scored upstream as 6 - raw score because Beliefs uses 1-5",
+          "and min + max = 6"
+        ),
+      TRUE ~ NA_character_
+    ),
+    item_reference = if_else(
+      is.na(reverse_scoring_note),
+      item_reference,
+      paste0(item_reference, "\n(", reverse_scoring_note, ")")
+    ),
     item_header = paste0(item_header_base, "\n", item_reference)
   ) |>
   arrange(instrument_order, factor_num, item_id)
@@ -886,6 +1759,8 @@ item_color_legend <- item_membership |>
         "Shown on converted (x/25)+1 scale, not original 0-100 slider.",
       factor == "Beliefs_ConcernHarms" ~
         "Shown on higher concern/harms item scale (6 - upstream reverse-scored item), matching the composite orientation.",
+      !is.na(reverse_scoring_note) ~
+        paste0("Shown on scored item scale used for composite averaging; ", reverse_scoring_note, "."),
       TRUE ~ "Shown on the scored item scale used for composite averaging."
     )
   )
@@ -1225,13 +2100,30 @@ manifest <- tibble(
     "cross_composite_heatmap_matrix",
     "cross_composite_heatmap_png",
     "cross_composite_heatmap_pdf",
+    "efa_composite_cross_factor_difference_csv",
+    "efa_composite_cross_factor_heatmap_png",
+    "efa_composite_cross_factor_heatmap_pdf",
+    "composite_order_stratified_correlations",
+    "efa_composite_order_effects_long",
+    "efa_composite_order_effect_differences",
+    "efa_composite_beliefs_order_rho_diff_side_by_side_png",
+    "efa_composite_beliefs_order_rho_diff_side_by_side_pdf",
     "art_correlations",
     "art_net_ranked",
     "art_heatmap_png",
     "art_heatmap_pdf",
+    "efa_composite_art_difference_csv",
+    "efa_composite_art_heatmap_png",
+    "efa_composite_art_heatmap_pdf",
     "q17_correlations",
     "q17_heatmap_png",
     "q17_heatmap_pdf",
+    "q17_filtered_tool_summary",
+    "q17_filtered_retained_tools",
+    "q17_filtered_bucket_correlations",
+    "efa_composite_q17_filtered_difference_csv",
+    "efa_composite_q17_filtered_heatmap_png",
+    "efa_composite_q17_filtered_heatmap_pdf",
     "named_model_correlations",
     "named_model_heatmap_png",
     "named_model_heatmap_pdf",
@@ -1245,13 +2137,30 @@ manifest <- tibble(
     file.path(csv_dir, "Composite_Cross_Factor_Heatmap_Matrix.csv"),
     file.path(plot_dir, "Composite_Cross_Factor_Heatmap.png"),
     file.path(plot_dir, "Composite_Cross_Factor_Heatmap.pdf"),
+    file.path(csv_dir, "EFA_vs_Composite_Cross_Factor_Differences.csv"),
+    file.path(plot_dir, "EFA_vs_Composite_Cross_Factor_Heatmap.png"),
+    file.path(plot_dir, "EFA_vs_Composite_Cross_Factor_Heatmap.pdf"),
+    file.path(csv_dir, "Composite_Factor_Order_Stratified_Correlations.csv"),
+    file.path(csv_dir, "EFA_vs_Composite_Order_Effects_Long.csv"),
+    file.path(csv_dir, "EFA_vs_Composite_Order_Effect_Differences.csv"),
+    file.path(plot_dir, "EFA_vs_Composite_Beliefs_Order_Rho_Diff_SideBySide.png"),
+    file.path(plot_dir, "EFA_vs_Composite_Beliefs_Order_Rho_Diff_SideBySide.pdf"),
     file.path(csv_dir, "ART_vs_Composites_Correlations.csv"),
     file.path(csv_dir, "ART_Net_vs_Composites_Ranked.csv"),
     file.path(plot_dir, "ART_vs_Composites_Heatmap.png"),
     file.path(plot_dir, "ART_vs_Composites_Heatmap.pdf"),
+    file.path(csv_dir, "EFA_vs_Composite_ART_Differences.csv"),
+    file.path(plot_dir, "EFA_vs_Composite_ART_Heatmap.png"),
+    file.path(plot_dir, "EFA_vs_Composite_ART_Heatmap.pdf"),
     file.path(csv_dir, "Q17_AI_Use_vs_Composites_Correlations.csv"),
     file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.png"),
     file.path(plot_dir, "Q17_AI_Use_vs_Composites_Heatmap.pdf"),
+    file.path(csv_dir, "Q17_Filtered_Tool_Summary.csv"),
+    file.path(csv_dir, "Q17_Filtered_Retained_Tools.csv"),
+    file.path(csv_dir, "Q17_Filtered_Bucket_Counts_vs_Factors_EFA_Composite.csv"),
+    file.path(csv_dir, "EFA_vs_Composite_Q17_Filtered_Bucket_Count_Differences.csv"),
+    file.path(plot_dir, "EFA_vs_Composite_Q17_Filtered_Bucket_Counts_Heatmap.png"),
+    file.path(plot_dir, "EFA_vs_Composite_Q17_Filtered_Bucket_Counts_Heatmap.pdf"),
     file.path(csv_dir, "Named_Model_Use_vs_Composites_Correlations.csv"),
     file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.png"),
     file.path(plot_dir, "Named_Model_Use_vs_Composites_Heatmap.pdf"),
@@ -1265,13 +2174,30 @@ manifest <- tibble(
     "Full symmetric matrix for the composite x composite heatmap",
     "Heatmap of cross-instrument composite correlations",
     "PDF version of the cross-instrument composite heatmap",
-    "Spearman correlations between ART metrics and composite scores",
+    "Largest factor x factor rho differences between EFA factor scores and simple mean composites",
+    "Side-by-side EFA vs composite factor x factor heatmap",
+    "PDF version of the side-by-side EFA vs composite factor x factor heatmap",
+    "Simple mean composite factor x factor Spearman correlations split by order group with Fisher z-test",
+    "Long-format matched EFA vs composite factor x factor order-effect comparison",
+    "Wide-format matched EFA vs composite factor x factor order-effect differences",
+    "Side-by-side EFA vs composite plot of Traditional-first minus AI-first rho differences for exploratory Beliefs pairs",
+    "PDF version of side-by-side exploratory Beliefs order-difference plot",
+    "Spearman correlations between ART net, false alarms, real hits and composite scores",
     "ART net correlations ranked by absolute rho",
     "Heatmap of ART metrics vs composite scores",
     "PDF version of the ART vs composite heatmap",
+    "Largest ART rho differences between EFA factor scores and simple mean composites",
+    "Side-by-side EFA vs composite ART heatmap restricted to ART net, false alarms, and real hits",
+    "PDF version of the side-by-side EFA vs composite ART heatmap",
     "Spearman correlations between Q17 AI-use metrics and composite scores",
     "Heatmap of Q17 AI-use metrics vs composite scores",
     "PDF version of the Q17 vs composite heatmap",
+    "Tool-level Q17 prevalence and variance summary used for filtered bucket scoring",
+    "Tools retained for Q17 filtered bucket-count scoring",
+    "Filtered Q17 bucket-count correlations for EFA factor scores and simple mean composites",
+    "Largest filtered Q17 bucket-count rho differences between EFA factor scores and simple mean composites",
+    "Side-by-side EFA vs composite Q17 filtered bucket-count heatmap",
+    "PDF version of the side-by-side EFA vs composite Q17 filtered bucket-count heatmap",
     "Spearman correlations between named-model use and composite scores",
     "Heatmap of named-model use vs composite scores",
     "PDF version of the named-model use vs composite heatmap",
