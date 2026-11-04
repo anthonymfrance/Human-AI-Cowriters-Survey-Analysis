@@ -468,7 +468,7 @@ art_desc <- tibble(
   mean  = c(mean(art$art_net_real_minus_fake), mean(art$art_adjusted_rate)),
   sd    = c(sd(art$art_net_real_minus_fake), sd(art$art_adjusted_rate))
 )
-note("ART task performance (not self-report): net = ",
+note("Author Recognition Test (print exposure, not self-report): net = ",
      round(art_desc$mean[1], 3), " (SD ", round(art_desc$sd[1], 3), ")")
 
 # The ART outcome must not be a procedural artefact before it is used as an
@@ -570,18 +570,23 @@ attain <- cor_row(composites, "b_attainment", "b_intention") |>
          level = "single item", .before = 1) |>
   add_adjust()
 
-# Behavioral outcome: breaks the all-self-report confound. Family kept small
-# and declared up front (4 tests).
-banner("STAGE 7b  primary family D: task performance (ART) as outcome")
+# Author Recognition Test (ART): real authors mixed with foils, scored as
+# hits - false alarms. This is a print-exposure / domain-familiarity measure,
+# NOT an outcome of the AI manipulation and not a test of AI-output detection.
+# It is analysed here as a CONFOUND CHECK: if beliefs predict prior exposure,
+# the belief -> self-report associations are partly confounded by it.
+# It is flat across session order (checked above), which doubles as a
+# randomisation check.
+banner("STAGE 7b  family D: prior exposure (ART) as a confound check")
 
 prim_d <- bind_rows(lapply(c("b_knowledge", "b_value", "b_cost", "b_intention"), function(pred) {
   x <- composites
   x$art_out <- x$art_net_real_minus_fake
   cor_row(x, pred, "art_out") |>
-    mutate(predictor = pred, outcome = "art_net_real_minus_fake", level = "composite")
+    mutate(predictor = pred, outcome = "art_net_real_minus_fake (prior exposure)", level = "composite")
 })) |>
-  mutate(family = "D: predictors -> ART task performance (non-self-report)",
-         status = "primary", .before = 1) |>
+  mutate(family = "D: predictors -> prior exposure (ART, confound check)",
+         status = "confound check", .before = 1) |>
   add_adjust()
 
 print(as.data.frame(prim_d[, c("predictor", "estimate", "ci_low", "ci_high", "p", "p_bh")]),
