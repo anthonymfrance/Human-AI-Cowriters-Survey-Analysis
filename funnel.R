@@ -103,7 +103,8 @@ design <- read_csv(file.path(CFG$data_dir, "Condition_and_Topic.csv"), show_col_
   select(participant_id, sess_order = order, starts_with("condition_"), starts_with("topic_"))
 
 art <- read_csv(file.path(CFG$data_dir, "ART_Scored.csv"), show_col_types = FALSE) |>
-  select(participant_id, art_net_real_minus_fake, art_adjusted_rate)
+  select(participant_id, art_real_hits, art_fake_false_alarms,
+         art_net_real_minus_fake, art_adjusted_rate)
 
 n_items <- items |> count(instrument, name = "n_item_vars")
 note("items read:"); print(as.data.frame(n_items), row.names = FALSE)
@@ -470,6 +471,15 @@ art_desc <- tibble(
 )
 note("Author Recognition Test (print exposure, not self-report): net = ",
      round(art_desc$mean[1], 3), " (SD ", round(art_desc$sd[1], 3), ")")
+# The intended guessing correction is inert here: false alarms average well
+# under one, most participants record none, and net correlates ~1.0 with raw
+# hits. Report the score as a count of recognised authors, not as a corrected
+# detection measure.
+note("ART hits mean ", round(mean(art$art_real_hits, na.rm = TRUE), 2),
+     ", false alarms mean ", round(mean(art$art_fake_false_alarms, na.rm = TRUE), 2),
+     ", r(hits, net) = ",
+     round(suppressWarnings(cor(art$art_real_hits, art$art_net_real_minus_fake,
+                                use = "complete.obs")), 3))
 
 # The ART outcome must not be a procedural artefact before it is used as an
 # outcome: check that it is flat across session order and condition.
