@@ -49,21 +49,23 @@ old_tidy <- old_raw |>
             bh = survives_bh, bonf = survives_bonferroni, n = n)
 
 # ---------------------------------------------------------------- new matrix
-# Wording is taken from the `source` and `direction` columns of
-# funnel_out/01_scoring_manifest.csv, so these are the instrument's own
-# subscale names and not a relabelling of the old EFA factors.
+# Labels carry the old factor names over. Verified: every old factor's clean-item
+# set nests inside exactly one of these composites (IMI F1 = 7/7, F2 = 5/5,
+# F3 = 5/6; WSE F1 = 7/11, F2 = 5/7, F3 = 3/5), so the name still describes the
+# same items plus whatever the clean-item rule had discarded. Beliefs F1-F3 keep
+# their names too, with the item-6 move noted. Knowledge has no counterpart.
 new_labels <- c(
-  b_knowledge  = "Beliefs - knowledge (5 items)",
-  b_value      = "Beliefs - value (11 items)",
-  b_cost       = "Beliefs - cost / concern (4 items)",
-  b_intention  = "Beliefs - intention (2 items)",
-  i_interest   = "IMI - interest / enjoyment (7 items)",
-  i_competence = "IMI - perceived competence (6 items)",
-  i_effort     = "IMI - effort (5 items)",
-  w_process    = "WritingEfficacy - process knowledge (11)",
-  w_physical   = "WritingEfficacy - fewer barriers (7)",
-  w_timeeffort = "WritingEfficacy - time / effort (5)",
-  a_total      = "AIReflection - appraisal total (12)"
+  i_interest   = "IMI F1 - Interest & Enjoyment (7)",
+  i_effort     = "IMI F2 - Effort & Importance (5)",
+  i_competence = "IMI F3 - Perceived Competence (6)",
+  w_process    = "WSE F1 - Writing Competence (11)",
+  w_physical   = "WSE F2 - Self-Regulation (7)",
+  w_timeeffort = "WSE F3 - Resource & Planning (5)",
+  a_total      = "AIRef F1+F2 - Appraisal total (12)",
+  b_value      = "Beliefs F1 - Utility & Comfort (11)",
+  b_intention  = "Beliefs F2 - Future AI Orientation (2)",
+  b_cost       = "Beliefs F3 - Concern & Harms (4)",
+  b_knowledge  = "Beliefs - Knowledge (5)  [no old counterpart]"
 )
 
 # w_total is the sum of the three WSE subscales and b_attainment is item 6,
@@ -78,17 +80,36 @@ new_tidy <- read_csv(new_path, show_col_types = FALSE) |>
             bh = survives_bh, bonf = survives_bonf, n = n)
 
 # ---------------------------------------------------------------- plotting
+# Build the lower triangle from the canonical order rather than trusting the
+# row order of the CSV, so both panels use the same layout: first variable at
+# top-left, each cell below the diagonal.
 to_tiles <- function(d, labels_wide, order_vec) {
-  lab <- setNames(labels_wide$label[match(order_vec, labels_wide$var)], order_vec)
-  d |>
+  lab  <- setNames(labels_wide$label[match(order_vec, labels_wide$var)], order_vec)
+  n    <- length(order_vec)
+  pick <- function(a, b, col) {
+    hit <- which((d$var1 == a & d$var2 == b) | (d$var1 == b & d$var2 == a))
+    if (length(hit) == 0) return(NA)
+    d[[col]][hit[1]]
+  }
+  grid <- expand.grid(row_i = seq_len(n), col_i = seq_len(n)) |>
+    filter(row_i > col_i) |>
     mutate(
-      lab1 = lab[var1],
-      lab2 = lab[var2],
-      x = factor(lab2, levels = rev(unname(lab))),
-      y = factor(lab1, levels = unname(lab)),
-      star = case_when(bonf  ~ "**", bh ~ "*", TRUE ~ ""),
+      a = order_vec[col_i],
+      b = order_vec[row_i],
+      rho  = mapply(pick, a, b, MoreArgs = list(col = "rho")),
+      bh   = mapply(pick, a, b, MoreArgs = list(col = "bh")),
+      bonf = mapply(pick, a, b, MoreArgs = list(col = "bonf")),
+      n_obs = mapply(pick, a, b, MoreArgs = list(col = "n")),
+      n = n_obs,
+      lab1 = lab[a],
+      lab2 = lab[b],
+      x = factor(lab1, levels = unname(lab)),
+      y = factor(lab2, levels = rev(unname(lab))),
+      star = case_when(bonf ~ "**", bh ~ "*", TRUE ~ ""),
       cell = paste0(sprintf("%.2f", rho), star)
     )
+  attr(grid, "n_vars") <- n
+  grid
 }
 
 tile_plot <- function(d, title, subtitle) {
@@ -121,10 +142,13 @@ new_tiles <- to_tiles(
   names(new_labels)
 )
 
+# every cell must be populated: an NA here would mean the pair is missing
+stopifnot(!anyNA(old_tiles$rho), !anyNA(new_tiles$rho))
+
 p_old <- tile_plot(old_tiles, "Old pipeline: 11 composites",
                    "Beliefs enters as three factors from items 6-22; no knowledge block")
-p_new <- tile_plot(new_tiles, "Funnel: 11 composites",
-                   "Beliefs enters as the four source scales; IMI and WritingEfficacy as source subscales")
+p_new <- tile_plot(new_tiles, "Funnel: 11 composites, same names",
+                   "Brackets are item counts. Same items as the old factor, plus what the clean-item rule had dropped")
 
 fig <- p_old / p_new +
   plot_layout(guides = "collect") +
@@ -132,10 +156,11 @@ fig <- p_old / p_new +
     title    = "Cross-instrument composite correlations, old pipeline vs funnel",
     subtitle = "* BH < .05; ** Bonferroni < .05. Diagonal omitted. Labels are the pipeline's own.",
     caption  = paste0(
-      "Old matrix: 3 pairs at n = 91 (Beliefs block), 52 at n = 82.  ",
-      "New matrix: all pairs at n = 82.\n",
-      "WSE total and the single attainment item are omitted here because each ",
-      "duplicates a composite already shown; both are in 09_composite_correlations.csv."
+      "Old matrix: 3 pairs at n = 91 (Beliefs block), 52 at n = 82.  New matrix: all pairs at n = 82.\n",
+      "Every old factor nests inside exactly one new composite. Added items: WSE F1 4/6/7/16, WSE F2 13/19, ",
+      "WSE F3 3/10, IMI F3 13, Beliefs F1 item 6.\n",
+      "AIRef's two factors are now one 12-item total. WSE total and the single attainment item are in ",
+      "09_composite_correlations.csv but not plotted: each duplicates a composite already shown."
     ),
     theme = theme(
       plot.title    = element_text(size = 13, face = "bold"),
