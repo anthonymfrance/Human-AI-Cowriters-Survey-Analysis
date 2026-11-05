@@ -765,6 +765,40 @@ findings <- bind_rows(
 write_csv(findings, file.path(CFG$out_dir, "FINDINGS.csv"))
 write_csv(item_family_summary, file.path(CFG$out_dir, "04_item_family_summary.csv"))
 
+# =============================================================================
+# STAGE 11b.  COMPOSITE x COMPOSITE MATRIX
+# FINDINGS carries a curated pair list. This is the full matrix, which is what a
+# reader checks for discriminant validity across instruments.
+# =============================================================================
+
+banner("STAGE 11b  composite x composite matrix")
+
+comp_ids <- manifest$scale
+comp_df  <- composites |> select(all_of(comp_ids))
+instrument_of <- setNames(manifest$instrument, manifest$scale)
+
+comp_cors <- bind_rows(lapply(combn(comp_ids, 2, simplify = FALSE), function(pr) {
+  cor_row(comp_df, pr[1], pr[2]) |>
+    mutate(var1 = pr[1], var2 = pr[2],
+           instrument_1 = instrument_of[[pr[1]]],
+           instrument_2 = instrument_of[[pr[2]]],
+           .before = 1)
+})) |>
+  mutate(family = "composite x composite (all pairs)") |>
+  add_adjust()
+
+write_csv(comp_cors, file.path(CFG$out_dir, "09_composite_correlations.csv"))
+
+comp_mat <- cor(comp_df, method = "spearman", use = "pairwise.complete.obs")
+write_csv(
+  as.data.frame(comp_mat) |> tibble::rownames_to_column("composite"),
+  file.path(CFG$out_dir, "09_composite_matrix.csv")
+)
+
+note("composite matrix: ", nrow(comp_cors), " pairs; ",
+     sum(comp_cors$survives_bh), " survive BH; ",
+     sum(comp_cors$survives_bonf), " survive Bonferroni")
+
 cat("\n")
 print(as.data.frame(findings |> select(family, predictor, outcome, estimate, n, p_bh, verdict)),
       digits = 3, row.names = FALSE)
