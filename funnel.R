@@ -431,9 +431,19 @@ write_csv(item_diagnostics, file.path(CFG$out_dir, "02_item_diagnostics.csv"))
 # Beliefs loadings, printed because the factor-to-item mapping drives everything
 b_load <- item_diag_rows[["Beliefs_loadings"]]
 if (!is.null(b_load)) {
+  # persist the matrix: the factor-to-item map is the object every downstream
+  # stage depends on, so it has to be inspectable outside the console log.
+  b_load <- b_load |>
+    left_join(
+      item_diagnostics |> filter(instrument == "Beliefs") |> select(item, item_text),
+      by = "item"
+    ) |>
+    relocate(item, item_text) |>
+    arrange(item)
   note("Beliefs 4-factor loadings (source-k, oblimin, cost block oriented as concern):")
-  print(b_load |> arrange(item), digits = 2, row.names = FALSE)
+  print(b_load, digits = 2, row.names = FALSE)
   note("source constructs: knowledge Q2-Q6, value Q7-Q17, cost Q18-Q21, intention Q22-Q23")
+  write_csv(b_load, file.path(CFG$out_dir, "08_beliefs_loadings.csv"))
 }
 
 # =============================================================================
