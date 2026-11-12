@@ -27,3 +27,6 @@
 
 /.quarto/
 **/*.quarto_ipynb
+
+# Tony scratch experiments (not part of the pipeline)
+/tony experiments/

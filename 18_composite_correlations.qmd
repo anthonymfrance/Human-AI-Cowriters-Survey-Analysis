@@ -337,13 +337,15 @@ composite_corr_diag <- tibble(
     by = "factor_y"
   )
 
+# rename() resolves every swap against the original column names, so each
+# unordered pair is mirrored without collapsing factor_x and factor_y onto the
+# same factor (which transmute() would do, since it assigns sequentially).
 composite_corr_heat <- bind_rows(
   composite_corr_unique,
   composite_corr_unique |>
-    transmute(
+    rename(
       factor_x = factor_y,
       factor_y = factor_x,
-      rho, p, n, abs_rho, p_bh, p_bonf, survives_bh, survives_bonferroni,
       instrument_x = instrument_y,
       instrument_y = instrument_x,
       label_x = label_y,
@@ -361,6 +363,10 @@ write_csv(
   file.path(csv_dir, "Composite_Cross_Factor_Heatmap_Matrix.csv")
 )
 
+# The exported matrix is square and symmetric for reuse; the heatmaps plot each
+# unordered pair once so the figures keep their single-triangle layout.
+composite_corr_triangle <- bind_rows(composite_corr_unique, composite_corr_diag)
+
 composite_corr_unique |>
   mutate(across(c(rho, p, p_bh, p_bonf), ~ round(.x, 4))) |>
   slice_head(n = 20) |>
@@ -368,7 +374,7 @@ composite_corr_unique |>
 ```
 
 ```{r cross-composite-heatmap, fig.width=12, fig.height=9}
-cross_heat_df <- composite_corr_heat |>
+cross_heat_df <- composite_corr_triangle |>
   mutate(
     label_x = factor(label_x, levels = factor_levels),
     label_y = factor(label_y, levels = rev(factor_levels)),
@@ -434,11 +440,18 @@ efa_factor_levels <- efa_factor_lookup$display_label
 efa_cross_heat <- read_csv(efa_cross_factor_file, show_col_types = FALSE) |>
   mutate(scoring = "EFA factor scores")
 
-composite_cross_heat_compare <- composite_corr_heat |>
+# One row per unordered pair so both facets match the single-triangle layout.
+# match() orders by the factor lookup rather than by string comparison.
+efa_cross_triangle <- efa_cross_heat |>
+  filter(
+    match(factor_x, efa_factor_cols) <= match(factor_y, efa_factor_cols)
+  )
+
+composite_cross_heat_compare <- composite_corr_triangle |>
   mutate(scoring = "Simple mean composites")
 
 cross_compare_df <- bind_rows(
-  efa_cross_heat,
+  efa_cross_triangle,
   composite_cross_heat_compare
 ) |>
   mutate(
@@ -466,7 +479,9 @@ p_cross_compare <- plot_side_by_side_heatmap(
 )
 
 efa_unique_for_diff <- efa_cross_heat |>
-  filter(factor_x < factor_y) |>
+  filter(
+    match(factor_x, efa_factor_cols) < match(factor_y, efa_factor_cols)
+  ) |>
   transmute(
     factor_x,
     factor_y,
@@ -494,6 +509,17 @@ cross_scoring_diff <- efa_unique_for_diff |>
     direction_change = sign(efa_rho) != sign(composite_rho)
   ) |>
   arrange(desc(abs_difference))
+
+expected_pair_count <- length(efa_factor_cols) * (length(efa_factor_cols) - 1L) / 2L
+if (nrow(cross_scoring_diff) != expected_pair_count) {
+  stop(
+    sprintf(
+      "EFA vs composite difference table has %d factor pairs; expected %d.",
+      nrow(cross_scoring_diff), expected_pair_count
+    ),
+    call. = FALSE
+  )
+}
 
 write_csv(cross_scoring_diff, file.path(csv_dir, "EFA_vs_Composite_Cross_Factor_Differences.csv"))
 
@@ -989,6 +1015,131 @@ ggsave(
 )
 
 p_art_heat
+```
+
+# ART vs AI-Attitude and AI-Reflection Composites: Scatterplots
+
+This is the participant-level view behind the ART heatmap row. The two
+`BeliefsAboutAI` panels are AI **attitudes**; the third panel adds AIReflection
+F1 (Ownership & Usefulness), which is an AI **reflection** factor rather than an
+attitude and is labelled and coloured separately.
+
+Only composites that survive BH correction are plotted. Concern & Harms
+(rho = 0.08, BH p = 0.686) is null and is therefore left out of the figure; it
+is still reported in the correlation table and ART heatmap above.
+
+```{r art-scatter-panels, fig.width=12, fig.height=5.2}
+panel_lookup <- composite_lookup |>
+  filter(instrument %in% c("BeliefsAboutAI", "AIReflection")) |>
+  mutate(
+    instrument_label = if_else(
+      instrument == "BeliefsAboutAI",
+      "Beliefs (attitude)",
+      "AIReflection (reflection)"
+    )
+  )
+
+panel_stats <- art_corrs |>
+  filter(
+    art_metric == "art_net_real_minus_fake",
+    factor %in% panel_lookup$factor,
+    survives_bh | factor == "AIRefl_MR1"
+  ) |>
+  left_join(
+    panel_lookup |> select(factor, instrument_label),
+    by = "factor"
+  ) |>
+  arrange(rho) |>
+  mutate(
+    facet_label = paste0(
+      instrument_label, ": ", proposed_name,
+      "\nrho = ", formatC(rho, format = "f", digits = 2),
+      ", BH p = ", formatC(p_bh, format = "f", digits = 3),
+      ", n = ", n
+    )
+  )
+
+panel_plot_df <- art_df |>
+  select(participant_id, art_net_real_minus_fake, all_of(panel_stats$factor)) |>
+  pivot_longer(
+    cols = all_of(panel_stats$factor),
+    names_to = "factor",
+    values_to = "composite_score"
+  ) |>
+  filter(!is.na(composite_score), !is.na(art_net_real_minus_fake)) |>
+  left_join(
+    panel_stats |> select(factor, instrument_label, facet_label),
+    by = "factor"
+  ) |>
+  mutate(facet_label = factor(facet_label, levels = panel_stats$facet_label))
+
+p_panel_scatter <- ggplot(
+  panel_plot_df,
+  aes(x = composite_score, y = art_net_real_minus_fake)
+) +
+  geom_hline(yintercept = 0, color = "#d9d9d9", linewidth = 0.5) +
+  geom_jitter(
+    aes(color = instrument_label),
+    width = 0.05,
+    height = 0.15,
+    alpha = 0.6
+  ) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c96b3b", linewidth = 0.9) +
+  facet_wrap(~ facet_label, nrow = 1) +
+  scale_color_manual(
+    values = c(
+      "Beliefs (attitude)" = pal[["BeliefsAboutAI"]],
+      "AIReflection (reflection)" = pal[["AIReflection"]]
+    ),
+    name = NULL
+  ) +
+  labs(
+    title = "ART Net Score vs AI-Attitude and AI-Reflection Composites",
+    subtitle = paste(
+      "Unit-weighted mean composites.",
+      "Beliefs panels are attitudes toward AI;",
+      "the AIReflection panel is reflection on AI use.",
+      "\nPanels ordered by Spearman rho."
+    ),
+    x = "Composite score (higher = more of the attitude or reflection)",
+    y = "ART net score",
+    caption = str_wrap(
+      paste(
+        "ART net = real-author hits minus fake-author false alarms.",
+        "AIReflection F1 (Ownership & Usefulness) is a reflection factor and is",
+        "not an AI attitude. Line is an OLS fit; reported rho and BH-adjusted p are Spearman."
+      ),
+      width = 115
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 9, lineheight = 1.05),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.text = element_text(size = 9),
+    plot.caption = element_text(size = 9, color = "#7a7a7a", hjust = 0)
+  )
+
+ggsave(
+  file.path(plot_dir, "ART_Net_vs_Attitude_Reflection_Composites_Scatter.png"),
+  p_panel_scatter,
+  width = 12,
+  height = 5.2,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+ggsave(
+  file.path(plot_dir, "ART_Net_vs_Attitude_Reflection_Composites_Scatter.pdf"),
+  p_panel_scatter,
+  width = 12,
+  height = 5.2,
+  units = "in",
+  bg = "white"
+)
+
+p_panel_scatter
 ```
 
 # EFA vs Composite: ART Anchors

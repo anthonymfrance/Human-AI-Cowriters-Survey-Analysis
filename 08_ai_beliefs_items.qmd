@@ -52,12 +52,12 @@ likert_labels  <- c(
   "5" = "Strongly Agree"
 )
 
-# Analysis-column indices of reverse-scored items (Beliefs_16 through Beliefs_19).
-# These correspond to Qualtrics items 17-20; the screening item was excluded
-# upstream, shifting the numbering by one. Reverse-scoring is already applied
-# by score_beliefs_items() in scoring_helpers.R (which uses original Qualtrics
-# numbers 17-20). Do NOT call score_beliefs_items() with these column indices.
-beliefs_reversed_analysis_cols <- c(16L, 17L, 18L, 19L)
+# Item numbers here are the BeliefsAboutAI item_num values in the analysis export,
+# which run 1-22 over the 22 belief statements. Items 17-20 are the four
+# concern/harm statements and are the only reverse-scored Beliefs items.
+# Reverse-scoring is already applied upstream by score_beliefs_items() in
+# scoring_helpers.R with these same item numbers. Do NOT re-apply it here.
+beliefs_reversed_analysis_cols <- c(17L, 18L, 19L, 20L)
 
 # Screening item ("I have used generative AI...") was excluded upstream by
 # score_beliefs_items() — it does not appear in master_wide. All 22 Beliefs_
@@ -71,8 +71,8 @@ n_beliefs_items <- 22L
 
 ```{r item-metadata}
 # ── Item text ─────────────────────────────────────────────────────────────────
-# Beliefs_1 = Qualtrics Q2: screening item ("I have used generative AI...")
-# was excluded upstream by score_beliefs_items(). item_text starts at Q3 = Beliefs_1.
+# item_num 1 = the first belief statement below; the screening question
+# ("I have used generative AI...") is not part of this numbered series.
 item_text <- c(
   "I understand generative AI technologies like ChatGPT have limitations in their ability to handle complex tasks",
   "I understand generative AI technologies like ChatGPT can generate output that is factually inaccurate",

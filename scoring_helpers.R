@@ -1,7 +1,6 @@
 # Shared reverse-scoring rules for analysis-ready survey outputs.
-# NOTE: item numbers here are original Qualtrics numbers (including screening item).
-# Screening item excluded upstream in 01_audit_cleaning.qmd before Final_Master_Wide.csv
-# is written — Qualtrics items 17-20 map to analysis columns Beliefs_16 through Beliefs_19.
+# NOTE: item numbers are the item_num values in the analysis export, which run 1-22
+# over the 22 belief statements. Items 17-20 are the four concern/harm statements.
 # Reversal is applied once in 01_audit_cleaning.qmd. Do NOT re-reverse in downstream scripts.
 
 imi_reverse_items <- c(3L, 4L, 13L, 15L, 18L)

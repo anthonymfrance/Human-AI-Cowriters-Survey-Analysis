@@ -49,17 +49,18 @@ old_tidy <- old_raw |>
             bh = survives_bh, bonf = survives_bonferroni, n = n)
 
 # ---------------------------------------------------------------- new matrix
-# Labels carry the old factor names over. Verified: every old factor's clean-item
-# set nests inside exactly one of these composites (IMI F1 = 7/7, F2 = 5/5,
-# F3 = 5/6; WSE F1 = 7/11, F2 = 5/7, F3 = 3/5), so the name still describes the
-# same items plus whatever the clean-item rule had discarded. Beliefs F1-F3 keep
-# their names too, with the item-6 move noted. Knowledge has no counterpart.
+# Labels carry the old factor names over. IMI and WSE F1 nest inside one
+# composite each (IMI F1 = 7/7, F2 = 5/5, F3 = 5/6; WSE F1 = 7/13). The WSE
+# detail groups now give each item one group (authors' reassignments), so old
+# WSE F2 (8,10,14,15,17) only partly overlaps w_physical (8,14,17) and old F3
+# (2,19,20) sits inside w_timeeffort (2,3,10,19,20). Beliefs F1-F3 keep their
+# names too. Knowledge has no counterpart.
 new_labels <- c(
   i_interest   = "IMI F1 - Interest & Enjoyment (7)",
   i_effort     = "IMI F2 - Effort & Importance (5)",
   i_competence = "IMI F3 - Perceived Competence (6)",
-  w_process    = "WSE F1 - Writing Competence (11)",
-  w_physical   = "WSE F2 - Self-Regulation (7)",
+  w_process    = "WSE F1 - Writing Competence (13)",
+  w_physical   = "WSE F2 - Self-Regulation (3, partial overlap)",
   w_timeeffort = "WSE F3 - Resource & Planning (5)",
   a_total      = "AIRef F1+F2 - Appraisal total (12)",
   b_value      = "Beliefs F1 - Utility & Comfort (11)",
@@ -74,10 +75,22 @@ new_labels <- c(
 # figure (and stay in 09_composite_correlations.csv).
 part_whole <- c("w_total", "b_attainment")
 
-new_tidy <- read_csv(new_path, show_col_types = FALSE) |>
-  filter(!var1 %in% part_whole, !var2 %in% part_whole) |>
+new_tests <- read_csv(new_path, show_col_types = FALSE) |>
   transmute(var1, var2, rho = estimate,
             bh = survives_bh, bonf = survives_bonf, n = n)
+# The funnel tests only cross-instrument pairs; within-instrument cells come
+# from the full matrix and carry no significance marker.
+new_within <- read_csv(file.path(root, "funnel_out", "09_composite_matrix.csv"),
+                       show_col_types = FALSE) |>
+  pivot_longer(-composite, names_to = "var2", values_to = "rho") |>
+  rename(var1 = composite) |>
+  filter(var1 < var2) |>
+  anti_join(bind_rows(new_tests |> select(var1, var2),
+                      new_tests |> select(var1 = var2, var2 = var1)),
+            by = c("var1", "var2")) |>
+  mutate(bh = FALSE, bonf = FALSE, n = 82L)
+new_tidy <- bind_rows(new_tests, new_within) |>
+  filter(!var1 %in% part_whole, !var2 %in% part_whole)
 
 # ---------------------------------------------------------------- plotting
 # Build the lower triangle from the canonical order rather than trusting the
@@ -148,7 +161,7 @@ stopifnot(!anyNA(old_tiles$rho), !anyNA(new_tiles$rho))
 p_old <- tile_plot(old_tiles, "Old pipeline: 11 composites",
                    "Beliefs enters as three factors from items 6-22; no knowledge block")
 p_new <- tile_plot(new_tiles, "Funnel: 11 composites, same names",
-                   "Brackets are item counts. Same items as the old factor, plus what the clean-item rule had dropped")
+                   "Brackets are item counts. Unstarred within-survey cells are not tests in the funnel")
 
 fig <- p_old / p_new +
   plot_layout(guides = "collect") +
@@ -157,10 +170,9 @@ fig <- p_old / p_new +
     subtitle = "* BH < .05; ** Bonferroni < .05. Diagonal omitted. Labels are the pipeline's own.",
     caption  = paste0(
       "Old matrix: 3 pairs at n = 91 (Beliefs block), 52 at n = 82.  New matrix: all pairs at n = 82.\n",
-      "Every old factor nests inside exactly one new composite. Added items: WSE F1 4/6/7/16, WSE F2 13/19, ",
-      "WSE F3 3/10, IMI F3 13, Beliefs F1 item 6.\n",
-      "AIRef's two factors are now one 12-item total. WSE total and the single attainment item are in ",
-      "09_composite_correlations.csv but not plotted: each duplicates a composite already shown."
+      "IMI and WSE F1/F3 factors nest inside one new composite; WSE F2 only partly overlaps (8, 14, 17 of 8, 10, 14, 15, 17).\n",
+      "AIRef is shown as its 12-item total for comparison; the funnel's headline uses process (1-3) and product (4-12).\n",
+      "WSE total and the value facets are in 09_composite_correlations.csv but not plotted: each duplicates a composite already shown."
     ),
     theme = theme(
       plot.title    = element_text(size = 13, face = "bold"),

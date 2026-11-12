@@ -423,13 +423,15 @@ factor_corr_diag <- tibble(
     by = "factor_y"
   )
 
+# rename() resolves every swap against the original column names, so each
+# unordered pair is mirrored without collapsing factor_x and factor_y onto the
+# same factor (which transmute() would do, since it assigns sequentially).
 factor_corr_heat <- bind_rows(
   factor_corr_unique,
   factor_corr_unique |>
-    transmute(
+    rename(
       factor_x = factor_y,
       factor_y = factor_x,
-      rho, p, n, abs_rho, p_bh, p_bonf, survives_bh, survives_bonferroni,
       instrument_x = instrument_y,
       instrument_y = instrument_x,
       label_x = label_y,
@@ -440,6 +442,10 @@ factor_corr_heat <- bind_rows(
 
 write_csv(factor_corr_unique, file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Correlations_Unique.csv"))
 write_csv(factor_corr_heat, file.path(csv_dir, "Beliefs_Exploratory_Cross_Factor_Heatmap_Matrix.csv"))
+
+# The exported matrix is square and symmetric for reuse; the heatmap plots each
+# unordered pair once so the figure keeps its single-triangle layout.
+factor_corr_triangle <- bind_rows(factor_corr_unique, factor_corr_diag)
 
 factor_corr_unique |>
   filter(instrument_x == "BeliefsAboutAI" | instrument_y == "BeliefsAboutAI") |>
@@ -464,7 +470,7 @@ factor_levels <- all_factor_lookup |>
   arrange(instrument_order, factor_num) |>
   pull(display_label)
 
-factor_heat_plot_df <- factor_corr_heat |>
+factor_heat_plot_df <- factor_corr_triangle |>
   mutate(
     label_x = factor(label_x, levels = factor_levels),
     label_y = factor(label_y, levels = rev(factor_levels)),
