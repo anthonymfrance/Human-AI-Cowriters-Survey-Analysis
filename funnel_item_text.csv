@@ -1,0 +1,73 @@
+instrument,item,item_text
+Beliefs,1,I understand generative AI technologies like ChatGPT have limitations in their ability to handle complex tasks.
+Beliefs,2,I understand generative AI technologies like ChatGPT can generate output that is factually inaccurate.
+Beliefs,3,I understand generative AI technologies like ChatGPT can generate output that is out of context or inappropriate.
+Beliefs,4,I understand generative AI technologies like ChatGPT can exhibit biases and unfairness in their output.
+Beliefs,5,"I understand generative AI technologies like ChatGPT have limited emotional intelligence and empathy, which can lead to output that is insensitive or inappropriate."
+Beliefs,6,Students must learn how to use generative AI technologies well for their career.
+Beliefs,7,I believe generative AI technologies such as ChatGPT can improve my digital competence.
+Beliefs,8,I believe generative AI technologies such as ChatGPT can improve my overall academic performance.
+Beliefs,9,I think generative AI technologies such as ChatGPT can help me become a better writer.
+Beliefs,10,I can ask questions to generative AI technologies such as ChatGPT that I would otherwise not voice out to my teacher.
+Beliefs,11,"Generative AI technologies such as ChatGPT will not judge me, so I feel comfortable with it."
+Beliefs,12,I think AI technologies such as ChatGPT is a great tool for student support services due to anonymity.
+Beliefs,13,I believe generative AI technologies such as ChatGPT can help me save time.
+Beliefs,14,I believe AI technologies such as ChatGPT can provide me with unique insights and perspectives that I may not have thought of myself.
+Beliefs,15,I think AI technologies such as ChatGPT can provide me with personalized and immediate feedback and suggestions for my assignments.
+Beliefs,16,I think AI technologies such as ChatGPT is a great tool as it is available 24/7.
+Beliefs,17,Using generative AI technologies such as ChatGPT to complete assignments undermines the value of a university education.
+Beliefs,18,Generative AI technologies such as ChatGPT will limit my opportunities to interact with others and socialize while completing coursework.
+Beliefs,19,"Generative AI technologies such as ChatGPT will hinder my development of generic or transferable skills such as teamwork, problem-solving, and leadership skills."
+Beliefs,20,I can become over-reliant on generative AI technologies.
+Beliefs,21,The integration of generative AI technologies like ChatGPT in higher education will have a positive impact on teaching and learning in the long run.
+Beliefs,22,I envision integrating generative AI technologies like ChatGPT into my teaching and learning practices in the future.
+IMI,1,I enjoyed doing this activity very much
+IMI,2,This activity was fun to do.
+IMI,3,I thought this was a boring activity.
+IMI,4,This activity did not hold my attention at all.
+IMI,5,I would describe this activity as very interesting.
+IMI,6,I thought this activity was quite enjoyable.
+IMI,7,"While I was doing this activity, I was thinking about how much I enjoyed it."
+IMI,8,I think I am pretty good at this activity.
+IMI,9,"I think I did pretty well at this activity, compared to other students."
+IMI,10,"After working at this activity for awhile, I felt pretty competent."
+IMI,11,I am satisfied with my performance at this task.
+IMI,12,I was pretty skilled at this activity.
+IMI,13,This was an activity that I couldn't do very well.
+IMI,14,I put a lot of effort into this.
+IMI,15,I didn't try very hard to do well at this activity.
+IMI,16,I tried very hard on this activity.
+IMI,17,It was important to me to do well at this task.
+IMI,18,I didn't put much energy into this.
+WSE,1,"I can identify incomplete, or fragment sentences."
+WSE,2,I can invest a great deal of effort and time in writing a paper when I know the paper will earn a grade.
+WSE,3,I can articulate my strengths and challenges as a writer.
+WSE,4,I can find and incorporate appropriate evidence to support important points in my papers.
+WSE,5,I can be recognized by others as a strong writer.
+WSE,6,"When I read a rough draft, I can identify gaps when they are present in the paper."
+WSE,7,I can maintain a sense of who my audience is as I am writing a paper.
+WSE,8,"I can write a paper without feeling physical discomfort (e.g., headaches, stomach-aches, back-aches, insomnia, muscle tension, nausea, and/or crying)."
+WSE,9,"When I read drafts written by classmates, I can provide them with valuable feedback."
+WSE,10,"When I have a pressing deadline for a paper, I can manage my time efficiently."
+WSE,11,I can attribute my success on writing projects to my writing abilities more than external forces.
+WSE,12,"When a student who is similar to me receives praise and/or a good grade on a paper, I know I can write a paper worthy of praise and/or a good grade."
+WSE,13,"Once I have completed a draft, I can eliminate both small and large sections that are no longer necessary."
+WSE,14,I can write a paper without experiencing overwhelming feelings of fear or distress.
+WSE,15,"When writing papers for different courses (for example, Biology, English, and Philosophy classes), I can adjust my writing to meet the expectations of each discipline."
+WSE,16,I can map out the structure and main sections of an essay before writing the first draft.
+WSE,17,"I can find ways to concentrate when I am writing, even when there are many distractions around me."
+WSE,18,I can find and correct my grammatical errors.
+WSE,19,I can find and use resources that help me with my writing.
+WSE,20,I can learn new strategies that promote my development and success as a writer.
+AIRef,1,I was satisfied with the summarization process.
+AIRef,2,I enjoyed the process.
+AIRef,3,I found it easy to complete the process.
+AIRef,4,This summarization process helped me understand the material better.
+AIRef,5,I feel like I learned something about using LLMs for reading and writing assignments.
+AIRef,6,I would use this summarization process again on my own.
+AIRef,7,I feel like I was able to express myself.
+AIRef,8,I am satisfied with the final summary.
+AIRef,9,I feel ownership over the final summary.
+AIRef,10,I am proud of the final summary.
+AIRef,11,The final summary sounds like my writing.
+AIRef,12,The final summary would be helpful for me to study from if I were to take an exam on this material in a real class.

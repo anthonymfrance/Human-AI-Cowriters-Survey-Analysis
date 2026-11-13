@@ -4,6 +4,31 @@ This repository contains the numbered analysis pipeline for the Cowriters crosso
 
 This README is written for a public audience. It explains what each script does, what it depends on, and where its outputs are written. It does not interpret the findings or recommend conclusions.
 
+The repository holds two analysis pipelines:
+
+- **Funnel analysis (current):** `funnel.R` and `funnel_report.qmd`. Each survey is scored the way its source paper scored it, using unit-weighted item means, and its structure is checked with CFA where a published structure exists and EFA where it does not. See [Funnel Analysis](#funnel-analysis-current) and `ANALYSIS_PLAN.md`.
+- **Numbered pipeline (original, exploratory):** scripts `01`-`18` and `results.qmd`. Structures came from this sample's EFA, scored first with factor scores and later with composite means. It is still the source of the cleaned data, Q17, ART and order-effect outputs.
+
+## Project History
+
+- **May-June 2026:** numbered scripts `01`-`16`. Polychoric EFA with parallel analysis and a KMO gate (below .50 = not factorable). Beliefs about AI failed the gate, so it was analyzed item by item, then as an exploratory 3-factor EFA of items 6-22 (script `16`).
+- **July 2026:** composite means replace factor scores (scripts `17`-`18`); `render_all.sh` added.
+- **November 2026:** the source papers were reviewed. The Beliefs KMO failure turned out to come from a non-positive-definite polychoric matrix (Knowledge items at ceiling); Pearson KMO is .81 and Chan & Zhou's CFAs fit. The funnel re-scores every survey by its source paper and keeps every item. `explain/` compares the old and new scores.
+- **Audit (Nov 13, 2026):** see [Corrections](#corrections). The git tag `pre-audit-2026-11` marks the code as it was before these fixes.
+
+## Corrections
+
+These bugs were fixed after the git tag `pre-audit-2026-11`. Outputs rendered before the fix are affected as described.
+
+- `08_ai_beliefs_items.qmd`: rank-biserial effect sizes subtracted `n1(n1+1)/2` from R's `W`, which is already the Mann-Whitney U. Every Beliefs item was reported as a "Large" effect favoring AI_First (values -1.49 to -1.04, outside the valid range). Corrected values are -0.25 to 0.20 (negligible to small). P-values were unaffected.
+- `11_profile_external_comparisons.qmd`: participant `9g0fXm` (a Q17 exclusion) was also dropped from the ART and Beliefs-theme tests (n = 81 instead of 82). No conclusion changed.
+- `12_continuous_factor_analysis.qmd`: OLS predictors were labeled standardized but were not. Coefficients are now standardized; p-values are unchanged.
+- `funnel.R`: the order permutation tests had no random seed, so two Bonferroni verdicts in family F could flip between runs. The seed is now fixed (`CFG$seed`). AI Reflection's CFA was removed, because its groups came from this sample's own EFA; its factor count is now compared within EFA.
+- `compare_scale_structures.R`: crashed on a column `funnel.R` no longer writes.
+- `09_q17_ai_use.qmd`: participant `y5lblN` marked all 28 Q17 tools "I often use this tool" and is now excluded from Q17, like `9g0fXm`. Q17 n in script `09` drops from 92 to 91; script `18`'s Q17 correlations were unaffected (that participant was not in them).
+
+None of the scripts corrected above (`08`, `11`, `12`, `09`) fed the presentation slides, which used script `18`'s composite heatmap and ART results.
+
 ## Repository Inputs
 
 Keep these source files at the repository root:
@@ -36,6 +61,8 @@ The intended workflow is:
 3. Save reviewed triage decisions as `Triage_Rap_Sheet_Verified.csv`.
 4. Continue with script `02` onward.
 
+The reviewed `Triage_Rap_Sheet_Verified.csv` is committed. Without it, script `01` stops before writing its cleaned exports, so starting from scratch takes two renders of `01`.
+
 ## Study Structure Encoded In The Code
 
 The active scripts assume a 2 x 2 crossover design:
@@ -58,7 +85,7 @@ The code treats manual salvage differently by stage:
 | `WritingEfficacy` | RW/traditional session | EFA, composites, order checks, ART analyses, profiles | raw anchors are `0/25/50/75/100`; EFA uses `(x / 25) + 1` |
 | `AuthorRecognition` / `ART` | RW survey | external reading-breadth anchor | hits, false alarms, net score, hit rate, false-alarm rate, adjusted rate |
 | `AIReflection` | LLM/AI session | EFA, composites, order checks, ART analyses, profiles | no reverse scoring in current pipeline |
-| `BeliefsAboutAI` | LLM/AI session | item-level fallback analyses; exploratory items `6-22` factor model in script `16` | original Qualtrics items `17-20` reverse-scored with `6 - x`; full 22-item battery is not factorable in the locked workflow |
+| `BeliefsAboutAI` | LLM/AI session | item-level fallback analyses; exploratory items `6-22` factor model in script `16`; source-paper CFA in the funnel | original Qualtrics items `17-20` reverse-scored with `6 - x`; script `03`'s KMO gate rejected the 22 items because the polychoric matrix is not positive definite, not because the items are unrelated (Pearson KMO .81) |
 | `Q17` AI tool use | LLM side survey | AI-tool familiarity/use analyses | ordered scale from `1 = never heard` to `5 = often use` |
 
 ## Render Order
@@ -90,6 +117,42 @@ After the numbered scripts, render the final unnumbered report:
 
 `render_all.sh` is a convenience wrapper for this same order. Numbered
 scripts run first, followed by the unnumbered final `results.qmd` report.
+It does not run the funnel. Rendered `.html` reports land at the repository
+root; each script's CSVs and plots go to its same-named folder.
+
+## Funnel Analysis (current)
+
+Inputs, which are not in git because they contain participant responses:
+
+- `data_raw/` (or a folder named by `FUNNEL_DATA_DIR`): `BeliefsAboutAI_Wide.csv`, `IMI_Wide.csv`, `WritingEfficacy_Wide.csv`, `AI_Reflection_Wide.csv`, `ART_Scored.csv`, `Condition_and_Topic.csv`. These are already reverse-scored exports for the 82 complete participants.
+
+Committed input: `funnel_item_text.csv` (item wording only).
+
+Run:
+
+```bash
+Rscript funnel.R
+quarto render funnel_report.qmd
+```
+
+`funnel.R` writes `funnel_out/` (CSVs, plots, `FINDINGS.csv`, `FUNNEL_SUMMARY.md`). The report reads those outputs. Random steps (parallel analysis, order permutations) use the fixed seed `CFG$seed`.
+
+| Survey | Source | Structure check | Score |
+| --- | --- | --- | --- |
+| IMI | Ryan; Deci & Ryan | CFA of the three subscales (EFA supplementary) | three subscale means |
+| Beliefs about AI | Chan & Zhou (2023) | CFA replicating their three models, plus combined models | Knowledge, Value, Cost, Intention means; value facets are detail-tier |
+| WSE / PSWSES | Schmidt & Alexander (2012) | EFA and factor-count checks (the source used PCA only) | 20-item mean; source groups are detail-tier |
+| AI Reflection | local | EFA only, comparing 1-3 factors | items 1-3 and 4-12 means |
+
+`ANALYSIS_PLAN.md` states the scoring tiers and correlation families before results. `explain/` compares the old script `18` scores with the funnel scores (`Rscript explain/old_vs_headline.R`).
+
+## Comparison And Audit Scripts
+
+These run after the pipelines they compare and are not part of `render_all.sh`:
+
+- `audit_raw_scoring_pipeline.R`: rebuilds scores from the raw exports and checks them against scripts `01`, `17` and `18`; writes `18_composite_correlations/raw_scoring_audit/`.
+- `beliefs_loadings_compare.R`, `composite_heatmap_compare.R`, `compare_scale_structures.R`: compare script `16`-`18` outputs with the funnel.
+- `exploratory_beliefs_6_22.qmd`: the June exploration that became script `16`.
 
 ## Output Conventions
 
@@ -199,7 +262,9 @@ Current locked measurement status:
 - `IMI`: factorable
 - `WritingEfficacy`: factorable
 - `AIReflection`: factorable
-- `BeliefsAboutAI`: not factorable in this workflow; analyzed item-by-item later
+- `BeliefsAboutAI`: rejected by the KMO gate (polychoric KMO .13 on n = 91, after smoothing a non-positive-definite matrix); analyzed item by item later. The funnel shows the source structure does fit (see Project History)
+
+`AIReflection` is locked at 2 factors although parallel analysis suggested 3 on n = 91: the 3-factor solution fit no better and its third factor rested mostly on one item. See `funnel_report.qmd` section 2.6.
 
 Output folder:
 
@@ -744,10 +809,4 @@ Important outputs:
 
 ## Legacy And Non-Active Files
 
-The active public pipeline is the numbered sequence listed above. Legacy or preserved files are kept outside the active numbering, including:
-
-- `legacy_q17_ai_use.qmd`
-- `legacy_q17_ai_use/`
-- `legacy_10_model_use_vs_factors_items/`
-
-Those files are retained for provenance but are not part of the current ordered workflow.
+Earlier drafts (for example the original Q17 and model-use scripts) were removed from the working tree in June 2026 and remain in git history.

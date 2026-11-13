@@ -1,6 +1,11 @@
 # Cowriters Survey Analysis Folder Guide
 
-## Current Workflow
+The current analysis is the funnel: run `Rscript funnel.R`, then
+`quarto render funnel_report.qmd`. See the "Funnel Analysis" section of
+`README.md` for its inputs. The numbered scripts below are the original
+exploratory pipeline, which still produces the cleaned data.
+
+## Numbered Pipeline
 
 Start with:
 
@@ -66,23 +71,16 @@ Important handoff files in the ordered pipeline:
 
 ## Archived Files
 
-Older drafts and legacy outputs were moved here:
-
-- `archive/legacy_qmd/`
-- `archive/legacy_reports/`
-
-Presentation material is here:
-
-- `presentations/`
+Older drafts were removed from the working tree and remain in git history.
+The tag `pre-audit-2026-11` marks the code before the November 2026 bug fixes
+(see "Corrections" in `README.md`).
 
 ## Quarto Note
 
-Use the PowerShell wrapper to keep each rendered report and its support files inside the matching numbered folder:
+`./render_all.sh` renders the full ordered pipeline. Rendered `.html`
+reports land at the repository root; CSVs and plots go to each script's folder.
 
-- `.\render_numbered_qmds.ps1` renders the full ordered pipeline.
-- `.\render_numbered_qmds.ps1 06_order_effects.qmd` renders a specific step into `06_order_effects/`.
-
-If rendering inside this sandboxed environment, this cache setting has been reliable:
+To render one script by hand with a writable cache:
 
 ```bash
 XDG_CACHE_HOME=/tmp/quarto-cache ~/.local/bin/quarto render 01_audit_cleaning.qmd --output-dir 01_audit_cleaning
