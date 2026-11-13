@@ -433,7 +433,8 @@ regression_predictors <- c("art_net_real_minus_fake", "ai_use_mean")
 run_ols <- function(df, outcome, predictors) {
   dat <- df |>
     select(all_of(c(outcome, predictors))) |>
-    filter(if_all(everything(), ~ !is.na(.x)))
+    filter(if_all(everything(), ~ !is.na(.x))) |>
+    mutate(across(all_of(predictors), ~ as.numeric(scale(.x))))
 
   if (nrow(dat) < 15L) {
     return(tibble(
