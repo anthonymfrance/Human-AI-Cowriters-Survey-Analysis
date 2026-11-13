@@ -13,9 +13,7 @@ suppressPackageStartupMessages({
 })
 
 out_dir <- "explain"
-old_map_png <- "18_composite_correlations/plots/Composite_Cross_Factor_Heatmap.png"
-new_map_png <- "funnel_out/plots/Headline_Correlation_Map.png"
-stopifnot(file.exists(old_map_png), file.exists(new_map_png))
+img <- function(path) wrap_elements(full = grid::rasterGrob(png::readPNG(path), interpolate = TRUE))
 
 inst_rename <- c(AIReflection = "AIRef", BeliefsAboutAI = "Beliefs",
                  WritingEfficacy = "WSE", IMI = "IMI")
@@ -126,38 +124,111 @@ for (inst in inst_order) {
          width = 3 + 3.3 * length(cols), height = 0.33 * n_distinct(d$item) + 1.8, dpi = 200, bg = "white")
 }
 
-# Side-by-side maps, each with a key of which items make up each group.
-key_text <- function(d, group_col) {
-  d |>
-    filter(!is.na(.data[[group_col]])) |>
-    summarise(items = item_ranges(item), .by = c(instrument, all_of(group_col))) |>
-    arrange(match(instrument, inst_order)) |>
-    mutate(line = paste0(instrument, " ", .data[[group_col]], ": items ", items)) |>
-    pull(line) |>
-    paste(collapse = "\n")
-}
-key_plot <- function(txt, title) {
-  ggplot() +
-    annotate("text", x = 0, y = 1, label = txt, hjust = 0, vjust = 1, size = 3.3, lineheight = 1.05) +
-    labs(title = title) + xlim(0, 1) + ylim(0, 1) + theme_void() +
-    theme(plot.title = element_text(face = "bold", size = 11))
-}
-img <- function(path) wrap_elements(full = grid::rasterGrob(png::readPNG(path), interpolate = TRUE))
+# Side-by-side maps redrawn from the stored correlations in one shared order, so
+# an old group and its closest headline score sit in the same row. Blue =
+# positive, red = negative on both. Each map gets a key with the full statements.
+short_old <- function(x) str_replace_all(x, c("^WritingEfficacy" = "WSE", "^AIReflection" = "AIRef", " -> " = " "))
+old_order <- c("IMI F1 Interest & Enjoyment", "IMI F2 Effort & Importance", "IMI F3 Perceived Competence",
+               "WSE F1 Writing Competence", "WSE F2 Self-Regulation", "WSE F3 Resource & Planning",
+               "AIRef F1 Ownership & Usefulness", "AIRef F2 Enjoyment & Satisfaction",
+               "Beliefs F1 Utility & Comfort", "Beliefs F2 Future AI Orientation", "Beliefs F3 Concern & Harms")
+new_order <- c("i_interest", "i_effort", "i_competence", "w_total", "a_product", "a_process",
+               "b_value", "b_intention", "b_cost", "b_knowledge")
+reversed <- c("IMI_3", "IMI_4", "IMI_13", "IMI_15", "IMI_18")
 
-headline_key <- crosswalk |>
-  filter(!is.na(headline_score)) |>
-  mutate(headline_score = str_split(headline_score, " \\+ ")) |>
-  tidyr::unnest(headline_score) |>
-  key_text("headline_score")
+old_cells <- read_csv("18_composite_correlations/csv/Composite_Cross_Factor_Heatmap_Matrix.csv", show_col_types = FALSE) |>
+  transmute(x = short_old(label_x), y = short_old(label_y), rho, p_bh, p_bonf, within = FALSE)
+stopifnot(setequal(old_cells$x, old_order))
 
-fig <- (img(old_map_png) | img(new_map_png)) /
-  (key_plot(key_text(crosswalk, "old_group"), "Old groups: data-driven EFA clusters (Knowledge block dropped)") |
-     key_plot(headline_key, "Headline scores: published scoring, checked by CFA/EFA and reliability")) +
-  plot_layout(heights = c(3, 1.25)) +
+headline_items <- read_csv("funnel_out/01_score_membership.csv", show_col_types = FALSE) |>
+  filter(tier == "headline") |>
+  mutate(group = paste0(instrument, ": ", display_label))
+new_label <- with(distinct(headline_items, scale, group), setNames(group, scale))
+inst_of <- with(distinct(headline_items, scale, instrument), setNames(instrument, scale))
+stopifnot(setequal(names(new_label), new_order))
+
+new_tests <- read_csv("funnel_out/09_composite_correlations.csv", show_col_types = FALSE) |>
+  filter(startsWith(family, "B")) |>
+  select(x = var1, y = var2, p_bh, p_bonf)
+new_cells <- read_csv("funnel_out/09_composite_matrix.csv", show_col_types = FALSE) |>
+  tidyr::pivot_longer(-composite, names_to = "y", values_to = "rho") |>
+  rename(x = composite) |>
+  filter(x %in% new_order, y %in% new_order) |>
+  left_join(bind_rows(new_tests, rename(new_tests, x = y, y = x)), by = c("x", "y")) |>
+  mutate(within = x != y & inst_of[x] == inst_of[y])
+stopifnot(with(new_cells, all(within | x == y | !is.na(p_bh))))
+new_cells <- mutate(new_cells, x = new_label[x], y = new_label[y])
+
+heat <- function(cells, order, title, subtitle) {
+  d <- cells |>
+    filter(match(x, order) <= match(y, order)) |>
+    mutate(label = case_when(x == y ~ "", within ~ sprintf("%.2f", rho),
+                             p_bonf < .05 ~ sprintf("%.2f**", rho), p_bh < .05 ~ sprintf("%.2f*", rho),
+                             TRUE ~ sprintf("%.2f", rho)),
+           x = factor(x, order), y = factor(y, rev(order)))
+  ggplot(d, aes(x, y, fill = rho)) +
+    geom_tile(aes(alpha = if_else(within, 0.35, 1)), color = "white", linewidth = 0.6) +
+    geom_text(aes(label = label, color = within), size = 3.6) +
+    scale_alpha_identity() +
+    scale_color_manual(values = c(`FALSE` = "#17212b", `TRUE` = "#8a8f96"), guide = "none") +
+    scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8",
+                         midpoint = 0, limits = c(-1, 1), name = "Spearman\nrho") +
+    coord_fixed() +
+    labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 50, hjust = 1),
+          plot.title = element_text(face = "bold"))
+}
+
+# One block per group (bold name, then its statements), flowed into columns.
+key_lines <- function(items, groups, ncol = 3, width = 62) {
+  blocks <- lapply(groups, function(g) {
+    d <- items |> filter(group == g) |> arrange(item)
+    stmt <- paste0(d$item, ". ", d$item_text,
+                   if_else(paste0(d$instrument, "_", d$item) %in% reversed, " (R)", ""))
+    lines <- unlist(strsplit(str_wrap(stmt, width, exdent = 5), "\n"))
+    tibble(text = c(paste0(g, "  (items ", item_ranges(d$item), ")"), lines, ""),
+           face = c("bold", rep("plain", length(lines) + 1)))
+  })
+  sizes <- vapply(blocks, nrow, 0L)
+  col <- pmin(ncol, floor((cumsum(sizes) - sizes) / (sum(sizes) / ncol)) + 1)
+  bind_rows(Map(function(b, k) mutate(b, col = k), blocks, col)) |>
+    mutate(row = seq_along(text), .by = col)
+}
+key_plot <- function(d, title, subtitle, n_rows, ncol = 3) {
+  ggplot(d, aes(col - 1, -row, label = text, fontface = face)) +
+    geom_text(hjust = 0, vjust = 1, size = 3) +
+    scale_x_continuous(limits = c(0, ncol), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(-n_rows - 1, 0), expand = c(0, 0)) +
+    labs(title = title, subtitle = subtitle) + theme_void() +
+    theme(plot.title = element_text(face = "bold", size = 13), plot.subtitle = element_text(size = 10))
+}
+
+old_key <- crosswalk |>
+  filter(!is.na(old_group)) |>
+  mutate(group = paste(instrument, old_group)) |>
+  key_lines(old_order)
+new_key <- key_lines(headline_items, unname(new_label[new_order]))
+n_rows <- max(old_key$row, new_key$row)
+paren_note <- "Beliefs names in parentheses are the old pipeline's names for that group, kept from our earlier naming."
+
+fig <- (heat(old_cells, old_order, "Old: script 18 composite heatmap",
+             "Every pair tested, within-survey included. * survives BH; ** survives Bonferroni (55 pairs).") |
+          heat(new_cells, unname(new_label[new_order]), "New: funnel headline scores",
+               paste0("Faded cells are within-survey pairs, shown for context and not tested.\n",
+                      "* survives BH; ** survives Bonferroni within family B (headline).\n", paren_note))) /
+  (key_plot(old_key, "Old groups: data-driven EFA clusters (Knowledge block dropped)",
+            "Each item placed by its highest EFA loading. Score = mean of the listed items.", n_rows) |
+     key_plot(new_key, "Headline scores: published scoring, checked by CFA/EFA and reliability",
+              paste("Groups as published by the source authors. Score = mean of the listed items.", paren_note), n_rows)) +
+  plot_layout(heights = c(1.1, 1)) +
   plot_annotation(title = "Before and after: old script 18 heatmap vs funnel headline map",
-                  caption = "Left keeps within-survey cells at full strength; right fades them because they are not tests. Colors run in opposite directions between the two maps.",
-                  theme = theme(plot.title = element_text(face = "bold", size = 15)))
-ggsave(file.path(out_dir, "Old_vs_Headline_Maps.png"), fig, width = 22, height = 13, dpi = 170, bg = "white")
+                  caption = paste("Same row order and colors on both maps (blue = positive, red = negative). Rows line up where an old group",
+                                  "has a headline counterpart: the three old WSE factors collapse into WSE Total, and Knowledge is new.",
+                                  "(R) = reverse-scored IMI item: a high score means the opposite of the wording."),
+                  theme = theme(plot.title = element_text(face = "bold", size = 18),
+                                plot.caption = element_text(size = 11, hjust = 0)))
+ggsave(file.path(out_dir, "Old_vs_Headline_Maps.png"), fig, width = 30, height = 27, dpi = 170, bg = "white")
 # Old ART scatter (script 18) vs the same three relationships with the new scores.
 findings <- read_csv("funnel_out/FINDINGS.csv", show_col_types = FALSE) |>
   filter(startsWith(family, "D:"))

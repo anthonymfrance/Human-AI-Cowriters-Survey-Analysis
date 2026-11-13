@@ -1232,7 +1232,7 @@ plot_map <- function(plot_scores, file_stem, title, subtitle, size) {
     geom_text(aes(label = cell_label, color = within), size = 3.1) +
     scale_alpha_identity() +
     scale_color_manual(values = c(`FALSE` = "#17212b", `TRUE` = "#8a8f96"), guide = "none") +
-    scale_fill_gradient2(low = "#3b73a8", mid = "white", high = "#bd4b3a",
+    scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8",
                          midpoint = 0, limits = c(-1, 1), name = "Spearman\nrho") +
     scale_x_discrete(labels = unname(plot_labels[plot_scores])) +
     scale_y_discrete(labels = unname(plot_labels[rev(plot_scores)])) +

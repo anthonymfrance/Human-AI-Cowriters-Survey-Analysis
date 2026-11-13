@@ -320,7 +320,7 @@ findings |>
   ggplot(aes("ART net", score, fill = estimate)) +
   geom_tile(color = "white", linewidth = 0.8) +
   geom_text(aes(label = paste0(f2(estimate), star)), size = 3.6) +
-  scale_fill_gradient2(low = "#3b73a8", mid = "white", high = "#bd4b3a", midpoint = 0,
+  scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8", midpoint = 0,
                        limits = c(-1, 1), name = "Spearman\nrho") +
   labs(x = NULL, y = NULL, subtitle = "* survives BH; ** survives Bonferroni (10 tests)") +
   theme_minimal(base_size = 11) +

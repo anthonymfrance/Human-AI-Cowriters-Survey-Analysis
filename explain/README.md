@@ -4,7 +4,7 @@ Regenerate with `Rscript explain/old_vs_headline.R` after running `funnel.R`.
 
 ## Files
 
-- `Old_vs_Headline_Maps.png`: the old script 18 heatmap beside the new headline map, each with a key of which items make up each group.
+- `Old_vs_Headline_Maps.png`: the old script 18 heatmap beside the new headline map, redrawn in a shared row order and color scale, each with a key listing every statement in each group.
 - `Crosswalk_Beliefs.png`, `Crosswalk_IMI.png`, `Crosswalk_WSE.png`, `Crosswalk_AIRef.png`: every survey statement, its old group, and its new headline and detail scores.
 - `Item_Crosswalk.csv`: the same crosswalk with full statement text and a change flag.
 - `ART_Old_vs_New.png`: the old script 18 ART scatter plots (top) and the same three relationships with the new scores (bottom), each labeled with its BH p-value and whether it survives BH or Bonferroni. All three still survive Bonferroni.
