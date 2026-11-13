@@ -45,6 +45,8 @@ CFG <- list(
   data_dir = "data_raw",
   out_dir  = "funnel_out",
   alpha    = 0.05,
+  # fixed before results were seen; reset at each stage that draws random numbers
+  seed     = 20261113,
   # metric maxima, used for ceiling/floor and interpretation bands
   metric   = c(Beliefs = 5, IMI = 7, WSE = 5, AIRef = 5)
 )
@@ -487,6 +489,7 @@ for (inst in c("Beliefs", "IMI", "WSE", "AIRef")) {
 
 # Parallel analysis is a factor-count aid for exploration, not an automatic
 # decision rule. Record errors (common with sparse ordinal cells) explicitly.
+set.seed(CFG$seed)
 parallel_rows <- list()
 for (inst in c("Beliefs", "IMI", "WSE", "AIRef")) {
   X <- item_matrix(inst)
@@ -1006,6 +1009,7 @@ mod_pairs <- tribble(
   "b_cost",       "w_total"
 )
 
+set.seed(CFG$seed)
 moderation <- bind_rows(lapply(seq_len(nrow(mod_pairs)), function(i) {
   pv <- mod_pairs$predictor[i]; ov <- mod_pairs$outcome[i]
   spearman_order_permutation(composites, pv, ov) |>
