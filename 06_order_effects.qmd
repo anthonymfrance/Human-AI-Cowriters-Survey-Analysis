@@ -1596,9 +1596,7 @@ write_csv(export_manifest, file.path(csv_dir, "Order_Effects_Export_Manifest.csv
 kable(export_manifest)
 ```
 
-Then we need to come up with a quick way to understand what we like. All of this should be one or two sentences describing what we did for the script and then one or two graphs. Ideally just one graph for these early scripts.
-
-For script 6 we should say, "This builds the composite scores from locked EFA item map, compares traditional first versus AI first participants, and tests tool times ordered interactions with a secondary topic controlled model." We should show some table or graph that shows the results of that.## Section 8: Order-Stratified Correlation Analysis
+## Section 8: Order-Stratified Correlation Analysis
 
 This section asks whether key cross-instrument factor correlations and
 Beliefs item correlations differ depending on which session participants
