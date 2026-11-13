@@ -93,11 +93,14 @@ Do not move a score between tiers after seeing its results.
   given after one session type only.
 - Q17 AI-tool use (declared Nov 13, 2026, before any funnel Q17 results): two
   scores, correlated with the headline scores as one external family like ART.
-  (1) ChatGPT frequency, the single 1-5 item. (2) Breadth: the number of the
-  other 27 tools (Grammarly excluded as an editing tool) rated 3 or higher
-  ("I rarely use this tool" or more). Exclude straight-line Q17 submissions
-  (every tool given the same rating). Means across all tools, bucket counts or
-  proportions, and "primary model" groups are not used.
+  (1) ChatGPT frequency, the single 1-5 item — chosen because ChatGPT is the
+  modal AI tool on Q17 in this sample (far ahead of other AI tools; Grammarly
+  is common but treated as an editor). (2) Breadth: the number of the other 27
+  tools (Grammarly excluded) rated 3 or higher ("I rarely use this tool" or
+  more). Exclude straight-line Q17 submissions (every tool given the same
+  rating). Means across all tools, bucket counts or proportions, and "primary
+  model" groups are not used. Q17 n is the analysis sample minus those
+  exclusions.
 - Order: for selected pre-existing pairs, compare Spearman rho between
   counterbalance groups using permutation p-values and stratified bootstrap
   intervals. Treat these selected comparisons as secondary exploration.

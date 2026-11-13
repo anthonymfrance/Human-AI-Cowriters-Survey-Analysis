@@ -288,7 +288,13 @@ score_one <- function(sc) {
 
 composites <- reduce(map(scales, score_one), left_join, by = "participant_id") |>
   left_join(design, by = "participant_id") |>
-  left_join(art, by = "participant_id")
+  left_join(art, by = "participant_id") |>
+  mutate(
+    # topic of the session that each survey followed
+    ai_topic    = if_else(condition_1 == "LLM",   topic_1, topic_2),
+    alone_topic = if_else(condition_1 == "Alone", topic_1, topic_2)
+  )
+stopifnot(!anyNA(composites$ai_topic), !anyNA(composites$alone_topic))
 
 alpha_one <- function(sc) {
   sub <- score_long |>
@@ -886,6 +892,192 @@ print(as.data.frame(prim_d[, c("predictor", "estimate", "ci_low", "ci_high", "p"
       digits = 3, row.names = FALSE)
 
 # =============================================================================
+# STAGE 7c.  DESIGN CHECKS: order x topic on each headline score
+# =============================================================================
+#
+# Declared in ANALYSIS_PLAN.md before these results. Tool (AI vs alone) cannot
+# be tested: each survey was given after one session type only.
+
+banner("STAGE 7c  design checks: order x topic on headline scores")
+
+topic_of_survey <- c(Beliefs = "ai_topic", AIRef = "ai_topic",
+                     IMI = "alone_topic", WSE = "alone_topic")
+
+type2_terms <- function(df, score, topic_col) {
+  d <- df |>
+    select(score = all_of(score), sess_order, topic = all_of(topic_col)) |>
+    drop_na() |>
+    mutate(sess_order = factor(sess_order), topic = factor(topic))
+  fit <- lm(score ~ sess_order * topic, data = d)
+  a <- as.data.frame(car::Anova(fit, type = 2))
+  a$term <- rownames(a)
+  a |>
+    filter(term != "Residuals") |>
+    transmute(
+      score = score,
+      topic_used = topic_col,
+      term = case_when(
+        term == "sess_order" ~ "order",
+        term == "topic" ~ "topic",
+        term == "sess_order:topic" ~ "order_x_topic",
+        TRUE ~ term
+      ),
+      df = Df, sum_sq = `Sum Sq`, f = `F value`, p = `Pr(>F)`,
+      n = nrow(d)
+    )
+}
+
+design_checks <- bind_rows(lapply(headline_scales, function(sc) {
+  type2_terms(composites, sc, topic_of_survey[[inst_of[[sc]]]])
+})) |>
+  group_by(term) |>
+  mutate(p_bh = p.adjust(p, "BH"), survives_bh = p_bh < CFG$alpha) |>
+  ungroup() |>
+  arrange(term, p)
+
+write_csv(design_checks, file.path(CFG$out_dir, "15_design_checks_order_topic.csv"))
+note("design checks: ", nrow(design_checks), " tests (10 scores x 3 terms); BH survivors: ",
+     sum(design_checks$survives_bh))
+print(as.data.frame(design_checks |> filter(survives_bh | term == "topic") |>
+                      select(score, term, f, p, p_bh, survives_bh)),
+      digits = 3, row.names = FALSE)
+
+topic_affected <- design_checks |>
+  filter(term == "topic", survives_bh) |>
+  pull(score) |>
+  unique()
+note("scores with topic surviving BH: ",
+     if (length(topic_affected) == 0) "none" else paste(topic_affected, collapse = ", "))
+
+# If topic survives BH for a score, re-check its family B and D pairs as
+# partial Spearman correlations controlling for that score's session topic.
+partial_spearman <- function(df, x, y, covar) {
+  d <- df |> select(all_of(c(x, y, covar))) |> drop_na()
+  d[[covar]] <- factor(d[[covar]])
+  rx <- residuals(lm(rank(d[[x]]) ~ d[[covar]]))
+  ry <- residuals(lm(rank(d[[y]]) ~ d[[covar]]))
+  n <- length(rx)
+  ct <- suppressWarnings(cor.test(rx, ry, method = "pearson"))
+  r <- unname(ct$estimate)
+  z <- atanh(r); se <- 1 / sqrt(n - 3)
+  tibble(estimate = r, ci_low = tanh(z - 1.96 * se), ci_high = tanh(z + 1.96 * se),
+         n = n, p = ct$p.value, method = "partial spearman (rank residual)")
+}
+
+topic_partials <- tibble()
+if (length(topic_affected) > 0) {
+  topic_partials <- bind_rows(lapply(topic_affected, function(sc) {
+    covar <- topic_of_survey[[inst_of[[sc]]]]
+    b_pairs <- prim_b |> filter(predictor == sc | outcome == sc)
+    d_pairs <- prim_d |> filter(predictor == sc, startsWith(family, "D:"))
+    bind_rows(
+      bind_rows(lapply(seq_len(nrow(b_pairs)), function(i) {
+        x <- b_pairs$predictor[i]; y <- b_pairs$outcome[i]
+        partial_spearman(composites, x, y, covar) |>
+          mutate(predictor = x, outcome = y, level = "composite",
+                 family = "B-partial: headline pairs controlling for topic",
+                 controlled_score = sc, topic_used = covar,
+                 raw_rho = b_pairs$estimate[i], .before = 1)
+      })),
+      bind_rows(lapply(seq_len(nrow(d_pairs)), function(i) {
+        x <- d_pairs$predictor[i]
+        partial_spearman(composites, x, "art_net_real_minus_fake", covar) |>
+          mutate(predictor = x, outcome = "art_net_real_minus_fake (prior exposure)",
+                 level = "composite",
+                 family = "D-partial: headline vs ART controlling for topic",
+                 controlled_score = sc, topic_used = covar,
+                 raw_rho = d_pairs$estimate[i], .before = 1)
+      }))
+    )
+  })) |>
+    mutate(status = "exploratory") |>
+    add_adjust()
+  write_csv(topic_partials, file.path(CFG$out_dir, "15b_topic_partial_correlations.csv"))
+  note("topic-controlled partials: ", nrow(topic_partials),
+       " | BH: ", sum(topic_partials$survives_bh),
+       " | Bonferroni: ", sum(topic_partials$survives_bonf))
+}
+
+# =============================================================================
+# STAGE 7d.  FAMILY Q: Q17 ChatGPT frequency and breadth (ex Grammarly)
+# =============================================================================
+#
+# Declared in ANALYSIS_PLAN.md before these results. ChatGPT is the single-item
+# score because it is the modal AI tool on Q17 in this sample; breadth counts
+# other tools rated 3+ (Grammarly excluded as an editor). Straight-liners are
+# already dropped in 09_q17_ai_use/csv/Q17_Responses_Long.csv.
+
+banner("STAGE 7d  family Q: Q17 ChatGPT frequency and breadth (ex Grammarly)")
+
+q17_long_file <- file.path("09_q17_ai_use", "csv", "Q17_Responses_Long.csv")
+if (!file.exists(q17_long_file)) {
+  stop("missing ", q17_long_file, "; render 09_q17_ai_use.qmd first", call. = FALSE)
+}
+chatgpt_tool <- "ChatGPT (including DALL-E) by OpenAI"
+q17_long <- read_csv(q17_long_file, show_col_types = FALSE) |>
+  filter(participant_id %in% ids, !is.na(use_score))
+# belt-and-suspenders: drop anyone who gave every tool the same rating
+q17_straight <- q17_long |>
+  summarise(n_levels = n_distinct(use_score), .by = participant_id) |>
+  filter(n_levels == 1L) |>
+  pull(participant_id)
+if (length(q17_straight) > 0) {
+  note("dropping Q17 straight-liners still present: ", paste(q17_straight, collapse = ", "))
+  q17_long <- q17_long |> filter(!participant_id %in% q17_straight)
+}
+q17_scores <- q17_long |>
+  summarise(
+    q17_chatgpt = {
+      v <- use_score[tool == chatgpt_tool]
+      if (length(v) == 0L) NA_real_ else as.numeric(v[[1]])
+    },
+    q17_breadth = sum(tool != "Grammarly" & use_score >= 3L, na.rm = TRUE),
+    n_tools = n(),
+    .by = participant_id
+  )
+stopifnot(all(q17_scores$n_tools == 28L))
+note("Q17 scored: n = ", nrow(q17_scores), " of ", length(ids),
+     " funnel participants (1 Q17 exclusion in the 82)")
+
+composites <- composites |>
+  left_join(q17_scores |> select(participant_id, q17_chatgpt, q17_breadth),
+            by = "participant_id")
+write_csv(composites |> select(participant_id, q17_chatgpt, q17_breadth, sess_order),
+          file.path(CFG$out_dir, "16_q17_scores.csv"))
+
+q17_balance <- composites |>
+  filter(!is.na(q17_chatgpt)) |>
+  group_by(sess_order) |>
+  summarise(n = n(),
+            chatgpt_mean = mean(q17_chatgpt), chatgpt_sd = sd(q17_chatgpt),
+            breadth_mean = mean(q17_breadth), breadth_sd = sd(q17_breadth),
+            .groups = "drop")
+q17_p_chat <- suppressWarnings(
+  wilcox.test(q17_chatgpt ~ sess_order, data = composites)$p.value)
+q17_p_breadth <- suppressWarnings(
+  wilcox.test(q17_breadth ~ sess_order, data = composites)$p.value)
+note("Q17 by order: ChatGPT Wilcoxon p = ", round(q17_p_chat, 3),
+     "; breadth Wilcoxon p = ", round(q17_p_breadth, 3))
+print(as.data.frame(q17_balance), digits = 3, row.names = FALSE)
+
+prim_q <- bind_rows(lapply(c("q17_chatgpt", "q17_breadth"), function(qvar) {
+  bind_rows(lapply(headline_scales, function(sc) {
+    cor_row(composites, qvar, sc) |>
+      mutate(predictor = qvar, outcome = sc, level = "composite",
+             family = "Q: Q17 ChatGPT / breadth vs headline scores")
+  }))
+})) |>
+  mutate(status = "exploratory") |>
+  add_adjust()
+write_csv(prim_q, file.path(CFG$out_dir, "16b_q17_vs_headline.csv"))
+note("family Q: ", nrow(prim_q), " tests | BH: ", sum(prim_q$survives_bh),
+     " | Bonferroni: ", sum(prim_q$survives_bonf))
+print(as.data.frame(prim_q |> arrange(p_bh) |>
+                      head(8) |>
+                      select(predictor, outcome, estimate, n, p, p_bh, survives_bh)),
+      digits = 3, row.names = FALSE)
+
+# =============================================================================
 # STAGE 8.  EXPLORATORY: item-level scans, one family per instrument pair
 # =============================================================================
 
@@ -1174,6 +1366,9 @@ findings <- bind_rows(
   keep_cols(prim_b, "correlation (Spearman r)"),
   keep_cols(prim_c, "correlation (Spearman r)"),
   keep_cols(prim_d, "correlation (Spearman r)"),
+  keep_cols(prim_q, "correlation (Spearman r)"),
+  if (nrow(topic_partials) > 0)
+    keep_cols(topic_partials, "partial correlation (Spearman, topic-controlled)"),
   keep_cols(moderation, "difference in Spearman rho (permutation test)"),
   keep_cols(order_scores |> mutate(predictor = a, outcome = b, level = "composite",
                                    ci_low = NA_real_, ci_high = NA_real_,
@@ -1511,6 +1706,16 @@ md <- c(
   sprintf("  Strongest: %s. These are associations, not effects.",
           paste(head(with(arrange(prim_b, p_bh), sprintf("%s x %s (rho=%.2f)",
                 scale_labels[predictor], scale_labels[outcome], estimate)), 3), collapse = "; ")),
+  sprintf("- Design checks (order x topic): %d of %d tests survive BH (%s).",
+          sum(design_checks$survives_bh), nrow(design_checks),
+          if (length(topic_affected) == 0) "no score depends on topic after correction"
+          else paste("topic-affected:", paste(topic_affected, collapse = ", "))),
+  sprintf("- Family Q (Q17): %d of %d tests survive BH, %d survive Bonferroni (n = %d).",
+          sum(prim_q$survives_bh), nrow(prim_q), sum(prim_q$survives_bonf),
+          max(prim_q$n)),
+  sprintf("  Strongest: %s.",
+          paste(head(with(arrange(prim_q, p_bh), sprintf("%s x %s (rho=%.2f)",
+                predictor, scale_labels[outcome], estimate)), 3), collapse = "; ")),
   "- Some scores correlate with ART net, but these bivariate correlations do not",
   "  establish confounding.",
   "- The order x association pairs (family F) were selected post hoc; they do not",

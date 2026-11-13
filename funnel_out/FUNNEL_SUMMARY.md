@@ -145,6 +145,13 @@ has no CFA: it is a local scale whose groups came from our own EFA.
 | F: order x association | b_intention | i_interest | -0.744 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
 | G: order x headline score pairs | b_intention | i_interest | -0.744 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0449 | survives Bonferroni |
 | G: order x headline score pairs | b_cost | i_interest | 0.694 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0492 | survives BH only |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_value | 0.630 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_intention | 0.554 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | b_intention | 0.552 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | b_value | 0.411 | correlation (Spearman r) | 81 | 0.0006 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | a_product | 0.410 | correlation (Spearman r) | 81 | 0.0006 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | a_product | 0.394 | correlation (Spearman r) | 81 | 0.0009 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_knowledge | -0.349 | correlation (Spearman r) | 81 | 0.0040 | survives Bonferroni |
 
 ## Item-level family sizes
 
@@ -212,6 +219,9 @@ differences use a label permutation test and stratified bootstrap interval.
   the two EFA factors correlate 0.47 (alphas 0.76-0.84), so both parts are headline. Fit is modest at every k.
 - Family B (headline): 9 of 35 cross-instrument correlations survive BH, 5 survive Bonferroni.
   Strongest: Perceived Value (Utility & Comfort) x Ownership & Usefulness (rho=0.56); Intention (Future AI Orientation) x Ownership & Usefulness (rho=0.52); Perceived Competence x WSE Total (rho=0.51). These are associations, not effects.
+- Design checks (order x topic): 1 of 30 tests survive BH (topic-affected: a_process).
+- Family Q (Q17): 7 of 20 tests survive BH, 7 survive Bonferroni (n = 81).
+  Strongest: q17_chatgpt x Perceived Value (Utility & Comfort) (rho=0.63); q17_chatgpt x Intention (Future AI Orientation) (rho=0.55); q17_breadth x Intention (Future AI Orientation) (rho=0.55).
 - Some scores correlate with ART net, but these bivariate correlations do not
   establish confounding.
 - The order x association pairs (family F) were selected post hoc; they do not
