@@ -234,7 +234,7 @@ scales <- list(
        direction = "high = higher time/effort efficacy",
        source    = "PSWSES PCA factor 3; replacement item 19 placed here by our EFA"),
 
-  # ---- AIRef (local instrument): process vs final-summary wording; latent r = .73
+  # ---- AIRef (local instrument): the old EFA's two groups, plus items 5 and 8
   list(id = "a_process",    instrument = "AIRef", items = 1:3, flip = integer(0), tier = "headline",
        direction = "high = more positive appraisal of the summarization process",
        source    = "Local items 1-3: satisfied with, enjoyed, and found the process easy"),
@@ -547,9 +547,24 @@ write_csv(parallel_efa, file.path(CFG$out_dir, "02f_parallel_efa_fit.csv"))
 parallel_loadings <- bind_rows(parallel_loading_rows)
 write_csv(parallel_loadings, file.path(CFG$out_dir, "02g_parallel_efa_loadings.csv"))
 
+# AI Reflection has no source structure and its groups came from our own EFA on
+# this sample, so a CFA would only re-fit that EFA. Its factor count is compared
+# within EFA.
+airef_X <- item_matrix("AIRef")
+airef_R <- polychoric_robust(airef_X)$rho
+airef_efa_k <- map_dfr(1:3, function(k) {
+  f <- suppressWarnings(psych::fa(airef_R, nfactors = k, n.obs = nrow(airef_X), fm = "minres",
+                                  rotate = if (k == 1L) "none" else "oblimin", smooth = FALSE))
+  tibble(k = k, rmsea = unname(f$RMSEA[1]), tli = unname(f$TLI), bic = unname(f$BIC),
+         rmsr = unname(f$rms),
+         max_factor_r = if (k == 1L) NA_real_ else max(f$Phi[lower.tri(f$Phi)]))
+})
+write_csv(airef_efa_k, file.path(CFG$out_dir, "02j_airef_efa_k_comparison.csv"))
+print(as.data.frame(airef_efa_k), digits = 3, row.names = FALSE)
+
 # Theory-based ordinal CFA comparisons. Same-sample EFA/CFA is model
 # exploration, not independent validation. WSE's source PCA memberships are
-# represented with the reported cross-loadings; AI Reflection remains custom.
+# represented with the reported cross-loadings; AI Reflection has no CFA.
 # WLSMV treats items as ordered categories (primary). MLR treats them as numbers
 # (robust sensitivity); with N=82 and many thresholds, WLSMV CFI/TLI run high.
 # Expect a "vcov not positive definite" warning: WLSMV estimates more sample
@@ -616,11 +631,7 @@ cfa_specs <- list(
        groups = list(knowledge = 1:5, value = 6:16, cost = 17:20, intention = 21:22)),
   list(id = "beliefs_6", instrument = "Beliefs", note = "Combined, value split into source facets",
        groups = list(knowledge = 1:5, attainment = 6:9, intrinsic = 10:12,
-                     utility = 13:16, cost = 17:20, intention = 21:22)),
-  list(id = "airef_1", instrument = "AIRef", note = "One general appraisal factor",
-       groups = list(general = 1:12)),
-  list(id = "airef_2", instrument = "AIRef", note = "Process (1-3) vs product (4-12) wording",
-       groups = list(process = 1:3, product = 4:12))
+                     utility = 13:16, cost = 17:20, intention = 21:22))
 )
 cfa_results <- set_names(map(cfa_specs, fit_cfa), map_chr(cfa_specs, "id"))
 cfa_summary <- map_dfr(cfa_results, "summary")
@@ -628,7 +639,7 @@ cfa_loadings <- map_dfr(cfa_results, "loadings")
 cfa_factor_cors <- map_dfr(cfa_results, "factor_cors")
 
 # Nested comparisons: does splitting into more factors earn its keep?
-cfa_comparisons <- map_dfr(list(c("beliefs_4", "beliefs_6"), c("airef_1", "airef_2")), function(pr) {
+cfa_comparisons <- map_dfr(list(c("beliefs_4", "beliefs_6")), function(pr) {
   a <- cfa_results[[pr[1]]]$fit; b <- cfa_results[[pr[2]]]$fit
   t <- if (is.null(a) || is.null(b)) NULL else
     tryCatch(suppressWarnings(lavaan::lavTestLRT(a, b)), error = function(e) NULL)
@@ -1322,10 +1333,6 @@ cat("\nfindings surviving BH within their family: ", nrow(survivors), " of ", nr
 banner("STAGE 12  summary")
 
 cfa_fit <- function(model, col) cfa_summary[[col]][cfa_summary$model == model]
-fc_range <- function(model) {
-  r <- cfa_factor_cors$r[cfa_factor_cors$model == model]
-  if (length(r) == 1) sprintf("%.2f", r) else sprintf("%.2f to %.2f", min(r), max(r))
-}
 alpha_range <- function(ids) {
   a <- manifest$alpha[match(ids, manifest$scale)]
   if (length(a) == 1) sprintf("%.2f", a) else sprintf("%.2f-%.2f", min(a), max(a))
@@ -1393,7 +1400,8 @@ md <- c(
   "All WLSMV models warn that the parameter covariance matrix is not positive",
   "definite: there are more sample statistics (thresholds + polychoric r) than",
   "participants, so standard errors are approximate. KMO is an EFA screen only.",
-  "WSE has no CFA: its source groups came from an exploratory PCA.",
+  "WSE has no CFA: its source groups came from an exploratory PCA. AI Reflection",
+  "has no CFA: it is a local scale whose groups came from our own EFA.",
   "",
   "## Score tiers",
   "",
@@ -1493,10 +1501,11 @@ md <- c(
           alpha_range("w_total"), alpha_range(c("w_process", "w_physical", "w_timeeffort"))),
   sprintf("  %s factors, but fit indices disagree on k and several items load weakly, so the total is the headline score.",
           parallel_summary$parallel_k[parallel_summary$instrument == "WSE"]),
-  sprintf("- AI Reflection: 1 vs 2 factors CFI %.3f vs %.3f; process and product correlate %s",
-          cfa_fit("airef_1", "cfi"), cfa_fit("airef_2", "cfi"), fc_range("airef_2")),
-  sprintf("  (alphas %s), so both parts are headline. Both models fit modestly.",
-          alpha_range(c("a_process", "a_product"))),
+  sprintf("- AI Reflection (EFA only): 1 vs 2 vs 3 factors BIC %.1f / %.1f / %.1f, TLI %.3f / %.3f / %.3f;",
+          airef_efa_k$bic[1], airef_efa_k$bic[2], airef_efa_k$bic[3],
+          airef_efa_k$tli[1], airef_efa_k$tli[2], airef_efa_k$tli[3]),
+  sprintf("  the two EFA factors correlate %.2f (alphas %s), so both parts are headline. Fit is modest at every k.",
+          airef_efa_k$max_factor_r[2], alpha_range(c("a_process", "a_product"))),
   sprintf("- Family B (headline): %d of %d cross-instrument correlations survive BH, %d survive Bonferroni.",
           sum(prim_b$survives_bh), nrow(prim_b), sum(prim_b$survives_bonf)),
   sprintf("  Strongest: %s. These are associations, not effects.",

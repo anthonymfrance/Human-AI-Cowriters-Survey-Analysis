@@ -36,13 +36,10 @@ CFA and EFA comparisons use this same sample and are exploratory, not validation
 | beliefs_cost | 1 | 4 | 2 | 0.986 | 0.957 | 0.118 | 0.046 | 0.987 | 0.070 | Chan & Zhou separate CFA (source df = 2) |
 | beliefs_4 | 4 | 22 | 203 | 0.929 | 0.919 | 0.085 | 0.118 | 0.762 | 0.106 | Combined headline structure |
 | beliefs_6 | 6 | 22 | 194 | 0.935 | 0.922 | 0.083 | 0.114 | 0.799 | 0.100 | Combined, value split into source facets |
-| airef_1 | 1 | 12 | 54 | 0.903 | 0.882 | 0.145 | 0.113 | 0.788 | 0.131 | One general appraisal factor |
-| airef_2 | 2 | 12 | 53 | 0.925 | 0.907 | 0.129 | 0.098 | 0.840 | 0.115 | Process (1-3) vs product (4-12) wording |
 
 | simpler model | model with more factors | chi-square diff | df diff | p |
 |---|---|---:|---:|---:|
 | beliefs_4 | beliefs_6 | 25.30 | 9 | 0.0027 |
-| airef_1 | airef_2 | 14.14 | 1 | 0.00017 |
 
 WLSMV (ordinal) is primary; CFI/TLI/RMSEA are the scaled versions. MLR treats
 items as numeric and is shown as a sensitivity check; WLSMV CFI runs high at
@@ -52,7 +49,8 @@ read it together with the factor correlations in 02h_cfa_factor_correlations.csv
 All WLSMV models warn that the parameter covariance matrix is not positive
 definite: there are more sample statistics (thresholds + polychoric r) than
 participants, so standard errors are approximate. KMO is an EFA screen only.
-WSE has no CFA: its source groups came from an exploratory PCA.
+WSE has no CFA: its source groups came from an exploratory PCA. AI Reflection
+has no CFA: it is a local scale whose groups came from our own EFA.
 
 ## Score tiers
 
@@ -142,9 +140,9 @@ WSE has no CFA: its source groups came from an exploratory PCA.
 | D: headline scores vs ART net | b_value | art_net_real_minus_fake (prior exposure) | -0.368 | correlation (Spearman r) | 82 | 0.0020 | survives Bonferroni |
 | D: headline scores vs ART net | i_competence | art_net_real_minus_fake (prior exposure) | 0.364 | correlation (Spearman r) | 82 | 0.0020 | survives Bonferroni |
 | D: headline scores vs ART net | b_knowledge | art_net_real_minus_fake (prior exposure) | 0.271 | correlation (Spearman r) | 82 | 0.0277 | survives BH only |
-| F: order x association | b_intention | i_interest | -0.744 | difference in Spearman rho (permutation test) | 82 | 0.0110 | survives Bonferroni |
-| F: order x association | b_value | i_interest | -0.652 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives BH only |
-| F: order x association | b_cost | i_interest | 0.694 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
+| F: order x association | b_value | i_interest | -0.652 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
+| F: order x association | b_cost | i_interest | 0.694 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives BH only |
+| F: order x association | b_intention | i_interest | -0.744 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
 | G: order x headline score pairs | b_intention | i_interest | -0.744 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0449 | survives Bonferroni |
 | G: order x headline score pairs | b_cost | i_interest | 0.694 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0492 | survives BH only |
 
@@ -210,8 +208,8 @@ differences use a label permutation test and stratified bootstrap interval.
   Knowledge has a strong ceiling (66% of answers at the top), which limits its correlations.
 - WSE: total alpha 0.91; detail subscale alphas 0.61-0.89. Parallel analysis suggests
   4 factors, but fit indices disagree on k and several items load weakly, so the total is the headline score.
-- AI Reflection: 1 vs 2 factors CFI 0.903 vs 0.925; process and product correlate 0.73
-  (alphas 0.76-0.84), so both parts are headline. Both models fit modestly.
+- AI Reflection (EFA only): 1 vs 2 vs 3 factors BIC 3.9 / -38.7 / -48.3, TLI 0.567 / 0.685 / 0.754;
+  the two EFA factors correlate 0.47 (alphas 0.76-0.84), so both parts are headline. Fit is modest at every k.
 - Family B (headline): 9 of 35 cross-instrument correlations survive BH, 5 survive Bonferroni.
   Strongest: Perceived Value (Utility & Comfort) x Ownership & Usefulness (rho=0.56); Intention (Future AI Orientation) x Ownership & Usefulness (rho=0.52); Perceived Competence x WSE Total (rho=0.51). These are associations, not effects.
 - Some scores correlate with ART net, but these bivariate correlations do not

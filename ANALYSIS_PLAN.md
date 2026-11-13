@@ -44,7 +44,9 @@ not silently repaired for the primary diagnostics.
   sample. The 20-item mean is the headline score; source groups (one group per
   item, authors' reassignments, replacement item 19 placed by our EFA) are
   detail-tier.
-- **AI Reflection:** Local scale. EFA plus a 1- vs 2-factor CFA comparison. The
+- **AI Reflection:** Local scale. EFA only, comparing 1-3 factors: there is no
+  source structure, and its groups came from our own EFA on this sample, so a
+  CFA would only re-fit that EFA. The
   process (1-3) and product (4-12) parts are headline scores; the 12-item
   total is detail-tier.
 

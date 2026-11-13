@@ -67,7 +67,7 @@ instrument_specs <- tribble(
 locked_k <- c(
   IMI = 3L,
   WritingEfficacy = 3L, #picked 3 because 4 was more messy
-  AIReflection = 2L,
+  AIReflection = 2L, #parallel said 3, but 3 fit no better (BIC -22.6 vs -34.0) and its 3rd factor was mostly item 9
   BeliefsAboutAI = NA_integer_
 )
 

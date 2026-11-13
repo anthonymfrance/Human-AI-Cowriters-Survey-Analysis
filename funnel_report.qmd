@@ -34,6 +34,7 @@ efa_load   <- rd("02e_efa_loadings.csv")
 parallel   <- rd("02b_parallel_analysis.csv")
 fcors      <- rd("02h_cfa_factor_correlations.csv")
 cfa_cmp    <- rd("02i_cfa_model_comparisons.csv")
+airef_k    <- rd("02j_airef_efa_k_comparison.csv")
 desc       <- rd("03_descriptives.csv")
 findings   <- rd("FINDINGS.csv")
 sens       <- rd("07_sensitivity.csv")
@@ -85,7 +86,7 @@ For the before-and-after comparison with the old 18-script pipeline, see
 | Beliefs about AI (Chan & Zhou, 2023) | Three separate CFAs (Knowledge, Value with three facets, Cost); no EFA "due to this strong theoretical basis"; scored item totals; Pearson r | CFA, replicating their three models, plus combined models | A theory-defined structure exists, so we test it |
 | IMI (Ryan; Deci & Ryan) | Subscale means; "investigators perform their own factor analyses on new data sets" | CFA of the three subscales; EFA as a supplement | The subscales are long established (McAuley, Duncan & Tammen, 1989, used CFA) |
 | WSE / PSWSES (Schmidt & Alexander, 2012) | Exploratory PCA with varimax, three components; every analysis used the overall mean | EFA, factor-count checks, omega hierarchical | Their groups were descriptive, so there is no tested structure to confirm |
-| AI Reflection (local) | No source | EFA, plus a 1- vs 2-factor CFA comparison | Custom scale |
+| AI Reflection (local) | No source | EFA only, comparing 1-3 factors | Custom scale; its groups came from our own EFA on this sample, so a CFA would only re-fit that EFA |
 
 KMO is a screen for EFA only; it is not a CFA requirement.
 
@@ -151,7 +152,7 @@ factors are not separable in this sample (Brown, 2006).
 
 ```{r fcors}
 fcors |>
-  filter(model %in% c("imi_3", "beliefs_6", "airef_2")) |>
+  filter(model %in% c("imi_3", "beliefs_6")) |>
   transmute(Model = model, Pair = paste(factor_1, "x", factor_2),
             r = f2(r), `95% CI` = paste0(f2(ci_low), " to ", f2(ci_high))) |>
   show()
@@ -161,8 +162,7 @@ fcors |>
   .83-.93, and Attainment-Utility's interval reaches 1. Value is one headline
   score; the facets are detail-tier.
 - **IMI:** .44-.59, clearly separable. Three headline scores.
-- **AI Reflection:** process and product correlate .73, separable, and the split
-  follows the wording (the process vs the final summary). Two headline scores.
+- **AI Reflection:** no CFA; see @sec-airef.
 
 ## 2.4 IMI: does the EFA find the official subscales?
 
@@ -230,6 +230,31 @@ score (alpha `r f2(manifest$alpha[manifest$scale == "w_total"])`). The
 subscales stay in the detail tier, using the published groups adjusted so
 each item sits in one group; `explain/WSE_Group_Versions.csv` compares them
 with EFA-derived groups.
+
+## 2.6 AI Reflection: how many factors? {#sec-airef}
+
+```{r airef-k}
+airef_k |>
+  transmute(`Factors (k)` = k, RMSEA = f3(rmsea), TLI = f2(tli), BIC = round(bic),
+            `Factor correlation` = if_else(is.na(max_factor_r), "", f2(max_factor_r))) |>
+  show()
+```
+
+AI Reflection was written for this study, so there is no published structure
+to confirm, and its two groups came from the old pipeline's EFA on these
+same participants. A CFA would only re-fit that EFA, so the factor count is
+compared within EFA, and the evidence is mixed. In this sample parallel
+analysis suggests `r parallel$parallel_k[parallel$instrument == "AIRef"]`
+factors, while BIC, TLI and RMSEA in the table improve at 3. The old
+pipeline (n = 91, including salvage cases) showed the reverse: parallel
+analysis suggested 3, BIC and TLI favored 2, and the third factor rested
+mostly on one item ("I feel ownership over the final summary"), so it locked 2.
+The 3-factor split is not stable: in this sample it instead separates the
+two "I was satisfied" items (1 and 8) from items 2-3, with item 1 loading .93.
+The 2-factor split is the same in both samples: items 1-3 (the process:
+satisfied, enjoyed, easy) and items 4-12 (learning and the final summary).
+That is why 2 are kept. Fit is modest at every k, so both scores are
+exploratory and study-specific.
 
 # 3. The scores
 
