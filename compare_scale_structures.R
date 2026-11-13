@@ -86,7 +86,7 @@ cur_efa_raw <- read_csv("funnel_out/02g_parallel_efa_loadings.csv", show_col_typ
 cur_means <- read_csv("funnel_out/01_score_membership.csv", show_col_types = FALSE) |>
   transmute(instrument, item = as.integer(item),
             label = paste0(display_label,
-              if_else(score_role == "broad total (secondary)", " (secondary total)", "")),
+              if_else(tier == "detail", " (detail)", "")),
             group = label,
             method = "Current: candidate item means", loading = NA_real_,
             direction = direction, scoring_rule = source_rule)
