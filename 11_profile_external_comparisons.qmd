@@ -140,11 +140,6 @@ if (length(q17_missing_from_profiles) > 0L) {
   )
 }
 
-# profile_assignments_q17 excludes known Q17 exclusions.
-# profile_assignments (full) is kept intact for ART and beliefs comparisons.
-profile_assignments_q17 <- profile_assignments |>
-  filter(!participant_id %in% known_q17_exclusions)
-
 assert_identical_pid_sets(
   list(
     profile_assignments = profile_assignments$participant_id,
@@ -163,9 +158,9 @@ knitr::kable(profile_signatures)
 ## Build Analysis Frames
 
 ```{r analysis-frames}
-# art_theme_df uses profile_assignments_q17 so the Q17 left_join has no gaps.
-# ART and beliefs columns for 9g0fXm are still present; only Q17 cols will be NA.
-art_theme_df <- profile_assignments_q17 |>
+# All 82 participants: known Q17 exclusions get NA Q17 columns only, and the
+# test helpers drop NAs per variable, so ART and theme tests keep n = 82.
+art_theme_df <- profile_assignments |>
   select(
     participant_id,
     cluster,
@@ -189,7 +184,7 @@ art_theme_df <- profile_assignments_q17 |>
     by = "participant_id"
   )
 
-assert_expected_count(nrow(art_theme_df), 82L - length(known_q17_exclusions), "profile comparison analysis rows")
+assert_expected_count(nrow(art_theme_df), 82L, "profile comparison analysis rows")
 assert_unique_pid_rows(art_theme_df, "participant_id", "profile comparison analysis rows")
 
 beliefs_item_cols <- beliefs_metadata$item_col
