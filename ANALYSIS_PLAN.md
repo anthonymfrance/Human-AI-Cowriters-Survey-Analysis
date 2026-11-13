@@ -83,6 +83,14 @@ Do not move a score between tiers after seeing its results.
 - ART: correlate ART net with those candidate scores as an exploratory external
   association; report hits and false alarms descriptively so net-score
   interpretation is transparent.
+- Design checks (declared Nov 13, 2026, before any funnel results): for each
+  headline score, a two-way ANOVA of session order x article topic, using the
+  topic of the session that survey followed (Beliefs and AI Reflection: the AI
+  session; IMI and WSE: the writing-alone session). Type II tests, BH within
+  each term across the 10 scores. If topic survives BH for a score, re-check
+  that score's family B and D correlations as partial Spearman correlations
+  controlling for topic. Tool (AI vs alone) cannot be tested: each survey was
+  given after one session type only.
 - Q17 AI-tool use (declared Nov 13, 2026, before any funnel Q17 results): two
   scores, correlated with the headline scores as one external family like ART.
   (1) ChatGPT frequency, the single 1-5 item. (2) Breadth: the number of the
