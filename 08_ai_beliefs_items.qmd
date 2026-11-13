@@ -470,9 +470,9 @@ their interpretive goals.
 # wilcox.test(response ~ order) returns W for the first factor level of
 # order, which is "Traditional_First" (set by order_levels on line 43).
 # If order_levels changes, this convention flips silently.
+# R's W is already the Mann-Whitney U for group 1; it is not the rank sum.
 rank_biserial_from_w <- function(w_stat, n1, n2) {
-  u_stat <- as.numeric(w_stat) - (n1 * (n1 + 1) / 2)
-  (2 * u_stat / (n1 * n2)) - 1
+  (2 * as.numeric(w_stat) / (n1 * n2)) - 1
 }
 
 mw_results <- map_dfr(
@@ -527,7 +527,7 @@ mw_results <- map_dfr(
     )
 
     w  <- unname(test$statistic)
-    u  <- as.numeric(w) - (n_trad * (n_trad + 1) / 2)
+    u  <- as.numeric(w)
     rb <- rank_biserial_from_w(w, n_trad, n_ai)
 
     tibble(
