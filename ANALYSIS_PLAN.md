@@ -83,6 +83,13 @@ Do not move a score between tiers after seeing its results.
 - ART: correlate ART net with those candidate scores as an exploratory external
   association; report hits and false alarms descriptively so net-score
   interpretation is transparent.
+- Q17 AI-tool use (declared Nov 13, 2026, before any funnel Q17 results): two
+  scores, correlated with the headline scores as one external family like ART.
+  (1) ChatGPT frequency, the single 1-5 item. (2) Breadth: the number of the
+  other 27 tools (Grammarly excluded as an editing tool) rated 3 or higher
+  ("I rarely use this tool" or more). Exclude straight-line Q17 submissions
+  (every tool given the same rating). Means across all tools, bucket counts or
+  proportions, and "primary model" groups are not used.
 - Order: for selected pre-existing pairs, compare Spearman rho between
   counterbalance groups using permutation p-values and stratified bootstrap
   intervals. Treat these selected comparisons as secondary exploration.

@@ -370,7 +370,8 @@ assert_nonempty_df(q17_clean, "q17_clean")
 # 9g0fXm: straight-line first-dup (all 5s) inflates ai_tools_regular_n to 28;
 # dedup ordering fix above should already prefer the varied second-dup, but
 # we exclude explicitly as a belt-and-suspenders guard for this known outlier.
-q17_analysis_exclusions <- c("9g0fXm")
+# y5lblN: only submission marks all 28 tools "I often use this tool."
+q17_analysis_exclusions <- c("9g0fXm", "y5lblN")
 
 q17_clean <- q17_clean |>
   filter(!participant_id %in% q17_analysis_exclusions)
