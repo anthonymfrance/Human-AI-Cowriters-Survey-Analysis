@@ -49,17 +49,18 @@ read it together with the factor correlations in 02h_cfa_factor_correlations.csv
 All WLSMV models warn that the parameter covariance matrix is not positive
 definite: there are more sample statistics (thresholds + polychoric r) than
 participants, so standard errors are approximate. KMO is an EFA screen only.
-WSE has no CFA: its source groups came from an exploratory PCA. AI Reflection
+WSE's source groups came from an exploratory PCA; their headline priority is a project scoring choice, not validation. The 20-item total remains a secondary comparison. AI Reflection
 has no CFA: it is a local scale whose groups came from our own EFA.
 
 ## Score tiers
 
-- Headline (10): Knowledge, Perceived Value (Utility & Comfort), Perceived Cost (Concern & Harms), Intention (Future AI Orientation), Interest/Enjoyment, Perceived Competence, Effort/Importance, WSE Total, Enjoyment & Satisfaction, Ownership & Usefulness.
-- Detail (7): Attainment Value, Intrinsic Value, Utility Value, Process Knowledge, Physical/Emotional Barriers, Time/Effort, AI Reflection Total.
-- Headline scores pass all three checks: defined by the source (or by item
-  wording for the local AI Reflection scale), separable in this sample, and
-  reliable. Detail scores fail at least one. Tiers were fixed before looking
-  at the correlations below; do not move a score between tiers after the fact.
+- Headline (12): Knowledge, Perceived Value (Utility & Comfort), Perceived Cost (Concern & Harms), Intention (Future AI Orientation), Interest/Enjoyment, Perceived Competence, Effort/Importance, Local/Global Writing Process Knowledge, Physical Reaction, Time/Effort, Enjoyment & Satisfaction, Ownership & Usefulness.
+- Detail (5): Attainment Value, Intrinsic Value, Utility Value, WSE Total (secondary), AI Reflection Total.
+- Headline denotes the scores prioritized for reporting. Most follow source
+  structures and show usable reliability; WSE's source PCA groups are
+  prioritized by project decision despite mixed factor-count evidence.
+  The WSE total remains a secondary comparison. Tiers are reporting choices,
+  not proof of validation, and were not all fixed before results were seen.
 
 ## Visual summaries
 
@@ -82,10 +83,10 @@ has no CFA: it is a local scale whose groups came from our own EFA.
 | i_interest | headline | 7 | 4.27 | 1.15 | 0.901 | midpoint | 9% |
 | i_competence | headline | 6 | 4.45 | 1.08 | 0.873 | midpoint | 6% |
 | i_effort | headline | 5 | 5.27 | 1.12 | 0.874 | high | 23% |
-| w_total | headline | 20 | 3.89 | 0.61 | 0.906 | high | 34% |
-| w_process | detail | 13 | 3.93 | 0.65 | 0.890 | high | 34% |
-| w_physical | detail | 3 | 3.52 | 0.97 | 0.742 | high | 25% |
-| w_timeeffort | detail | 5 | 4.04 | 0.59 | 0.607 | high | 41% |
+| w_total | detail | 20 | 3.89 | 0.61 | 0.906 | high | 34% |
+| w_process | headline | 13 | 3.93 | 0.65 | 0.890 | high | 34% |
+| w_physical | headline | 3 | 3.52 | 0.97 | 0.742 | high | 25% |
+| w_timeeffort | headline | 5 | 4.04 | 0.59 | 0.607 | high | 41% |
 | a_process | headline | 3 | 3.62 | 0.80 | 0.759 | high | 17% |
 | a_product | headline | 9 | 2.79 | 0.70 | 0.842 | midpoint | 6% |
 | a_total | detail | 12 | 3.00 | 0.66 | 0.863 | midpoint | 9% |
@@ -100,58 +101,86 @@ has no CFA: it is a local scale whose groups came from our own EFA.
 | A: Chan & Zhou Table 5 replication -> intention (6 tests, Pearson) | b_utility | b_intention | 0.519 | correlation (Pearson r) | 82 | 0.0000 | survives Bonferroni |
 | A: Chan & Zhou Table 5 replication -> intention (6 tests, Pearson) | b_cost | b_intention | -0.372 | correlation (Pearson r) | 82 | 0.0007 | survives Bonferroni |
 | A: Chan & Zhou Table 5 replication -> intention (6 tests, Pearson) | b_knowledge | b_intention | -0.278 | correlation (Pearson r) | 82 | 0.0116 | survives BH only |
-| B: headline cross-instrument scores | b_value | a_product | 0.565 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| B: headline cross-instrument scores | b_intention | a_product | 0.523 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| B: headline cross-instrument scores | i_competence | w_total | 0.507 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| B: headline cross-instrument scores | i_interest | w_total | 0.405 | correlation (Spearman r) | 82 | 0.0014 | survives Bonferroni |
-| B: headline cross-instrument scores | b_knowledge | a_product | -0.388 | correlation (Spearman r) | 82 | 0.0022 | survives Bonferroni |
-| B: headline cross-instrument scores | b_value | a_process | 0.343 | correlation (Spearman r) | 82 | 0.0080 | survives BH only |
-| B: headline cross-instrument scores | b_cost | a_product | -0.344 | correlation (Spearman r) | 82 | 0.0080 | survives BH only |
-| B: headline cross-instrument scores | b_knowledge | i_competence | 0.324 | correlation (Spearman r) | 82 | 0.0132 | survives BH only |
-| B: headline cross-instrument scores | b_knowledge | w_total | 0.313 | correlation (Spearman r) | 82 | 0.0164 | survives BH only |
-| C: detail cross-instrument scores | b_value | a_total | 0.561 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | b_utility | a_product | 0.510 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | b_utility | a_total | 0.511 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | i_competence | w_process | 0.509 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | b_intrinsic | a_product | 0.499 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | b_intrinsic | a_total | 0.485 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
-| C: detail cross-instrument scores | b_intention | a_total | 0.453 | correlation (Spearman r) | 82 | 0.0002 | survives Bonferroni |
-| C: detail cross-instrument scores | b_attainment | a_total | 0.443 | correlation (Spearman r) | 82 | 0.0003 | survives Bonferroni |
-| C: detail cross-instrument scores | b_attainment | a_product | 0.439 | correlation (Spearman r) | 82 | 0.0003 | survives Bonferroni |
-| C: detail cross-instrument scores | i_competence | w_physical | 0.413 | correlation (Spearman r) | 82 | 0.0008 | survives Bonferroni |
-| C: detail cross-instrument scores | i_interest | w_process | 0.385 | correlation (Spearman r) | 82 | 0.0022 | survives Bonferroni |
-| C: detail cross-instrument scores | i_interest | w_timeeffort | 0.362 | correlation (Spearman r) | 82 | 0.0047 | survives BH only |
-| C: detail cross-instrument scores | b_knowledge | a_total | -0.344 | correlation (Spearman r) | 82 | 0.0081 | survives BH only |
-| C: detail cross-instrument scores | b_attainment | a_process | 0.330 | correlation (Spearman r) | 82 | 0.0121 | survives BH only |
-| C: detail cross-instrument scores | b_knowledge | w_process | 0.323 | correlation (Spearman r) | 82 | 0.0138 | survives BH only |
-| C: detail cross-instrument scores | b_cost | a_total | -0.321 | correlation (Spearman r) | 82 | 0.0138 | survives BH only |
-| C: detail cross-instrument scores | b_knowledge | w_timeeffort | 0.282 | correlation (Spearman r) | 82 | 0.0389 | survives BH only |
-| C: detail cross-instrument scores | b_utility | a_process | 0.283 | correlation (Spearman r) | 82 | 0.0389 | survives BH only |
-| C: detail cross-instrument scores | b_intrinsic | a_process | 0.274 | correlation (Spearman r) | 82 | 0.0439 | survives BH only |
-| C: detail cross-instrument scores | i_interest | w_physical | 0.273 | correlation (Spearman r) | 82 | 0.0439 | survives BH only |
-| C: detail cross-instrument scores | i_competence | w_timeeffort | 0.271 | correlation (Spearman r) | 82 | 0.0444 | survives BH only |
-| D2: detail scores vs ART net | b_attainment | art_net_real_minus_fake (prior exposure) | -0.314 | correlation (Spearman r) | 82 | 0.0084 | survives Bonferroni |
-| D2: detail scores vs ART net | b_intrinsic | art_net_real_minus_fake (prior exposure) | -0.333 | correlation (Spearman r) | 82 | 0.0084 | survives Bonferroni |
-| D2: detail scores vs ART net | b_utility | art_net_real_minus_fake (prior exposure) | -0.308 | correlation (Spearman r) | 82 | 0.0084 | survives Bonferroni |
-| D2: detail scores vs ART net | a_total | art_net_real_minus_fake (prior exposure) | -0.323 | correlation (Spearman r) | 82 | 0.0084 | survives Bonferroni |
-| D2: detail scores vs ART net | w_process | art_net_real_minus_fake (prior exposure) | 0.266 | correlation (Spearman r) | 82 | 0.0219 | survives BH only |
-| D: headline scores vs ART net | b_intention | art_net_real_minus_fake (prior exposure) | -0.398 | correlation (Spearman r) | 82 | 0.0011 | survives Bonferroni |
-| D: headline scores vs ART net | a_product | art_net_real_minus_fake (prior exposure) | -0.397 | correlation (Spearman r) | 82 | 0.0011 | survives Bonferroni |
-| D: headline scores vs ART net | b_value | art_net_real_minus_fake (prior exposure) | -0.368 | correlation (Spearman r) | 82 | 0.0020 | survives Bonferroni |
-| D: headline scores vs ART net | i_competence | art_net_real_minus_fake (prior exposure) | 0.364 | correlation (Spearman r) | 82 | 0.0020 | survives Bonferroni |
-| D: headline scores vs ART net | b_knowledge | art_net_real_minus_fake (prior exposure) | 0.271 | correlation (Spearman r) | 82 | 0.0277 | survives BH only |
-| F: order x association | b_value | i_interest | -0.652 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
-| F: order x association | b_cost | i_interest | 0.694 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives BH only |
-| F: order x association | b_intention | i_interest | -0.744 | difference in Spearman rho (permutation test) | 82 | 0.0183 | survives Bonferroni |
-| G: order x headline score pairs | b_intention | i_interest | -0.744 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0449 | survives Bonferroni |
-| G: order x headline score pairs | b_cost | i_interest | 0.694 | difference in Spearman rho (Traditional_First - AI_First) | 82 | 0.0492 | survives BH only |
+| B-partial: headline pairs controlling for topic | a_process | a_product | 0.467 | partial correlation (Spearman, topic-controlled) | 82 | 0.0001 | survives Bonferroni |
+| B-partial: headline pairs controlling for topic | b_value | a_process | 0.296 | partial correlation (Spearman, topic-controlled) | 82 | 0.0385 | survives BH only |
+| B: primary survey measure associations | w_process | w_timeeffort | 0.729 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | b_value | b_intention | 0.677 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | w_process | w_physical | 0.609 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | b_value | a_product | 0.565 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | b_intention | a_product | 0.523 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | i_competence | w_process | 0.509 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | a_process | a_product | 0.504 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | i_interest | i_competence | 0.492 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | w_physical | w_timeeffort | 0.490 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| B: primary survey measure associations | i_interest | i_effort | 0.454 | correlation (Spearman r) | 82 | 0.0001 | survives Bonferroni |
+| B: primary survey measure associations | i_competence | w_physical | 0.413 | correlation (Spearman r) | 82 | 0.0007 | survives Bonferroni |
+| B: primary survey measure associations | b_knowledge | a_product | -0.388 | correlation (Spearman r) | 82 | 0.0017 | survives Bonferroni |
+| B: primary survey measure associations | i_interest | w_process | 0.385 | correlation (Spearman r) | 82 | 0.0018 | survives Bonferroni |
+| B: primary survey measure associations | i_competence | i_effort | 0.382 | correlation (Spearman r) | 82 | 0.0018 | survives Bonferroni |
+| B: primary survey measure associations | b_knowledge | b_cost | 0.370 | correlation (Spearman r) | 82 | 0.0027 | survives Bonferroni |
+| B: primary survey measure associations | b_cost | b_intention | -0.364 | correlation (Spearman r) | 82 | 0.0032 | survives BH only |
+| B: primary survey measure associations | i_interest | w_timeeffort | 0.362 | correlation (Spearman r) | 82 | 0.0032 | survives BH only |
+| B: primary survey measure associations | b_knowledge | b_value | -0.347 | correlation (Spearman r) | 82 | 0.0052 | survives BH only |
+| B: primary survey measure associations | b_value | a_process | 0.343 | correlation (Spearman r) | 82 | 0.0053 | survives BH only |
+| B: primary survey measure associations | b_cost | a_product | -0.344 | correlation (Spearman r) | 82 | 0.0053 | survives BH only |
+| B: primary survey measure associations | b_knowledge | i_competence | 0.324 | correlation (Spearman r) | 82 | 0.0091 | survives BH only |
+| B: primary survey measure associations | b_knowledge | w_process | 0.323 | correlation (Spearman r) | 82 | 0.0091 | survives BH only |
+| B: primary survey measure associations | b_value | b_cost | -0.313 | correlation (Spearman r) | 82 | 0.0119 | survives BH only |
+| B: primary survey measure associations | b_knowledge | w_timeeffort | 0.282 | correlation (Spearman r) | 82 | 0.0283 | survives BH only |
+| B: primary survey measure associations | i_interest | w_physical | 0.273 | correlation (Spearman r) | 82 | 0.0341 | survives BH only |
+| B: primary survey measure associations | i_competence | w_timeeffort | 0.271 | correlation (Spearman r) | 82 | 0.0348 | survives BH only |
+| B: primary survey measure associations | b_knowledge | b_intention | -0.263 | correlation (Spearman r) | 82 | 0.0413 | survives BH only |
+| C: additional survey measure associations | b_value | b_intrinsic | 0.885 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_value | b_attainment | 0.864 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_value | b_utility | 0.799 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intention | b_attainment | 0.668 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_attainment | b_intrinsic | 0.639 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_attainment | b_utility | 0.596 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intrinsic | b_utility | 0.585 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_value | a_total | 0.561 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intention | b_intrinsic | 0.535 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intention | b_utility | 0.523 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_utility | a_product | 0.510 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_utility | a_total | 0.511 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | i_competence | w_total | 0.507 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intrinsic | a_product | 0.499 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intrinsic | a_total | 0.485 | correlation (Spearman r) | 82 | 0.0000 | survives Bonferroni |
+| C: additional survey measure associations | b_intention | a_total | 0.453 | correlation (Spearman r) | 82 | 0.0001 | survives Bonferroni |
+| C: additional survey measure associations | b_attainment | a_total | 0.443 | correlation (Spearman r) | 82 | 0.0001 | survives Bonferroni |
+| C: additional survey measure associations | b_attainment | a_product | 0.439 | correlation (Spearman r) | 82 | 0.0001 | survives Bonferroni |
+| C: additional survey measure associations | i_interest | w_total | 0.405 | correlation (Spearman r) | 82 | 0.0005 | survives Bonferroni |
+| C: additional survey measure associations | b_knowledge | b_intrinsic | -0.374 | correlation (Spearman r) | 82 | 0.0018 | survives Bonferroni |
+| C: additional survey measure associations | b_knowledge | a_total | -0.344 | correlation (Spearman r) | 82 | 0.0048 | survives BH only |
+| C: additional survey measure associations | b_attainment | a_process | 0.330 | correlation (Spearman r) | 82 | 0.0073 | survives BH only |
+| C: additional survey measure associations | b_cost | b_intrinsic | -0.322 | correlation (Spearman r) | 82 | 0.0088 | survives BH only |
+| C: additional survey measure associations | b_cost | a_total | -0.321 | correlation (Spearman r) | 82 | 0.0088 | survives BH only |
+| C: additional survey measure associations | b_knowledge | b_utility | -0.312 | correlation (Spearman r) | 82 | 0.0107 | survives BH only |
+| C: additional survey measure associations | b_knowledge | w_total | 0.313 | correlation (Spearman r) | 82 | 0.0107 | survives BH only |
+| C: additional survey measure associations | b_utility | a_process | 0.283 | correlation (Spearman r) | 82 | 0.0243 | survives BH only |
+| C: additional survey measure associations | b_cost | b_attainment | -0.278 | correlation (Spearman r) | 82 | 0.0265 | survives BH only |
+| C: additional survey measure associations | b_intrinsic | a_process | 0.274 | correlation (Spearman r) | 82 | 0.0284 | survives BH only |
+| D2: detail scores vs ART net | b_attainment | art_net_real_minus_fake (prior exposure) | -0.314 | correlation (Spearman r) | 82 | 0.0060 | survives Bonferroni |
+| D2: detail scores vs ART net | b_intrinsic | art_net_real_minus_fake (prior exposure) | -0.333 | correlation (Spearman r) | 82 | 0.0060 | survives Bonferroni |
+| D2: detail scores vs ART net | b_utility | art_net_real_minus_fake (prior exposure) | -0.308 | correlation (Spearman r) | 82 | 0.0060 | survives Bonferroni |
+| D2: detail scores vs ART net | a_total | art_net_real_minus_fake (prior exposure) | -0.323 | correlation (Spearman r) | 82 | 0.0060 | survives Bonferroni |
+| D2: detail scores vs ART net | w_total | art_net_real_minus_fake (prior exposure) | 0.224 | correlation (Spearman r) | 82 | 0.0427 | survives BH only |
+| D: headline scores vs ART net | b_intention | art_net_real_minus_fake (prior exposure) | -0.398 | correlation (Spearman r) | 82 | 0.0013 | survives Bonferroni |
+| D: headline scores vs ART net | a_product | art_net_real_minus_fake (prior exposure) | -0.397 | correlation (Spearman r) | 82 | 0.0013 | survives Bonferroni |
+| D: headline scores vs ART net | b_value | art_net_real_minus_fake (prior exposure) | -0.368 | correlation (Spearman r) | 82 | 0.0024 | survives Bonferroni |
+| D: headline scores vs ART net | i_competence | art_net_real_minus_fake (prior exposure) | 0.364 | correlation (Spearman r) | 82 | 0.0024 | survives Bonferroni |
+| D: headline scores vs ART net | b_knowledge | art_net_real_minus_fake (prior exposure) | 0.271 | correlation (Spearman r) | 82 | 0.0312 | survives BH only |
+| D: headline scores vs ART net | w_process | art_net_real_minus_fake (prior exposure) | 0.266 | correlation (Spearman r) | 82 | 0.0312 | survives BH only |
+| F: order x association | b_value | i_interest | -0.652 | difference in Spearman rho (permutation test) | 82 | 0.0250 | survives BH only |
+| F: order x association | b_cost | i_interest | 0.694 | difference in Spearman rho (permutation test) | 82 | 0.0250 | survives BH only |
+| F: order x association | b_intention | i_interest | -0.744 | difference in Spearman rho (permutation test) | 82 | 0.0250 | survives Bonferroni |
 | Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_value | 0.630 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
 | Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_intention | 0.554 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
 | Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | b_intention | 0.552 | correlation (Spearman r) | 81 | 0.0000 | survives Bonferroni |
-| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | b_value | 0.411 | correlation (Spearman r) | 81 | 0.0006 | survives Bonferroni |
-| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | a_product | 0.410 | correlation (Spearman r) | 81 | 0.0006 | survives Bonferroni |
-| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | a_product | 0.394 | correlation (Spearman r) | 81 | 0.0009 | survives Bonferroni |
-| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_knowledge | -0.349 | correlation (Spearman r) | 81 | 0.0040 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | b_value | 0.411 | correlation (Spearman r) | 81 | 0.0007 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_breadth | a_product | 0.410 | correlation (Spearman r) | 81 | 0.0007 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | a_product | 0.394 | correlation (Spearman r) | 81 | 0.0011 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | b_knowledge | -0.349 | correlation (Spearman r) | 81 | 0.0048 | survives Bonferroni |
+| Q: Q17 ChatGPT / breadth vs headline scores | q17_chatgpt | w_timeeffort | 0.267 | correlation (Spearman r) | 81 | 0.0480 | survives BH only |
 
 ## Item-level family sizes
 
@@ -177,9 +206,9 @@ has no CFA: it is a local scale whose groups came from our own EFA.
 | scale x items: IMI x AIRef | 36 | 0 | 0 |
 | scale x items: IMI x Beliefs | 66 | 0 | 0 |
 | scale x items: IMI x WSE | 60 | 21 | 9 |
-| scale x items: WSE x AIRef | 12 | 0 | 0 |
-| scale x items: WSE x Beliefs | 22 | 2 | 2 |
-| scale x items: WSE x IMI | 18 | 11 | 10 |
+| scale x items: WSE x AIRef | 36 | 0 | 0 |
+| scale x items: WSE x Beliefs | 66 | 2 | 2 |
+| scale x items: WSE x IMI | 54 | 28 | 9 |
 
 Reading lists with full item text: 10_item_x_score_ranked.csv (items x headline
 scores) and 11_item_x_item_ranked.csv. Order: Bonferroni survivors, then BH-only,
@@ -192,8 +221,8 @@ Traditional_First n = 45, AI_First n = 37. Fisher z on Spearman rho (variance fa
 
 | level | tests | survive BH | survive Bonferroni | opposite-sign pairs | opposite-sign surviving BH |
 |---|---:|---:|---:|---:|---:|
-| score x score | 45 | 2 | 1 | 3 | 2 |
-| item x score | 534 | 14 | 2 | 22 | 13 |
+| score x score | 66 | 0 | 0 | 3 | 0 |
+| item x score | 638 | 14 | 2 | 24 | 13 |
 | item x item | 1916 | 4 | 1 | 45 | 3 |
 
 Ranked lists: 12_order_score_x_score_ranked.csv, 13_order_item_x_score_ranked.csv,
@@ -213,14 +242,14 @@ differences use a label permutation test and stratified bootstrap interval.
   0.069 (value), 0.046 (cost). Combined 4 vs 6 factors: CFI 0.929 vs 0.935; the
   three value facets correlate 0.83 to 0.93 at the latent level, so they are detail only.
   Knowledge has a strong ceiling (66% of answers at the top), which limits its correlations.
-- WSE: total alpha 0.91; detail subscale alphas 0.61-0.89. Parallel analysis suggests
-  4 factors, but fit indices disagree on k and several items load weakly, so the total is the headline score.
+- WSE: total alpha 0.91; source-group alphas 0.61-0.89. Parallel analysis suggests
+  4 factors, but fit indices disagree on k and several items load weakly; source groups are headlines by project choice and the total remains secondary.
 - AI Reflection (EFA only): 1 vs 2 vs 3 factors BIC 3.9 / -38.7 / -48.3, TLI 0.567 / 0.685 / 0.754;
   the two EFA factors correlate 0.47 (alphas 0.76-0.84), so both parts are headline. Fit is modest at every k.
-- Family B (headline): 9 of 35 cross-instrument correlations survive BH, 5 survive Bonferroni.
-  Strongest: Perceived Value (Utility & Comfort) x Ownership & Usefulness (rho=0.56); Intention (Future AI Orientation) x Ownership & Usefulness (rho=0.52); Perceived Competence x WSE Total (rho=0.51). These are associations, not effects.
-- Design checks (order x topic): 1 of 30 tests survive BH (topic-affected: a_process).
-- Family Q (Q17): 7 of 20 tests survive BH, 7 survive Bonferroni (n = 81).
+- Family B (headline): 27 of 66 cross-instrument correlations survive BH, 15 survive Bonferroni.
+  Strongest: Local/Global Writing Process Knowledge x Time/Effort (rho=0.73); Perceived Value (Utility & Comfort) x Intention (Future AI Orientation) (rho=0.68); Local/Global Writing Process Knowledge x Physical Reaction (rho=0.61). These are associations, not effects.
+- Design checks (order x topic): 1 of 36 tests survive BH (topic-affected: a_process).
+- Family Q (Q17): 8 of 24 tests survive BH, 7 survive Bonferroni (n = 81).
   Strongest: q17_chatgpt x Perceived Value (Utility & Comfort) (rho=0.63); q17_chatgpt x Intention (Future AI Orientation) (rho=0.55); q17_breadth x Intention (Future AI Orientation) (rho=0.55).
 - Some scores correlate with ART net, but these bivariate correlations do not
   establish confounding.
@@ -251,6 +280,9 @@ divergence, not a replication, and note its ceiling.
   here so high = more perceived cost, which is the source paper's direction.
 - The WSE instrument was administered on five anchors (0/25/50/75/100) and
   mapped losslessly to 1-5. Reliability is on the 5-point metric.
+- The source suggested replacing its weak original item 19 with a writing-
+  resources item but did not test the replacement's factor placement; this
+  analysis places it in Time/Effort as a project scoring decision.
 - Every p-value is adjusted within its own family only. Values in different
   families are not comparable and are not ranked against each other.
 - All analyses are post hoc and exploratory; adjusted p-values do not turn

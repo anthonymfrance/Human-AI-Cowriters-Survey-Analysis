@@ -22,3 +22,21 @@
   margin: 16px 0;
   border-radius: 4px;
 }
+
+/* Separate table columns as well as rows for easier scanning. */
+table:not(.dataTable) th + th,
+table:not(.dataTable) td + td {
+  border-left: 1px solid #dfe4ea;
+}
+
+.score-item-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.score-item-filter select {
+  min-width: 12rem;
+  padding: 0.35rem 0.5rem;
+}

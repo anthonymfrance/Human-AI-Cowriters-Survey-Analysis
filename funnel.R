@@ -171,9 +171,9 @@ note("no participant is dropped anywhere downstream: n = 82 in every family")
 
 banner("STAGE 2  scoring manifest")
 
-# Tiers are fixed by measurement quality (source definition, separable in this
-# sample, reliable), never by which correlations turn out significant.
-#   headline = passes all three checks; detail = fails at least one.
+# Headline/detail are reporting priorities, not pass/fail measurement labels.
+# The WSE groups were promoted after reviewing initial results; their analyses
+# remain exploratory, and the total is retained as a secondary comparison.
 # total = TRUE marks a score that is the sum of other scores in its instrument.
 scales <- list(
   # ---- Beliefs columns 1-22 correspond to source Q2-Q23.
@@ -211,28 +211,31 @@ scales <- list(
        direction = "high = more effort invested",
        source    = "IMI effort subscale (items 15, 18 reversed upstream)"),
 
-  # ---- WSE / PSWSES (adapted 0-100 -> 1-5). The authors scored only the total;
-  # their PCA groups were descriptive, so the subscales are detail only.
-  list(id = "w_total",      instrument = "WSE", items = 1:20, flip = integer(0), tier = "headline",
+  # ---- WSE / PSWSES (adapted 0-100 -> 1-5). The source identified three
+  # exploratory PCA groups and used the overall mean in its main comparisons.
+  # This report prioritizes the source groups and retains the total as secondary.
+  list(id = "w_total",      instrument = "WSE", items = 1:20, flip = integer(0), tier = "detail",
        total = TRUE,
        direction = "high = higher writerly self-efficacy",
-       source    = "PSWSES total, 20 items (authors scored the overall mean)"),
-  # Source PCA groups, one group per item using the authors' own reassignments
+       source    = "PSWSES 20-item overall mean (source main-analysis score; secondary comparison)"),
+  # Source PCA groups using the authors' own reassignments
   # (10 -> time/effort; 13, 15 -> process). Item 3 is listed in both groups by
-  # the authors and is kept in both. Item 19 is the replacement "resources"
-  # item, absent from the source PCA; our EFA places it with time/effort.
+  # the authors and remains in both process and time/effort. The source found
+  # original item 19 weak and suggested a writing-resources replacement, but
+  # did not test that replacement's factor placement. We place it in Time/
+  # Effort as a project scoring decision.
   list(id = "w_process",    instrument = "WSE", items = c(1, 3, 4, 5, 6, 7, 9, 11, 12, 13, 15, 16, 18),
-       flip = integer(0), tier = "detail",
+       flip = integer(0), tier = "headline",
        direction = "high = higher writing process knowledge efficacy",
-       source    = "PSWSES PCA factor 1 with authors' reassignments of 13 and 15"),
+       source    = "PSWSES exploratory PCA factor 1; author reassigned items 13 and 15 here"),
   list(id = "w_physical",   instrument = "WSE", items = c(8, 14, 17),
-       flip = integer(0), tier = "detail",
-       direction = "high = fewer physical/emotional writing barriers",
-       source    = "PSWSES PCA factor 2 minus items the authors reassigned (10, 13, 15) and old item 19"),
+       flip = integer(0), tier = "headline",
+       direction = "high = more confidence managing writing-related physical reactions",
+       source    = "PSWSES exploratory PCA factor 2 after author reassignments"),
   list(id = "w_timeeffort", instrument = "WSE", items = c(2, 3, 10, 19, 20),
-       flip = integer(0), tier = "detail",
+       flip = integer(0), tier = "headline",
        direction = "high = higher time/effort efficacy",
-       source    = "PSWSES PCA factor 3; replacement item 19 placed here by our EFA"),
+       source    = "PSWSES exploratory PCA factor 3; item 10 reassigned by authors; replacement item 19 included here by project decision"),
 
   # ---- AIRef (local instrument): the old EFA's two groups, plus items 5 and 8
   list(id = "a_process",    instrument = "AIRef", items = 1:3, flip = integer(0), tier = "headline",
@@ -254,13 +257,29 @@ scale_labels <- c(
   b_value = "Perceived Value (Utility & Comfort)", b_cost = "Perceived Cost (Concern & Harms)",
   b_intention = "Intention (Future AI Orientation)", i_interest = "Interest/Enjoyment",
   i_competence = "Perceived Competence", i_effort = "Effort/Importance",
-  w_total = "WSE Total", w_process = "Process Knowledge",
-  w_physical = "Physical/Emotional Barriers", w_timeeffort = "Time/Effort",
+  w_total = "WSE Total (secondary)",
+  w_process = "Local/Global Writing Process Knowledge",
+  w_physical = "Physical Reaction", w_timeeffort = "Time/Effort",
   a_process = "Enjoyment & Satisfaction", a_product = "Ownership & Usefulness",
   a_total = "AI Reflection Total"
 )
 tier_of  <- setNames(map_chr(scales, "tier"), map_chr(scales, "id"))
 total_of <- setNames(map_lgl(scales, ~ isTRUE(.x$total)), map_chr(scales, "id"))
+
+# Guard the WSE source mapping against accidental membership drift. The source
+# PCA plus author reassignments gives the groups for the original items. Current
+# item 19 is their suggested replacement; its Time/Effort placement is ours.
+wse_items_by_score <- setNames(map(scales, "items"), map_chr(scales, "id"))
+stopifnot(
+  setequal(wse_items_by_score$w_process, c(1, 3, 4, 5, 6, 7, 9, 11, 12, 13, 15, 16, 18)),
+  setequal(wse_items_by_score$w_physical, c(8, 14, 17)),
+  setequal(wse_items_by_score$w_timeeffort, c(2, 3, 10, 19, 20)),
+  setequal(wse_items_by_score$w_total, 1:20),
+  identical(as.integer(intersect(wse_items_by_score$w_process, wse_items_by_score$w_timeeffort)), 3L),
+  length(intersect(wse_items_by_score$w_process, wse_items_by_score$w_physical)) == 0L,
+  length(intersect(wse_items_by_score$w_physical, wse_items_by_score$w_timeeffort)) == 0L,
+  setequal(unique(unlist(wse_items_by_score[c("w_process", "w_physical", "w_timeeffort")])), 1:20)
+)
 
 # One orientation flip, declared above, applied exactly once.
 flip_lookup <- bind_rows(lapply(scales, function(sc) {
@@ -622,8 +641,8 @@ fit_cfa <- function(spec) {
 # Chan & Zhou ran three separate CFAs (knowledge, value with three facets, cost;
 # their df = 5, 41, 2) and no CFA for two-item intention. The combined models
 # add intention and test whether the constructs are distinct from each other.
-# WSE has no CFA: its source groups came from an exploratory PCA, so there is
-# no tested structure to confirm; WSE structure is examined with EFA above.
+# WSE has no CFA: its source groups came from an exploratory PCA; WSE structure
+# is examined with EFA above, and the source groups are not validated here.
 cfa_specs <- list(
   list(id = "imi_3", instrument = "IMI", note = "IMI source subscales",
        groups = list(interest = 1:7, competence = 8:13, effort = 14:18)),
@@ -835,35 +854,37 @@ print(as.data.frame(prim_a[, c("predictor", "estimate", "source_r", "ci_low", "c
       digits = 3, row.names = FALSE)
 
 # =============================================================================
-# STAGE 7.  EXPLORATORY FAMILY: cross-instrument candidate scores
+# STAGE 7.  EXPLORATORY FAMILIES: candidate-score associations
 # =============================================================================
 
-banner("STAGE 7  families B (headline) and C (detail): cross-instrument scores")
+banner("STAGE 7  primary and additional score associations")
 
 inst_of <- setNames(manifest$instrument, manifest$scale)
 headline_scales <- manifest$scale[manifest$tier == "headline"]
 comp_scales <- manifest$scale
 
-# Cross-instrument pairs only, so no score is ever correlated with its own items.
-# B = both scores headline; C = any pair involving a detail score.
+# Test score pairs, including within-instrument pairs. Exclude total scores
+# from within-instrument tests because those are part-whole correlations.
 comp_cors <- bind_rows(lapply(combn(comp_scales, 2, simplify = FALSE), function(pr) {
-  if (inst_of[[pr[1]]] == inst_of[[pr[2]]]) return(NULL)
+  same_inst <- inst_of[[pr[1]]] == inst_of[[pr[2]]]
+  if (same_inst && (isTRUE(scales[[match(pr[1], map_chr(scales, "id"))]]$total) ||
+                    isTRUE(scales[[match(pr[2], map_chr(scales, "id"))]]$total))) return(NULL)
   cor_row(composites, pr[1], pr[2]) |>
     mutate(var1 = pr[1], var2 = pr[2],
            instrument_1 = inst_of[[pr[1]]], instrument_2 = inst_of[[pr[2]]],
            predictor = pr[1], outcome = pr[2], level = "composite", .before = 1)
 })) |>
   mutate(family = if_else(var1 %in% headline_scales & var2 %in% headline_scales,
-                          "B: headline cross-instrument scores",
-                          "C: detail cross-instrument scores"),
+                          "B: primary survey measure associations",
+                          "C: additional survey measure associations"),
          status = "exploratory") |>
   add_adjust()
-prim_b <- comp_cors |> filter(startsWith(family, "B"))
-prim_c <- comp_cors |> filter(startsWith(family, "C"))
+prim_b <- comp_cors |> filter(startsWith(family, "B:"))
+prim_c <- comp_cors |> filter(startsWith(family, "C:"))
 
-note("family B (headline): ", nrow(prim_b), " tests | BH: ", sum(prim_b$survives_bh),
+note("primary measure associations: ", nrow(prim_b), " tests | BH: ", sum(prim_b$survives_bh),
      " | Bonferroni: ", sum(prim_b$survives_bonf))
-note("family C (detail):   ", nrow(prim_c), " tests | BH: ", sum(prim_c$survives_bh),
+note("additional measure associations: ", nrow(prim_c), " tests | BH: ", sum(prim_c$survives_bh),
      " | Bonferroni: ", sum(prim_c$survives_bonf))
 print(as.data.frame(prim_b |> arrange(p_bh) |>
                       head(12) |>
@@ -936,7 +957,8 @@ design_checks <- bind_rows(lapply(headline_scales, function(sc) {
   arrange(term, p)
 
 write_csv(design_checks, file.path(CFG$out_dir, "15_design_checks_order_topic.csv"))
-note("design checks: ", nrow(design_checks), " tests (10 scores x 3 terms); BH survivors: ",
+note("design checks: ", nrow(design_checks), " tests (", length(headline_scales),
+     " scores x 3 terms); BH survivors: ",
      sum(design_checks$survives_bh))
 print(as.data.frame(design_checks |> filter(survives_bh | term == "topic") |>
                       select(score, term, f, p, p_bh, survives_bh)),
@@ -1208,8 +1230,12 @@ mod_pairs <- tribble(
   "b_value",      "a_total",
   "b_cost",       "a_total",
   "b_intention",  "a_total",
-  "b_value",      "w_total",
-  "b_cost",       "w_total"
+  "b_value",      "w_process",
+  "b_cost",       "w_process",
+  "b_value",      "w_physical",
+  "b_cost",       "w_physical",
+  "b_value",      "w_timeeffort",
+  "b_cost",       "w_timeeffort"
 )
 
 set.seed(CFG$seed)
@@ -1408,22 +1434,17 @@ write_csv(comp_cors, file.path(CFG$out_dir, "09_composite_correlations.csv"))
 write_csv(comp_cors |> arrange(family, rank_strength),
           file.path(CFG$out_dir, "09_composite_correlations_ranked.csv"))
 
-# Blank cells are same-instrument pairs, which are measurement questions, not
-# tests. Markers come from each pair's own family (B or C).
+# Markers use BH and Bonferroni corrections within the primary or additional
+# measure association group.
 plot_map <- function(plot_scores, file_stem, title, subtitle, size) {
   plot_labels <- setNames(paste0(inst_of[plot_scores], ": ", scale_labels[plot_scores],
                                  ifelse(tier_of[plot_scores] == "detail", " (detail)", "")),
                           plot_scores)
   # Lower triangle: earlier score in plot order on x, later score on y.
-  # Within-survey cells come from the full matrix for context; they are not
-  # tests, so they are faded and carry no marker.
   tests <- comp_cors |>
     filter(var1 %in% plot_scores, var2 %in% plot_scores) |>
-    transmute(var1, var2, estimate, p_bh, p_bonf, within = FALSE)
-  within <- expand.grid(var1 = plot_scores, var2 = plot_scores, stringsAsFactors = FALSE) |>
-    filter(var1 != var2, inst_of[var1] == inst_of[var2]) |>
-    mutate(estimate = comp_mat[cbind(var1, var2)], p_bh = NA_real_, p_bonf = NA_real_, within = TRUE)
-  heat_data <- bind_rows(tests, within) |>
+    transmute(var1, var2, estimate, p_bh, p_bonf)
+  heat_data <- tests |>
     mutate(first = match(var1, plot_scores) < match(var2, plot_scores),
            a = if_else(first, var1, var2), b = if_else(first, var2, var1),
            var1 = a, var2 = b) |>
@@ -1432,16 +1453,14 @@ plot_map <- function(plot_scores, file_stem, title, subtitle, size) {
     bind_rows(tibble(var1 = plot_scores, var2 = plot_scores, estimate = 1,
                      within = FALSE, diag = TRUE)) |>
     mutate(
-      sig = case_when(within | diag ~ "", p_bonf < CFG$alpha ~ "**", p_bh < CFG$alpha ~ "*", TRUE ~ ""),
+      sig = case_when(diag ~ "", p_bonf < CFG$alpha ~ "**", p_bh < CFG$alpha ~ "*", TRUE ~ ""),
       cell_label = if_else(diag, "", sprintf("%.2f%s", estimate, sig)),
       var1 = factor(var1, levels = plot_scores),
       var2 = factor(var2, levels = rev(plot_scores))
     )
   p <- ggplot(heat_data, aes(var1, var2, fill = estimate)) +
-    geom_tile(aes(alpha = if_else(within, 0.35, 1)), color = "white", linewidth = 0.6) +
-    geom_text(aes(label = cell_label, color = within), size = 3.1) +
-    scale_alpha_identity() +
-    scale_color_manual(values = c(`FALSE` = "#17212b", `TRUE` = "#8a8f96"), guide = "none") +
+    geom_tile(color = "white", linewidth = 0.6) +
+    geom_text(aes(label = cell_label), size = 3.1, color = "#17212b") +
     scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8",
                          midpoint = 0, limits = c(-1, 1), name = "Spearman\nrho") +
     scale_x_discrete(labels = unname(plot_labels[plot_scores])) +
@@ -1458,13 +1477,13 @@ plot_map <- function(plot_scores, file_stem, title, subtitle, size) {
   ggsave(file.path(CFG$plot_dir, paste0(file_stem, ".pdf")), p,
          width = size[1], height = size[2], bg = "white")
 }
-plot_map(headline_scales, "Headline_Correlation_Map",
-         "Headline scores: cross-survey correlations",
-         "Spearman rho between headline scores. Faded cells are within-survey pairs, shown for context and not tested.\n* survives BH; ** survives Bonferroni within family B (headline).",
+plot_map(headline_scales, "Survey_Measure_Correlations",
+         "Correlations among primary survey measures",
+         "Spearman rho. * survives Benjamini–Hochberg correction; ** survives Bonferroni correction across primary measure pairs.",
          c(11, 9))
-plot_map(comp_scales, "Detail_Correlation_Map",
-         "All scores, including detail-tier subscales and totals",
-         "Spearman rho. Faded cells are within-survey pairs, shown for context and not tested (a total vs its own parts is a part-whole overlap).\nMarkers use each pair's own family: B (both headline) or C (any detail score).",
+plot_map(comp_scales, "All_Survey_Measure_Correlations",
+         "All survey measures, including additional scores and totals",
+         "Spearman rho. Marker corrections use the pair's primary or additional measure group; within-survey total and component pairs are excluded because they overlap by construction.",
          c(15, 12))
 
 # Item membership maps show the exact statement text behind each candidate
@@ -1595,7 +1614,7 @@ md <- c(
   "All WLSMV models warn that the parameter covariance matrix is not positive",
   "definite: there are more sample statistics (thresholds + polychoric r) than",
   "participants, so standard errors are approximate. KMO is an EFA screen only.",
-  "WSE has no CFA: its source groups came from an exploratory PCA. AI Reflection",
+  "WSE's source groups came from an exploratory PCA; their headline priority is a project scoring choice, not validation. The 20-item total remains a secondary comparison. AI Reflection",
   "has no CFA: it is a local scale whose groups came from our own EFA.",
   "",
   "## Score tiers",
@@ -1604,10 +1623,11 @@ md <- c(
           paste(scale_labels[headline_scales], collapse = ", ")),
   sprintf("- Detail (%d): %s.", sum(manifest$tier == "detail"),
           paste(scale_labels[manifest$scale[manifest$tier == "detail"]], collapse = ", ")),
-  "- Headline scores pass all three checks: defined by the source (or by item",
-  "  wording for the local AI Reflection scale), separable in this sample, and",
-  "  reliable. Detail scores fail at least one. Tiers were fixed before looking",
-  "  at the correlations below; do not move a score between tiers after the fact.",
+  "- Headline denotes the scores prioritized for reporting. Most follow source",
+  "  structures and show usable reliability; WSE's source PCA groups are",
+  "  prioritized by project decision despite mixed factor-count evidence.",
+  "  The WSE total remains a secondary comparison. Tiers are reporting choices,",
+  "  not proof of validation, and were not all fixed before results were seen.",
   "",
   "## Visual summaries",
   "",
@@ -1692,9 +1712,9 @@ md <- c(
           value_facet_r),
   sprintf("  Knowledge has a strong ceiling (%.0f%% of answers at the top), which limits its correlations.",
           100 * manifest$pct_items_at_max[manifest$scale == "b_knowledge"]),
-  sprintf("- WSE: total alpha %s; detail subscale alphas %s. Parallel analysis suggests",
+  sprintf("- WSE: total alpha %s; source-group alphas %s. Parallel analysis suggests",
           alpha_range("w_total"), alpha_range(c("w_process", "w_physical", "w_timeeffort"))),
-  sprintf("  %s factors, but fit indices disagree on k and several items load weakly, so the total is the headline score.",
+  sprintf("  %s factors, but fit indices disagree on k and several items load weakly; source groups are headlines by project choice and the total remains secondary.",
           parallel_summary$parallel_k[parallel_summary$instrument == "WSE"]),
   sprintf("- AI Reflection (EFA only): 1 vs 2 vs 3 factors BIC %.1f / %.1f / %.1f, TLI %.3f / %.3f / %.3f;",
           airef_efa_k$bic[1], airef_efa_k$bic[2], airef_efa_k$bic[3],
@@ -1740,6 +1760,9 @@ md <- c(
   "  here so high = more perceived cost, which is the source paper's direction.",
   "- The WSE instrument was administered on five anchors (0/25/50/75/100) and",
   "  mapped losslessly to 1-5. Reliability is on the 5-point metric.",
+  "- The source suggested replacing its weak original item 19 with a writing-",
+  "  resources item but did not test the replacement's factor placement; this",
+  "  analysis places it in Time/Effort as a project scoring decision.",
   "- Every p-value is adjusted within its own family only. Values in different",
   "  families are not comparable and are not ranked against each other.",
   "- All analyses are post hoc and exploratory; adjusted p-values do not turn",

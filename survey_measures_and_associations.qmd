@@ -1,12 +1,11 @@
 ---
-title: "Funnel Report: From Cleaned Data to the Headline Map"
+title: "Survey Measures and Associations"
 format:
   html:
     toc: true
     toc-depth: 3
     embed-resources: true
     css: styles.css
-output-dir: "funnel_report"
 execute:
   echo: false
   warning: false
@@ -24,7 +23,9 @@ out <- "funnel_out"
 stopifnot(file.exists(file.path(out, "FINDINGS.csv")))
 rd <- function(f) read_csv(file.path(out, f), show_col_types = FALSE)
 
-manifest   <- rd("01_scoring_manifest.csv")
+manifest   <- read_csv(file.path(out, "01_scoring_manifest.csv"),
+                       col_types = cols(items = col_character()),
+                       show_col_types = FALSE)
 membership <- rd("01_score_membership.csv")
 scores     <- rd("01_participant_scores.csv")
 measure    <- rd("02_measurement.csv")
@@ -40,10 +41,11 @@ findings   <- rd("FINDINGS.csv")
 sens       <- rd("07_sensitivity.csv")
 
 lab <- setNames(manifest$display_label, manifest$scale)
-lab["art_net_real_minus_fake (prior exposure)"] <- "ART net"
+lab["art_net_real_minus_fake (prior exposure)"] <- "Author recognition score"
 lab_s <- setNames(paste0(manifest$instrument, ": ", manifest$display_label), manifest$scale)
-lab_s["art_net_real_minus_fake (prior exposure)"] <- "ART net (real − fake authors)"
-headline_order <- manifest$scale[manifest$tier == "headline"]
+lab_s["art_net_real_minus_fake (prior exposure)"] <- "Author recognition score (real authors − false alarms)"
+primary_order <- manifest$scale[manifest$tier == "headline"]
+survey_of <- setNames(manifest$instrument, manifest$scale)
 f2 <- function(x) sprintf("%.2f", x)
 f3 <- function(x) sprintf("%.3f", x)
 show <- function(d, ...) kable(d, ...)
@@ -57,296 +59,188 @@ q17_n <- findings |> filter(startsWith(family, "Q:")) |> pull(n) |> max()
 item_id <- function(x) str_extract(x, "^[^:]+")
 ```
 
-This report reads the outputs of `funnel.R` (`Rscript funnel.R` first). It
-re-estimates nothing except the WSE factor-count checks in
-@sec-wse, which are fast and not saved by the funnel. Everything here is
-exploratory and post hoc: n = `r n_main`, one sample, no replication
-(Q17 tables and plots use n = `r q17_n`; see §1).
+This report describes how survey responses were prepared and scored, how the
+resulting measures relate to one another, and how those measures relate to
+author recognition performance. It is organized to make the study's findings
+and scoring decisions accessible for manuscript writing.
 
-For the before-and-after comparison with the old 18-script pipeline, see
-`explain/README.md` and the figures in `explain/`.
+# 1. Cleaning the data and defining the sample
 
-# 1. From cleaned data to the analysis sample
+The raw survey exports were checked for incomplete records, duplicate
+submissions, and straight-line response patterns. Duplicate attempts were
+reviewed and resolved by retaining the most complete, usable submission.
+Flagged participant records were also manually reviewed against the survey
+audit materials, including recordings, before final inclusion decisions.
+Practice and test records were excluded. These steps produced a final analysis
+sample of **82 participants**, each with complete, usable data from all four
+administered surveys.
 
-- **Sample:** `r n_main` participants with complete records on all four
-  surveys, session order, and the Author Recognition Test (ART). That n is
-  used in every table and plot unless a caption says otherwise.
-- **Q17:** AI-tool use is available for `r q17_n` of those `r n_main` (one
-  straight-line Q17 submission is excluded). Q17 analyses and plots are
-  n = `r q17_n`.
-- **Sessions:** each participant wrote once alone and once with an LLM, in
-  counterbalanced order (`r sum(scores$sess_order == "Traditional_First")`
-  Traditional_First, `r sum(scores$sess_order == "AI_First")` AI_First).
-  IMI and WSE were answered after the writing-alone session; Beliefs about AI
-  and AI Reflection after the AI session.
-- **Scoring rules, applied once:**
-  - IMI reverse-worded items (3, 4, 13, 15, 18) arrive already reverse-scored.
-  - Beliefs cost items (17-20) arrive reverse-coded; they are flipped back
-    once so a high score means more perceived cost, as in Chan & Zhou.
-  - WSE was a 0-100 slider with five stops (0/25/50/75/100), mapped exactly
-    to 1-5.
-- **No items are dropped.** Every score is the plain mean of its items
-  (not a factor score).
+One of the 82 participants gave a straight-line response to the survey's
+question about AI-tool use. That response is omitted only from analyses of
+that survey question; all other analyses use the full 82-person sample.
 
-# 2. Measurement decisions
+Participants completed one writing session alone and one with an LLM, in
+counterbalanced order. The IMI and writing self-efficacy survey (WSE) followed
+the writing-alone session; Beliefs about AI and AI Reflection followed the
+LLM session.
 
-## 2.1 The rule: CFA when a structure exists, EFA when it does not
+# 2. How survey responses become scores
 
-| Survey | What the source did | Our check | Why |
-|---|---|---|---|
-| Beliefs about AI (Chan & Zhou, 2023) | Three separate CFAs (Knowledge, Value with three facets, Cost); no EFA "due to this strong theoretical basis"; scored item totals; Pearson r | CFA, replicating their three models, plus combined models | A theory-defined structure exists, so we test it |
-| IMI (Ryan; Deci & Ryan) | Subscale means; "investigators perform their own factor analyses on new data sets" | CFA of the three subscales; EFA as a supplement | The subscales are long established (McAuley, Duncan & Tammen, 1989, used CFA) |
-| WSE / PSWSES (Schmidt & Alexander, 2012) | Exploratory PCA with varimax, three components; every analysis used the overall mean | EFA, factor-count checks, omega hierarchical | Their groups were descriptive, so there is no tested structure to confirm |
-| AI Reflection (local) | No source | EFA only, comparing 1-3 factors | Custom scale; its groups came from our own EFA on this sample, so a CFA would only re-fit that EFA |
+We use the published scoring structure for each survey, noting how that
+structure was developed and supported. The IMI has long-standing subscales;
+Chan and Zhou’s Beliefs about AI groups were theory-led and evaluated with
+CFA; WSE uses groupings recommended from the source study’s exploratory
+analysis. Scores are item means, so they remain on the response scale and are
+straightforward to interpret.
 
-KMO is a screen for EFA only; it is not a CFA requirement.
+## 2.1 Previously published scoring approaches
 
-## 2.2 KMO and the old pipeline's gate
+Chan and Zhou developed their Beliefs about AI items from Expectancy-Value
+Theory and organized them into four broad sections: Knowledge (5 items),
+Perceived Value (11), Perceived Cost (4), and Intention (2). They divided
+Perceived Value into Attainment (items 7–10), Intrinsic (11–13), and Utility
+(14–17), reflecting different reasons a behavior may be valued: importance,
+enjoyment, and practical usefulness. Their analyses tested the Knowledge,
+full Value, and Cost item groups with separate confirmatory factor models; the
+three facets are subdivisions of the Value items. We follow those item
+groupings. Because the facets overlap strongly in our sample, we foreground
+the full Value score and show the facets as supporting detail.
 
-```{r kmo}
-measure |>
-  transmute(Survey = instrument, Items = p,
-            `Pearson KMO` = f3(kmo_pearson),
-            `Polychoric KMO` = if_else(is.na(kmo_polychoric), "not estimable", f3(kmo_polychoric)),
-            `Smallest eigenvalue (polychoric)` = f3(min_eig_poly)) |>
-  show()
-```
+The IMI uses its established Interest/Enjoyment, Perceived Competence, and
+Effort/Importance subscales. We apply those published item groupings and score
+each subscale as its item mean.
 
-The old pipeline stopped Beliefs at "KMO below .50". The polychoric matrix
-for Beliefs has a negative eigenvalue: the pairwise estimates contradict each
-other, because Knowledge answers pile up at the top (66% at the maximum).
-Inverting a near-broken matrix makes KMO collapse for every item at once.
-The Pearson KMO on the same data is `r f2(measure$kmo_pearson[measure$instrument == "Beliefs"])`.
-The gate was reacting to an estimation problem, not to unrelated items, and
-it led to dropping the whole Knowledge block.
+For writing self-efficacy (WSE), we use the item groupings recommended in the
+PSWSES paper; we treat these as source-recommended scoring groups rather than
+established subscales. The authors used principal-components analysis with varimax
+rotation in a sample of 505 students, then reviewed the groups with writing
+experts. Their three recommended groupings are Local/Global Writing Process
+Knowledge, Physical Reaction, and Time/Effort. We applied the authors'
+subsequent item reassignment: item 10 to Time/Effort and items 13 and 15 to
+Local/Global Writing Process Knowledge; item 3 remains in both Process and
+Time/Effort as in the source. The paper found its original item 19 did not
+load clearly and suggested replacing it; our survey includes the proposed
+writing-resources replacement, which we assign to Time/Effort. In our sample,
+the group means have alpha values of .89, .74, and .61, respectively (see
+Section 3). The five response points (0, 25, 50, 75, 100) are expressed on a
+1–5 scale.
 
-## 2.3 CFA results
+Reverse-worded IMI statements (items 3, 4, 13, 15, and 18) are already
+oriented in the supplied survey data. Beliefs about AI cost statements
+(items 17–20) are also supplied in reverse-coded form; we flip them back so
+that higher scores consistently mean greater perceived cost. These are the
+items that are reverse-coded for the reported scores.
 
-```{r cfa}
-cfa |>
-  transmute(Model = model, Factors = factors, Items = p, df,
-            CFI = f3(cfi), TLI = f3(tli), RMSEA = f3(rmsea), SRMR = f3(srmr),
-            `MLR CFI` = if_else(is.na(mlr_cfi), "NA", f3(mlr_cfi)),
-            `MLR RMSEA` = if_else(is.na(mlr_rmsea), "NA", f3(mlr_rmsea)),
-            Note = note) |>
-  show()
-```
+## 2.2 AI Reflection: a study-specific grouping
 
-How to read this table:
-
-- **WLSMV** (ordinal) is the primary estimator. **MLR** treats answers as
-  numbers and is a sensitivity check. WLSMV CFI runs optimistic at N = 82.
-- **SRMR** under .08 means the model reproduces the observed correlations
-  well (Hu & Bentler, 1999). **RMSEA** runs high when a model has few
-  degrees of freedom and the sample is small (Kenny, Kaniskan & McCoach, 2015).
-- Our Chan & Zhou replications have the **same degrees of freedom** as theirs
-  (5, 41, 2), so they are the same models. Their SRMRs were .026, .040, .019
-  with N = 405.
-- Every WLSMV model warns that the parameter covariance matrix is not
-  positive definite. There are more sample statistics (thresholds plus
-  polychoric correlations) than participants, so standard errors are
-  approximate; loadings and fit are still usable.
-
-### Is splitting worth it? Nested comparisons and factor correlations
-
-```{r cfa-cmp}
-cfa_cmp |>
-  transmute(`Simpler model` = simpler, `More factors` = more_factors,
-            `Chi-square difference` = f2(chisq_diff), `df difference` = df_diff,
-            p = signif(p, 2)) |>
-  show()
-```
-
-A nested chi-square test nearly always favors more factors, so the factor
-correlations decide whether a split is meaningful. Above roughly .85, two
-factors are not separable in this sample (Brown, 2006).
-
-```{r fcors}
-fcors |>
-  filter(model %in% c("imi_3", "beliefs_6")) |>
-  transmute(Model = model, Pair = paste(factor_1, "x", factor_2),
-            r = f2(r), `95% CI` = paste0(f2(ci_low), " to ", f2(ci_high))) |>
-  show()
-```
-
-- **Beliefs value facets:** Attainment, Intrinsic and Utility correlate
-  .83-.93, and Attainment-Utility's interval reaches 1. Value is one headline
-  score; the facets are detail-tier.
-- **IMI:** .44-.59, clearly separable. Three headline scores.
-- **AI Reflection:** no CFA; see @sec-airef.
-
-## 2.4 IMI: does the EFA find the official subscales?
-
-```{r imi-efa}
-imi_efa <- efa_load |>
-  filter(instrument == "IMI") |>
-  select(item, item_text, MR1, MR2, MR3)
-imi_efa |>
-  mutate(across(c(MR1, MR2, MR3), f2),
-         `Official subscale` = case_when(item <= 7 ~ "Interest", item <= 13 ~ "Competence", TRUE ~ "Effort")) |>
-  rename(Item = item, Statement = item_text) |>
-  show()
-```
-
-Without being told the groups, the three-factor EFA recovers the official
-subscales for 17 of 18 items. Item 13 ("This was an activity that I couldn't
-do very well", reverse-scored) splits evenly between two factors and is the
-weakest CFA loading
-(`r f2(cfa_load$std_loading[cfa_load$model == "imi_3" & cfa_load$item == "i13"])`).
-The IMI's .60 loading rule describes how its developers built the
-subscales, not an instruction to delete items. We keep item 13 and check
-that nothing depends on it:
-
-```{r item13}
-s13 <- sens |> filter(str_detect(variant, "item 13")) |>
-  mutate(version = if_else(str_detect(variant, "without"), "without 13", "with 13"),
-         other = lab[str_remove(variant, ".* x ")]) |>
-  select(version, other, estimate) |>
-  pivot_wider(names_from = version, values_from = estimate)
-s13 |> transmute(`Competence correlated with` = other,
-                 `With item 13` = f2(`with 13`), `Without item 13` = f2(`without 13`),
-                 Change = f2(`without 13` - `with 13`)) |>
-  show()
-```
-
-## 2.5 WSE: one total or three subscales? {#sec-wse}
-
-```{r wse-k}
-W <- read_csv("data_raw/WritingEfficacy_Wide.csv", show_col_types = FALSE)[, -1] / 25 + 1
-names(W) <- as.character(1:20)
-Rw <- suppressWarnings(polychoric(W, global = FALSE, correct = 0.5, smooth = FALSE))$rho
-k_fit <- map_dfr(1:4, function(k) {
-  f <- suppressWarnings(fa(Rw, k, n.obs = 82, fm = "minres", rotate = "oblimin", smooth = FALSE))
-  tibble(`Factors (k)` = k, RMSEA = f3(f$RMSEA[1]), TLI = f2(f$TLI), BIC = round(f$BIC))
-})
-map_k <- which.min(suppressWarnings(vss(Rw, n = 5, n.obs = 82, fm = "minres", plot = FALSE))$map)
-om <- suppressWarnings(omega(Rw, nfactors = 3, n.obs = 82, plot = FALSE, fm = "minres"))
-show(k_fit)
-```
-
-| Criterion | Suggests |
-|---|---|
-| RMSEA / TLI reach common cutoffs (RMSEA <= .05, TLI >= .90) | 3 factors |
-| Parallel analysis | `r parallel$parallel_k[parallel$instrument == "WSE"]` factors |
-| BIC (penalizes complexity) | 1 factor |
-| Velicer's MAP | `r map_k` factor |
-| Omega hierarchical (share of the total score due to one general factor) | `r f2(om$omega_h)`; ECV `r f2(om$ECV)` |
-
-The criteria disagree, which is itself the finding: there is no crisp
-subscale structure. Omega hierarchical of about .6 means one dominant general
-factor with real but smaller subfactors. Rules of thumb (Reise and
-colleagues) treat roughly .70-.80 as essentially one thing. Combined with the
-source authors scoring only the total, the 20-item mean is the headline WSE
-score (alpha `r f2(manifest$alpha[manifest$scale == "w_total"])`). The
-subscales stay in the detail tier, using the published groups adjusted so
-each item sits in one group; `explain/WSE_Group_Versions.csv` compares them
-with EFA-derived groups.
-
-## 2.6 AI Reflection: how many factors? {#sec-airef}
-
-```{r airef-k}
-airef_k |>
-  transmute(`Factors (k)` = k, RMSEA = f3(rmsea), TLI = f2(tli), BIC = round(bic),
-            `Factor correlation` = if_else(is.na(max_factor_r), "", f2(max_factor_r))) |>
-  show()
-```
-
-AI Reflection was written for this study, so there is no published structure
-to confirm. Its two groups came from the old pipeline's EFA on these same
-participants; a CFA would only re-fit that EFA, so the factor count is
-compared within EFA.
-
-Evidence is mixed and we do not treat 2 as confirmed. In this sample,
-parallel analysis suggests
-`r parallel$parallel_k[parallel$instrument == "AIRef"]`
-factors while BIC, TLI and RMSEA improve at 3. The old pipeline (n = 91,
-including salvage cases) pointed the other way: parallel analysis suggested
-3, but BIC and TLI favored 2, and the third factor rested mostly on one item.
-The 3-factor split is not stable across samples (here it pulls the two
-"I was satisfied" items apart, with item 1 loading .93). The 2-factor split
-is the same in both samples: items 1-3 (process: satisfied, enjoyed, easy)
-vs items 4-12 (learning and the final summary). We keep 2 for that
-cross-sample stability and a readable process/product reading — not because
-fit prefers it. Fit is modest at every k; both scores are exploratory and
-study-specific.
+AI Reflection was written for this study and has no published subscales. We
+use the two groups from our exploratory analysis: **Enjoyment & Satisfaction**
+(items 1–3) and **Ownership & Usefulness** (items 4–12). These labels reflect
+the content of the statements in each group. We score each group as the mean
+of its items.
 
 # 3. The scores
 
-Each score is the **mean of its items**. Tiers were fixed from measurement
-quality **before** looking at correlations.
-
-Three checks:
-
-1. **Defined** — source subscale, or clear item wording for the local AI Reflection scale.
-2. **Separable** — not glued together by very high factor correlations in this sample.
-3. **Reliable** — internal consistency usable as a score (alpha reported below).
-
-**Headline** = pass all three. **Detail** = fail at least one (still scored; used only in the appendix map).
+Each score is the **mean of its listed item responses**. “No. of items” is the
+number of statements averaged; “Items averaged” lists their item numbers.
+Some source-recommended groups intentionally share an item. “Mean (SD)” gives
+the participants' average score and its spread. “Cronbach's alpha” summarizes
+internal consistency for the group. Primary measures are emphasized in the
+main results; additional scores provide facets or overall summaries.
 
 ```{r scorecard}
-scorecard <- tribble(
-  ~scale, ~defined, ~separable, ~reliable_note, ~fails,
-  "b_knowledge",  "yes (Chan & Zhou)", "yes (single factor)", "alpha ok", "",
-  "b_value",      "yes (Chan & Zhou)", "yes (facets collapsed)", "alpha ok", "",
-  "b_cost",       "yes (Chan & Zhou)", "yes (single factor)", "alpha ok (lower)", "",
-  "b_intention",  "yes (Chan & Zhou)", "yes (2 items)", "alpha ok", "",
-  "b_attainment", "yes (Chan & Zhou facet)", "no (r .83–.93 with other value facets)", "alpha ok", "separable",
-  "b_intrinsic",  "yes (Chan & Zhou facet)", "no (r .83–.93 with other value facets)", "alpha ok", "separable",
-  "b_utility",    "yes (Chan & Zhou facet)", "no (r .83–.93 with other value facets)", "alpha ok", "separable",
-  "i_interest",   "yes (IMI)", "yes (CFA r .44–.59)", "alpha ok", "",
-  "i_competence", "yes (IMI)", "yes (CFA r .44–.59)", "alpha ok", "",
-  "i_effort",     "yes (IMI)", "yes (CFA r .44–.59)", "alpha ok", "",
-  "w_total",      "yes (authors scored total)", "yes (one total)", "alpha ok", "",
-  "w_process",    "weak (PCA groups, not CFA)", "mixed (factor-count criteria disagree)", "alpha ok", "defined / separable",
-  "w_physical",   "weak (PCA groups, not CFA)", "mixed (factor-count criteria disagree)", "alpha ok", "defined / separable",
-  "w_timeeffort", "weak (PCA groups, not CFA)", "mixed (factor-count criteria disagree)", "alpha low", "defined / separable / reliable",
-  "a_process",    "yes (item wording: process)", "yes (stable 2-factor split)", "alpha ok", "",
-  "a_product",    "yes (item wording: product)", "yes (stable 2-factor split)", "alpha ok", "",
-  "a_total",      "no (part–whole of both headline parts)", "n/a", "alpha ok", "defined"
+score_purpose <- tribble(
+  ~scale, ~purpose,
+  "b_knowledge", "Self-rated understanding of AI limits",
+  "b_value", "Perceived value and usefulness of AI",
+  "b_cost", "Perceived costs and concerns about AI",
+  "b_intention", "Intention to integrate AI",
+  "b_attainment", "Attainment value facet (supporting detail)",
+  "b_intrinsic", "Intrinsic value facet (supporting detail)",
+  "b_utility", "Utility value facet (supporting detail)",
+  "i_interest", "Interest and enjoyment",
+  "i_competence", "Perceived competence",
+  "i_effort", "Effort and importance",
+  "w_total", "Overall writing self-efficacy (supporting summary)",
+  "w_process", "Local/Global Writing Process Knowledge",
+  "w_physical", "Physical Reaction",
+  "w_timeeffort", "Time/Effort",
+  "a_process", "Enjoyment & Satisfaction",
+  "a_product", "Ownership & Usefulness",
+  "a_total", "Overall AI Reflection mean (supporting summary)"
 )
 desc |>
   left_join(manifest |> select(scale, display_label, tier, items), by = "scale") |>
-  left_join(scorecard, by = "scale") |>
+  left_join(score_purpose, by = "scale") |>
   arrange(desc(tier == "headline"), match(instrument, c("Beliefs", "IMI", "WSE", "AIRef"))) |>
-  transmute(Tier = tier, Survey = instrument, Score = display_label, Items = items,
-            Mean = f2(mean), SD = f2(sd), Alpha = f2(alpha),
-            Defined = defined, Separable = separable, Reliable = reliable_note,
-            `Fails (if detail)` = if_else(fails == "", "—", fails),
-            `At ceiling` = paste0(round(100 * pct_items_at_max), "%")) |>
+  transmute(Priority = if_else(tier == "headline", "Primary measure", "Additional score"),
+            Survey = instrument, Score = display_label, Meaning = purpose,
+            `No. of items` = str_count(items, ",") + 1L,
+            `Items averaged` = str_replace_all(items, ",", ", "),
+            `Mean (SD)` = paste0(f2(mean), " (", f2(sd), ")"),
+            `Cronbach's alpha` = f2(alpha)) |>
   show()
 ```
 
-Old pipeline names stay in parentheses on some labels. Knowledge has a strong
-ceiling, which limits how strongly it can correlate with anything.
-
-Exact item statements (filterable):
+Choose a survey to see the item statements for its scores. The table defaults
+to IMI and shows all matching items at once.
 
 ```{r membership}
-membership |>
-  arrange(desc(tier == "headline"), match(instrument, c("Beliefs", "IMI", "WSE", "AIRef")), scale, item) |>
-  transmute(Tier = tier, Survey = instrument, Score = display_label, Item = item, Statement = item_text) |>
-  long_table()
+membership_display <- membership |>
+  mutate(Survey = recode(instrument, AIRef = "AI Reflection"),
+         Tier = recode(tier, headline = "Primary measure", detail = "Additional score")) |>
+  arrange(desc(tier == "headline"), match(Survey, c("Beliefs", "IMI", "WSE", "AI Reflection")), scale, item) |>
+  transmute(Tier, Survey, Score = display_label, Item = item, Statement = item_text)
+
+survey_filter <- htmltools::tags$div(
+  class = "score-item-filter",
+  htmltools::tags$label(`for` = "score-survey-filter", "Survey"),
+  htmltools::tags$select(
+    id = "score-survey-filter",
+    htmltools::tags$option("IMI", value = "IMI", selected = "selected"),
+    htmltools::tags$option("Beliefs about AI", value = "Beliefs"),
+    htmltools::tags$option("Writing self-efficacy (WSE)", value = "WSE"),
+    htmltools::tags$option("AI Reflection", value = "AI Reflection"),
+    htmltools::tags$option("All surveys", value = "all")
+  )
+)
+
+membership_table <- datatable(
+  membership_display,
+  rownames = FALSE,
+  filter = "none",
+  elementId = "score-item-table",
+  options = list(
+    dom = "t", paging = FALSE, searching = TRUE, info = FALSE,
+    ordering = FALSE, autoWidth = FALSE
+  ),
+  callback = JS("\n    var surveyColumn = table.column(1);\n    surveyColumn.search('^IMI$', true, false).draw();\n    $('#score-survey-filter').on('change', function() {\n      var value = this.value;\n      var query = value === 'all' ? '' : '^' + $.fn.dataTable.util.escapeRegex(value) + '$';\n      surveyColumn.search(query, true, false).draw();\n    });\n  ")
+)
+
+htmltools::tagList(survey_filter, membership_table)
 ```
 
-# 4. Headline map
+# 4. Correlations among survey measures
 
 Every cell is a Spearman correlation between two **item-means** (not factor
-scores). Labels mix source-defined subscales (Beliefs, IMI, WSE total) and
-the EFA-stable AI Reflection process/product means. Axis labels already
+scores). Labels mix published item groupings (Beliefs, IMI, and WSE) and the
+two groups from the AI Reflection exploratory analysis. Axis labels already
 prefix the survey. Caption on the figure: n = `r n_main`.
 
-![](funnel_out/plots/Headline_Correlation_Map.png)
+![](funnel_out/plots/Survey_Measure_Correlations.png)
 
-Faded cells are within-survey pairs (context only; not tested). Stars mark
-family B: 35 cross-survey headline pairs, BH and Bonferroni within that
-family.
+All displayed pairs are tested. Stars show associations that survive
+Benjamini–Hochberg (*) or Bonferroni (**) correction across the primary
+measure pairs. The plot reports Spearman correlations between item means.
 
-Cross-survey pairs that survive BH, sorted by rho (same information as the
-starred cells; no second Score A / Score B table):
+Between-survey primary measure pairs that survive Benjamini–Hochberg
+correction, sorted by rho. Within-survey pairs remain tested and visible in
+the correlation map above.
 
-```{r family-b-bars, fig.width = 9, fig.height = 6.5}
+```{r family-b-bars, fig.width = 13, fig.height = 8}
 b_hits <- findings |>
-  filter(startsWith(family, "B:"), survives_bh) |>
+  filter(startsWith(family, "B:"), survives_bh,
+         survey_of[predictor] != survey_of[outcome]) |>
   mutate(pair = paste0(lab_s[predictor], "\n× ", lab_s[outcome]),
          pair = factor(pair, levels = pair[order(estimate)]),
          star = if_else(survives_bonf, "**", "*"))
@@ -361,12 +255,12 @@ ggplot(b_hits, aes(estimate, pair, fill = estimate)) +
                      breaks = seq(-0.4, 0.6, 0.2),
                      expand = expansion(mult = 0)) +
   labs(x = "Spearman rho", y = NULL,
-       title = "Headline cross-survey hits",
-       subtitle = paste0("n = ", n_main, "; * survives BH; ** survives Bonferroni (family B)")) +
-  theme_minimal(base_size = 11) +
+       title = "Cross-survey primary measure associations",
+       subtitle = paste0("n = ", n_main, "; * survives Benjamini–Hochberg; ** survives Bonferroni correction")) +
+  theme_minimal(base_size = 10) +
   theme(panel.grid.major.y = element_blank(),
-        axis.text.y = element_text(size = 8, lineheight = 1.05),
-        plot.margin = margin(10, 14, 14, 10))
+        axis.text.y = element_text(size = 8, lineheight = 0.95),
+        plot.margin = margin(10, 18, 14, 18))
 ```
 
 ## Comparison with Chan & Zhou (Pearson r with Intention)
@@ -389,7 +283,7 @@ the opposite way, likely helped by its ceiling; treat it as a divergence.
 
 # 5. Author Recognition Test
 
-**ART net** = number of real authors recognized minus number of fake-author
+**Author recognition score** = number of real authors recognized minus number of fake-author
 foils endorsed. It indexes prior print exposure, not an outcome of the AI
 session. False alarms are rare
 (`r round(100 * mean(scores$art_fake_false_alarms == 0))`% of participants
@@ -399,7 +293,7 @@ picked none), so hits and net are nearly the same number.
 findings |>
   filter(startsWith(family, "D:")) |>
   arrange(p_bh) |>
-  transmute(Score = lab_s[predictor], `rho with ART net` = f2(estimate),
+  transmute(Score = lab_s[predictor], `Correlation with author recognition` = f2(estimate),
             `95% CI` = paste0(f2(ci_low), " to ", f2(ci_high)),
             `p (BH)` = signif(p_bh, 2), Verdict = verdict) |>
   show()
@@ -408,16 +302,17 @@ findings |>
 ```{r art-heatmap, fig.width = 6.2, fig.height = 5.2}
 findings |>
   filter(startsWith(family, "D:")) |>
-  mutate(score = factor(lab_s[predictor], levels = rev(lab_s[headline_order])),
+  mutate(score = factor(lab_s[predictor], levels = rev(lab_s[primary_order])),
          star = case_when(survives_bonf ~ "**", survives_bh ~ "*", TRUE ~ "")) |>
-  ggplot(aes("ART net\n(real − fake)", score, fill = estimate)) +
+  ggplot(aes("Author recognition\n(real − false alarms)", score, fill = estimate)) +
   geom_tile(color = "white", linewidth = 0.8) +
   geom_text(aes(label = paste0(f2(estimate), star)), size = 3.6) +
   scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8", midpoint = 0,
                        limits = c(-1, 1), name = "Spearman\nrho") +
-  labs(x = "ART net (real authors − fake foils)", y = "Headline score (survey: name)",
-       title = "Headline scores × ART net",
-       subtitle = paste0("n = ", n_main, "; * survives BH; ** survives Bonferroni (10 tests)")) +
+  labs(x = "Author recognition score (real authors − false alarms)", y = "Survey measure",
+       title = "Survey measures and author recognition",
+       subtitle = paste0("n = ", n_main, "; * survives BH; ** survives Bonferroni (",
+                         sum(manifest$tier == "headline"), " tests)")) +
   theme_minimal(base_size = 11) +
   theme(panel.grid = element_blank())
 ```
@@ -431,13 +326,15 @@ associations; they do not establish confounding.
 
 # 6. Design checks: order and article topic
 
-Question: do **average** headline scores depend on which session came first,
+Question: do **average primary measure scores** depend on which session came first,
 or on which article topic that survey followed?
 
-Method: for each of the 10 headline scores, a Type II ANOVA with
+Method: for each of the 12 primary measures, a Type II ANOVA with
 `session order × article topic`. Topic is the article for the session that
 survey followed (Beliefs and AI Reflection → AI session topic; IMI and WSE →
-writing-alone topic). BH is applied within each term across the 10 scores.
+writing-alone topic). BH is applied within each term across the 12 scores. The
+WSE reporting-priority change followed initial results, so its score-level
+checks are exploratory rather than prespecified.
 Tool (AI vs alone) cannot be tested: each survey was given after only one
 session type.
 
@@ -462,8 +359,7 @@ if (length(topic_hit) + length(order_hit) + length(ix_hit) == 0) {
   if (length(topic_hit)) {
     cat("**Topic** survives BH for: ", paste(lab_s[topic_hit], collapse = ", "),
         ". That means mean levels of those scores differ by article. ",
-        "The table below is **not** another headline-map ranking: it re-checks ",
-        "family B/D pairs that involve those scores as **partial Spearman** ",
+        "The table below re-checks associations involving those measures as **partial Spearman** ",
         "correlations controlling for topic (raw rho vs topic-controlled rho).\n\n",
         sep = "")
     if (file.exists(file.path(out, "15b_topic_partial_correlations.csv"))) {
@@ -479,15 +375,15 @@ if (length(topic_hit) + length(order_hit) + length(ix_hit) == 0) {
 }
 ```
 
-# 7. AI usage (Q17)
+# 7. AI-tool use
 
 n = `r q17_n` (one of the `r n_main` analysis participants is dropped for a
-straight-line Q17 submission).
+straight-line response to the AI-tool use survey).
 
-**Why ChatGPT as the main tool score.** Among the `r q17_n` usable Q17 rows,
+**Why ChatGPT as the main tool score.** Among the `r q17_n` usable responses to the AI-tool use survey,
 ChatGPT is by far the most-used AI tool on the checklist (rated 3+ "rarely"
 or more). Grammarly is common too but is an editor, so it is excluded from
-breadth. The two declared Q17 scores are: ChatGPT frequency (single 1–5 item)
+breadth. The two reported AI-tool use scores are: ChatGPT frequency (single 1–5 item)
 and breadth (count of other tools rated 3+, Grammarly excluded). Means across
 all tools, bucket proportions, and "primary model" groups are not used.
 
@@ -540,7 +436,7 @@ tool_use |>
   scale_x_continuous(limits = c(0, 110), breaks = seq(0, 100, 25),
                      expand = expansion(mult = 0)) +
   labs(x = "% rating tool 3+ (rarely or more)", y = NULL,
-       title = "Most-used tools on Q17",
+       title = "Most-used AI tools",
        subtitle = paste0("n = ", q17_n, "; ChatGPT highlighted")) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.major.y = element_blank(),
@@ -553,7 +449,7 @@ q17_lab <- c(q17_chatgpt = "ChatGPT frequency (1–5)", q17_breadth = "Breadth (
 findings |>
   filter(startsWith(family, "Q:")) |>
   arrange(p_bh) |>
-  transmute(Q17 = q17_lab[predictor], Score = lab_s[outcome], rho = f2(estimate),
+  transmute(`AI-tool use score` = q17_lab[predictor], Score = lab_s[outcome], rho = f2(estimate),
             `95% CI` = paste0(f2(ci_low), " to ", f2(ci_high)),
             `p (BH)` = signif(p_bh, 2), Verdict = verdict) |>
   show()
@@ -563,15 +459,15 @@ findings |>
 findings |>
   filter(startsWith(family, "Q:")) |>
   mutate(q17 = factor(q17_lab[predictor], levels = q17_lab),
-         score = factor(lab_s[outcome], levels = rev(lab_s[headline_order])),
+         score = factor(lab_s[outcome], levels = rev(lab_s[primary_order])),
          star = case_when(survives_bonf ~ "**", survives_bh ~ "*", TRUE ~ "")) |>
   ggplot(aes(q17, score, fill = estimate)) +
   geom_tile(color = "white", linewidth = 0.8) +
   geom_text(aes(label = paste0(f2(estimate), star)), size = 3.4) +
   scale_fill_gradient2(low = "#bd4b3a", mid = "white", high = "#3b73a8", midpoint = 0,
                        limits = c(-1, 1), name = "Spearman\nrho") +
-  labs(x = "Q17 score", y = "Headline score (survey: name)",
-       title = "Q17 × headline scores",
+  labs(x = "AI-tool use score", y = "Survey measure",
+       title = "AI-tool use and survey measures",
        subtitle = paste0("n = ", q17_n, "; * survives BH; ** survives Bonferroni (20 tests)")) +
   theme_minimal(base_size = 11) +
   theme(panel.grid = element_blank())
@@ -592,7 +488,7 @@ family; order only aids reading. (R) marks reverse-scored IMI items. Only
 survivors are shown; full lists:
 `funnel_out/10_item_x_score_ranked.csv` and `11_item_x_item_ranked.csv`.
 
-## Items x headline scores
+## Item-level associations with primary measures
 
 ```{r item-score-bars, fig.width = 9, fig.height = 6.5}
 # Axis uses item IDs only; full wording is in the table under the plot.
@@ -615,7 +511,7 @@ ggplot(ixs_top, aes(rho, label, fill = rho)) +
                                 max(ixs_top$rho) + 0.12),
                      expand = expansion(mult = 0)) +
   labs(x = "Spearman rho", y = NULL,
-       title = "Top 20 item × headline-score hits",
+       title = "Top 20 item–measure associations",
        subtitle = paste0("n = ", n_main, "; sorted by rho; # = reading-list rank; full wording in table; * BH; ** Bonferroni")) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.major.y = element_blank(),
@@ -711,24 +607,24 @@ bind_rows(
   long_table()
 ```
 
-# Appendix A. Detail map
+# Appendix A. Additional measure correlations
 
-![](funnel_out/plots/Detail_Correlation_Map.png)
+![](funnel_out/plots/All_Survey_Measure_Correlations.png)
 
-Includes the three value facets, the WSE subgroups, and the AI Reflection
-total (all still item-means). Stars come from each pair's own family (B for
-headline pairs, C for pairs involving a detail score). Figure caption: n =
-`r n_main`.
+Includes the three value facets, the overall WSE mean, and the AI Reflection
+total (all still item-means). All displayed pairs are tested; stars indicate
+associations that survive correction within the primary or additional measure
+group. Within-survey correlations involving an overall total and one of its
+components are excluded because they overlap by construction.
 
-Does the detail tier find anything the headline scores miss? Each surviving
-detail correlation is listed next to its headline counterpart: the same pair
-with each detail score replaced by the headline score it belongs to. The AI
-Reflection total combines both headline parts, so it has no single
-counterpart.
+Does any additional measure show associations that differ from those for the
+primary measures? Each surviving additional-score correlation is listed next
+to a related primary-measure association where one exists. The overall WSE
+mean and AI Reflection total each combine multiple dimensions and therefore
+have no single counterpart.
 
 ```{r detail-check}
-parent <- c(b_attainment = "b_value", b_intrinsic = "b_value", b_utility = "b_value",
-            w_process = "w_total", w_physical = "w_total", w_timeeffort = "w_total")
+parent <- c(b_attainment = "b_value", b_intrinsic = "b_value", b_utility = "b_value")
 up <- function(x) ifelse(x %in% names(parent), parent[x], x)
 headline_hits <- findings |> filter(startsWith(family, "B:") | startsWith(family, "D:"))
 key <- function(a, b) paste(pmin(a, b), pmax(a, b))
@@ -736,22 +632,20 @@ findings |>
   filter((startsWith(family, "C:") | startsWith(family, "D2:")) & survives_bh) |>
   mutate(ha = up(predictor), hb = up(outcome),
          hit = match(key(ha, hb), key(headline_hits$predictor, headline_hits$outcome)),
-         counterpart = if_else(is.na(hit), "none (AI Reflection total)",
-                               paste0(lab[ha], " x ", lab[hb], ": ", f2(headline_hits$estimate[hit]),
-                                      " (", headline_hits$verdict[hit], ")"))) |>
+         counterpart = case_when(
+           !is.na(hit) ~ paste0(lab[ha], " x ", lab[hb], ": ", f2(headline_hits$estimate[hit]),
+                                " (", headline_hits$verdict[hit], ")"),
+           ha == "w_total" | hb == "w_total" ~ "no single counterpart (overall WSE mean)",
+           TRUE ~ "no single counterpart (AI Reflection total)")) |>
   arrange(p_bh) |>
-  transmute(`Detail pair` = paste(lab[predictor], "x", lab[outcome]), rho = f2(estimate),
-            Verdict = verdict, `Headline counterpart` = counterpart) |>
+  transmute(`Additional score pair` = paste(lab[predictor], "x", lab[outcome]), rho = f2(estimate),
+            Verdict = verdict, `Related primary association` = counterpart) |>
   long_table()
 ```
 
-Every surviving detail correlation repeats a headline correlation that also
-survives, at a similar size, with one exception: **WSE Process Knowledge x
-ART net** (rho = `r f2(findings$estimate[findings$predictor == "w_process" & startsWith(findings$family, "D2:")])`,
-BH) survives while WSE Total x ART net
-(`r f2(findings$estimate[findings$predictor == "w_total" & startsWith(findings$family, "D:")])`)
-does not. The old pipeline's Writing Competence factor showed the same link
-(.28). It is a detail-tier lead, not a headline finding.
+The WSE total-score comparison is retained as additional context; it does not
+map to any one WSE group. Read it alongside the three primary WSE group
+associations and the scoring limitations above.
 
 # Appendix B. References
 

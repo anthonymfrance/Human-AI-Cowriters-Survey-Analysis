@@ -6,7 +6,7 @@ This README is written for a public audience. It explains what each script does,
 
 The repository holds two analysis pipelines:
 
-- **Funnel analysis (current):** `funnel.R` and `funnel_report.qmd`. Each survey is scored the way its source paper scored it, using unit-weighted item means, and its structure is checked with CFA where a published structure exists and EFA where it does not. See [Funnel Analysis](#funnel-analysis-current) and `ANALYSIS_PLAN.md`.
+- **Survey measures and associations (current):** `funnel.R` and `survey_measures_and_associations.qmd`. Each survey is scored the way its source paper scored it, using unit-weighted item means, and its structure is checked with CFA where a published structure exists and EFA where it does not. See `ANALYSIS_PLAN.md`.
 - **Numbered pipeline (original, exploratory):** scripts `01`-`18` and `results.qmd`. Structures came from this sample's EFA, scored first with factor scores and later with composite means. It is still the source of the cleaned data, Q17, ART and order-effect outputs.
 
 ## Project History
@@ -132,7 +132,7 @@ Run:
 
 ```bash
 Rscript funnel.R
-quarto render funnel_report.qmd
+quarto render survey_measures_and_associations.qmd --output-dir survey_measures_and_associations
 ```
 
 `funnel.R` writes `funnel_out/` (CSVs, plots, `FINDINGS.csv`, `FUNNEL_SUMMARY.md`). The report reads those outputs. Random steps (parallel analysis, order permutations) use the fixed seed `CFG$seed`.
@@ -141,10 +141,10 @@ quarto render funnel_report.qmd
 | --- | --- | --- | --- |
 | IMI | Ryan; Deci & Ryan | CFA of the three subscales (EFA supplementary) | three subscale means |
 | Beliefs about AI | Chan & Zhou (2023) | CFA replicating their three models, plus combined models | Knowledge, Value, Cost, Intention means; value facets are detail-tier |
-| WSE / PSWSES | Schmidt & Alexander (2012) | EFA and factor-count checks (the source used PCA only) | 20-item mean; source groups are detail-tier |
+| WSE / PSWSES | Schmidt & Alexander (2012) | EFA and factor-count checks (the source used PCA only) | Source PCA groups as primary measures; 20-item mean retained as an additional comparison |
 | AI Reflection | local | EFA only, comparing 1-3 factors | items 1-3 and 4-12 means |
 
-`ANALYSIS_PLAN.md` states the scoring tiers and correlation families before results. `explain/` compares the old script `18` scores with the funnel scores (`Rscript explain/old_vs_headline.R`).
+`ANALYSIS_PLAN.md` documents the scoring tiers and correlation families, including decisions made after the initial results. `explain/` compares the earlier script 18 scores with the current scoring approach (`Rscript explain/old_vs_headline.R`).
 
 ## Comparison And Audit Scripts
 
@@ -264,7 +264,7 @@ Current locked measurement status:
 - `AIReflection`: factorable
 - `BeliefsAboutAI`: rejected by the KMO gate (polychoric KMO .13 on n = 91, after smoothing a non-positive-definite matrix); analyzed item by item later. The funnel shows the source structure does fit (see Project History)
 
-`AIReflection` is locked at 2 factors although parallel analysis suggested 3 on n = 91: the 3-factor solution fit no better and its third factor rested mostly on one item. See `funnel_report.qmd` section 2.6.
+`AIReflection` is locked at 2 factors although parallel analysis suggested 3 on n = 91: the 3-factor solution fit no better and its third factor rested mostly on one item. See `survey_measures_and_associations.qmd` section 2.6.
 
 Output folder:
 

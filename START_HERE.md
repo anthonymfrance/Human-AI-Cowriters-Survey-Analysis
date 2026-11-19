@@ -1,8 +1,8 @@
 # Cowriters Survey Analysis Folder Guide
 
-The current analysis is the funnel: run `Rscript funnel.R`, then
-`quarto render funnel_report.qmd`. See the "Funnel Analysis" section of
-`README.md` for its inputs. The numbered scripts below are the original
+Run `Rscript funnel.R`, then
+`quarto render survey_measures_and_associations.qmd`. See the survey measures
+and associations report and `README.md` for its inputs. The numbered scripts below are the original
 exploratory pipeline, which still produces the cleaned data.
 
 ## Numbered Pipeline

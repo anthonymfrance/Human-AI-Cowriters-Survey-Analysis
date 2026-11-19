@@ -32,4 +32,7 @@ for script in "${SCRIPTS[@]}"; do
   quarto render "$script" || { echo "FAILED at $script"; exit 1; }
 done
 
+echo "=== Rendering survey_measures_and_associations.qmd ==="
+quarto render survey_measures_and_associations.qmd --output-dir survey_measures_and_associations || { echo "FAILED at survey_measures_and_associations.qmd"; exit 1; }
+
 echo "=== All scripts rendered successfully ==="
